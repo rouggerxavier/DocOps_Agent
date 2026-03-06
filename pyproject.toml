@@ -1,0 +1,52 @@
+[project]
+name = "docops-agent"
+version = "0.1.0"
+description = "Document Operations Agent with RAG, LangGraph, and Google Gemini"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain>=1.0.0",
+    "langchain-text-splitters>=1.0.0",
+    "langchain-google-genai>=4.0.0",
+    "langchain-chroma>=0.1.0",
+    "langgraph>=1.0.0",
+    "chromadb>=0.5.0,<0.6.0",
+    "pypdf>=4.0.0",
+    "python-dotenv>=1.0.0",
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "fastapi>=0.111.0",
+    "uvicorn[standard]>=0.29.0",
+    "python-multipart>=0.0.9",
+    "rank-bm25>=0.2.2",
+    "pyyaml>=6.0.0",
+    "SQLAlchemy>=2.0.0",
+    "bcrypt>=4.0.1",
+    "PyJWT>=2.8.0",
+    "email-validator>=2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[project.scripts]
+docops = "docops.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["docops"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+
+[tool.pyright]
+pythonVersion = "3.11"

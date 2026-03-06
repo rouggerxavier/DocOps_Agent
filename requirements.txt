@@ -1,0 +1,31 @@
+# DocOps Agent dependencies
+# Python 3.11 or 3.12 required (ChromaDB 0.5.x requires Python <=3.13)
+# On Python 3.14+ hosts: py -3.11 -m venv .venv
+
+langchain>=1.0.0
+langchain-text-splitters>=1.0.0
+langchain-google-genai>=4.0.0
+langchain-chroma>=0.1.0
+langgraph>=1.0.0
+# Vector store — Chroma persistent backend
+chromadb>=0.5.0,<0.6.0
+pypdf>=4.0.0
+python-dotenv>=1.0.0
+typer>=0.12.0
+rich>=13.0.0
+pydantic>=2.0.0
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-multipart>=0.0.9
+rank-bm25>=0.2.2
+fpdf2>=2.7.0
+
+# Auth
+SQLAlchemy>=2.0.0
+bcrypt>=4.0.1
+PyJWT>=2.8.0
+email-validator>=2.0.0
+
+# Dev/testing
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

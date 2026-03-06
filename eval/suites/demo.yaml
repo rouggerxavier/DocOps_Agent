@@ -1,0 +1,73 @@
+suite_name: demo
+description: >
+  Demo suite for regression checks across factual, summary, locate, compare,
+  numbers, and unanswerable behaviors.
+
+corpus: []
+
+cases:
+  - id: summary_overview_01
+    question: "Faça um resumo dos principais tópicos do documento."
+    expected: null
+    must_cite: []
+    tags: [summary]
+
+  - id: factual_date_01
+    question: "Em que ano o projeto foi publicado ou lançado?"
+    expected: null
+    must_cite: []
+    tags: [factual, numbers]
+
+  - id: factual_number_01
+    question: "Qual percentual de acurácia ou melhoria é citado no material?"
+    expected: null
+    must_cite: []
+    tags: [factual, numbers]
+
+  - id: locate_ingest_01
+    question: "Onde o documento descreve o processo de ingestão?"
+    expected: null
+    must_cite: ["ingest|ingestao|ingestão"]
+    tags: [locate]
+
+  - id: locate_embeddings_01
+    question: "Onde são explicados embeddings ou vetorização?"
+    expected: null
+    must_cite: ["embedding|vetor"]
+    tags: [locate, factual]
+
+  - id: compare_retrieval_modes_01
+    question: "Compare os modos similarity, mmr e hybrid."
+    expected: null
+    must_cite: ["similarity|mmr|hybrid"]
+    tags: [compare, factual]
+
+  - id: compare_rerank_01
+    question: "Compare reranking local versus reranking via LLM."
+    expected: null
+    must_cite: ["rerank|llm|local"]
+    tags: [compare]
+
+  - id: factual_claim_supported_01
+    question: "Quais componentes da arquitetura são listados?"
+    expected: null
+    must_cite: []
+    tags: [factual, summary]
+
+  - id: unanswerable_price_01
+    question: "Qual o preço de assinatura mensal citado no documento?"
+    expected: ""
+    must_cite: []
+    tags: [abstain]
+
+  - id: unanswerable_sports_01
+    question: "Quem ganhou a final da Copa do Mundo de 2022?"
+    expected: ""
+    must_cite: []
+    tags: [abstain]
+
+  - id: unanswerable_weather_01
+    question: "Qual foi a temperatura em São Paulo ontem?"
+    expected: ""
+    must_cite: []
+    tags: [abstain]
