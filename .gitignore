@@ -42,3 +42,6 @@ docs/*
 # UV / pip
 uv.lock
 pip-wheel-metadata/
+
+
+.claude/
