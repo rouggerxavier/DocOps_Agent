@@ -7,6 +7,7 @@ from langchain_core.documents import Document
 
 from docops.config import config
 from docops.logging import get_logger
+from docops.storage.paths import get_user_artifacts_dir
 
 def _markdown_to_pdf(content: str, output_path: Path) -> None:
     """Convert Markdown text to a PDF file using fpdf2."""
@@ -24,7 +25,6 @@ def _markdown_to_pdf(content: str, output_path: Path) -> None:
     import unicodedata
 
     def _pick_unicode_fonts() -> tuple[Path | None, Path | None]:
-        """Pick a Unicode-capable regular/bold font available on the host."""
         candidates = [
             (Path("C:/Windows/Fonts/arial.ttf"), Path("C:/Windows/Fonts/arialbd.ttf")),
             (Path("C:/Windows/Fonts/segoeui.ttf"), Path("C:/Windows/Fonts/segoeuib.ttf")),
@@ -41,7 +41,6 @@ def _markdown_to_pdf(content: str, output_path: Path) -> None:
                 Path("/System/Library/Fonts/Supplemental/Arial Bold.ttf"),
             ),
         ]
-
         for regular, bold in candidates:
             if regular.exists():
                 return regular, bold if bold.exists() else None
@@ -61,37 +60,29 @@ def _markdown_to_pdf(content: str, output_path: Path) -> None:
             heading_style = ""
 
     def _fix_mojibake(text: str) -> str:
-        """Fix common UTF-8 text incorrectly decoded as cp1252/latin-1."""
         markers = ("Ã", "Â", "â", "ð", "�")
         if not any(m in text for m in markers):
             return text
-
         candidates = [text]
         for source_encoding in ("cp1252", "latin-1"):
             try:
                 candidates.append(text.encode(source_encoding).decode("utf-8"))
             except UnicodeError:
                 pass
-
         def _marker_score(value: str) -> int:
             return sum(value.count(m) for m in markers)
-
         best = min(candidates, key=_marker_score)
         return best if _marker_score(best) < _marker_score(text) else text
 
     def _safe(text: str) -> str:
         text = _fix_mojibake(text)
-        # Mantém unicode para preservar acentos/símbolos e reduz glyphs exóticos.
         text = unicodedata.normalize("NFKC", text)
-        # Remove apenas controles invisíveis que podem quebrar layout.
         text = "".join(
             ch for ch in text if ch == "\t" or unicodedata.category(ch)[0] != "C"
         )
         text = text.expandtabs(2)
-        # Fallback para fontes core (não unicode) se não acharmos TTF.
         if font_family == "Helvetica":
             text = text.encode("latin-1", errors="replace").decode("latin-1")
-        # Quebra tokens sem espaço que sejam muito longos
         words = text.split(" ")
         result = []
         for word in words:
@@ -102,7 +93,6 @@ def _markdown_to_pdf(content: str, output_path: Path) -> None:
         return " ".join(result)
 
     def _write_line(text: str, height: int) -> None:
-        """Render one wrapped line and keep the cursor anchored on left margin."""
         pdf.set_x(pdf.l_margin)
         pdf.multi_cell(0, height, text, new_x="LMARGIN", new_y="NEXT")
 
@@ -135,28 +125,16 @@ logger = get_logger("docops.tools.doc_tools")
 
 # ── tool_search_docs ─────────────────────────────────────────────────────────
 
-def tool_search_docs(query: str, top_k: Optional[int] = None) -> List[Document]:
-    """Search the indexed documents and return matching chunks as Documents.
-
-    This is a LangChain/LangGraph-compatible tool used by graph nodes for
-    retrieval. Returns LangChain Document objects so the graph state contract
-    (retrieved_chunks: List[Document]) is preserved for citations/sources.
-
-    Args:
-        query: Search query string.
-        top_k: Number of results to return. Defaults to config.top_k.
-
-    Returns:
-        List of Document objects with metadata (source, file_name, page, chunk_id).
-    """
+def tool_search_docs(query: str, user_id: int, top_k: Optional[int] = None) -> List[Document]:
+    """Search the user's indexed documents and return matching chunks."""
     from docops.rag.retriever import retrieve
 
     k = top_k or config.top_k
-    chunks = retrieve(query, top_k=k)
+    chunks = retrieve(query, user_id=user_id, top_k=k)
 
     scores = [c.metadata.get("retrieval_score", "n/a") for c in chunks]
     logger.debug(
-        f"tool_search_docs: {len(chunks)} chunks (mode={config.retrieval_mode}, "
+        f"tool_search_docs (user={user_id}): {len(chunks)} chunks (mode={config.retrieval_mode}, "
         f"scores={scores}) for '{query[:50]}'"
     )
     return chunks
@@ -164,18 +142,11 @@ def tool_search_docs(query: str, top_k: Optional[int] = None) -> List[Document]:
 
 # ── tool_read_chunk ──────────────────────────────────────────────────────────
 
-def tool_read_chunk(chunk_id: str) -> Optional[dict[str, Any]]:
-    """Read a full chunk by its chunk_id from the Chroma vector store.
+def tool_read_chunk(chunk_id: str, user_id: int) -> Optional[dict[str, Any]]:
+    """Read a full chunk by its chunk_id from the user's Chroma collection."""
+    from docops.ingestion.indexer import get_vectorstore_for_user
 
-    Args:
-        chunk_id: UUID string assigned during ingestion.
-
-    Returns:
-        Dict with text, metadata, or None if not found.
-    """
-    from docops.ingestion.indexer import get_vectorstore
-
-    vectorstore = get_vectorstore()
+    vectorstore = get_vectorstore_for_user(user_id)
     collection = vectorstore._collection
 
     result = collection.get(ids=[chunk_id], include=["documents", "metadatas"])
@@ -183,7 +154,7 @@ def tool_read_chunk(chunk_id: str) -> Optional[dict[str, Any]]:
     metas = result.get("metadatas", [])
 
     if not docs:
-        logger.warning(f"tool_read_chunk: chunk_id '{chunk_id}' not found.")
+        logger.warning(f"tool_read_chunk: chunk_id '{chunk_id}' not found for user {user_id}.")
         return None
 
     return {
@@ -195,38 +166,22 @@ def tool_read_chunk(chunk_id: str) -> Optional[dict[str, Any]]:
 
 # ── tool_write_artifact ──────────────────────────────────────────────────────
 
-def tool_write_artifact(filename: str, content: str) -> Path:
-    """Write content to a file in the artifacts directory.
-
-    Args:
-        filename: File name (e.g., 'summary.md'). Will be placed in artifacts/.
-        content: Text content to write.
-
-    Returns:
-        Path to the written file.
-    """
-    artifacts_dir = config.artifacts_dir
-    artifacts_dir.mkdir(parents=True, exist_ok=True)
-
-    # Sanitize filename (no path traversal)
+def tool_write_artifact(filename: str, content: str, user_id: int) -> Path:
+    """Write content to a file in the user's artifacts directory."""
+    artifacts_dir = get_user_artifacts_dir(user_id)
     safe_name = Path(filename).name
     output_path = artifacts_dir / safe_name
-
     output_path.write_text(content, encoding="utf-8")
-    logger.info(f"Artifact written: {output_path}")
+    logger.info(f"Artifact written for user {user_id}: {output_path}")
     return output_path
 
 
 # ── tool_list_docs ────────────────────────────────────────────────────────────
 
-def tool_list_docs() -> List[dict[str, Any]]:
-    """List all documents currently indexed in the Chroma vector store.
+def tool_list_docs(user_id: int) -> List[dict[str, Any]]:
+    """List all documents currently indexed for the user."""
+    from docops.ingestion.indexer import list_indexed_docs_for_user
 
-    Returns:
-        List of dicts with file_name, source, chunk_count.
-    """
-    from docops.ingestion.indexer import list_indexed_docs
-
-    docs = list_indexed_docs()
-    logger.debug(f"tool_list_docs: {len(docs)} unique documents found.")
+    docs = list_indexed_docs_for_user(user_id)
+    logger.debug(f"tool_list_docs (user={user_id}): {len(docs)} unique documents found.")
     return docs

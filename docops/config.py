@@ -61,6 +61,10 @@ class Config:
         return _path_env("DOCS_DIR", "./docs")
 
     @property
+    def uploads_dir(self) -> Path:
+        return _path_env("UPLOADS_DIR", "./uploads")
+
+    @property
     def artifacts_dir(self) -> Path:
         return _path_env("ARTIFACTS_DIR", "./artifacts")
 

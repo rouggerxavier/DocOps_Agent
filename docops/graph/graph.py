@@ -85,6 +85,7 @@ def run(
     query: str,
     top_k: int | None = None,
     extra: dict[str, Any] | None = None,
+    user_id: int = 0,
 ) -> AgentState:
     """Run a single query through the agent graph and return the final state.
 
@@ -92,6 +93,7 @@ def run(
         query: User's question or request.
         top_k: Override the default retrieval top_k.
         extra: Optional dict with intent-specific params (doc_name, topic, etc.).
+        user_id: Authenticated user ID for multi-tenant isolation.
 
     Returns:
         The final AgentState with ``answer`` and ``sources_section`` populated.
@@ -100,6 +102,7 @@ def run(
 
     initial_state: AgentState = {
         "query": query,
+        "user_id": user_id,
         "top_k": top_k or config.top_k,
         "retry_count": 0,
         "repair_count": 0,
@@ -107,7 +110,7 @@ def run(
         "extra": extra or {},
     }
 
-    logger.info(f"Running graph for query: '{query[:80]}'")
+    logger.info(f"Running graph for user {user_id}, query: '{query[:80]}'")
     final_state = graph.invoke(initial_state)
     return final_state
 

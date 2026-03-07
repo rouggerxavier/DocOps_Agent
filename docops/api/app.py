@@ -15,7 +15,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="DocOps Agent API",
         description="RAG agent for local documents — PDF, MD, TXT",
-        version="0.1.0",
+        version="0.2.0",
         docs_url="/api/docs-ui",
         redoc_url="/api/redoc",
         openapi_url="/api/openapi.json",
@@ -37,11 +37,11 @@ def create_app() -> FastAPI:
     from docops.db.database import init_db
     init_db()
 
-    # Dependência de autenticação aplicada a todas as rotas protegidas
+    # Dependencia de autenticacao aplicada a todas as rotas protegidas
     _auth = [Depends(get_current_user)]
 
     prefix = "/api"
-    # Rotas públicas
+    # Rotas publicas
     app.include_router(health.router, prefix=prefix, tags=["health"])
     app.include_router(auth_routes.router, prefix=prefix, tags=["auth"])
 

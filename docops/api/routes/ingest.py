@@ -1,84 +1,158 @@
-"""Ingest endpoints: POST /api/ingest (JSON path) and POST /api/ingest/upload (multipart)."""
+﻿"""Ingest endpoints: ingest from path or upload, scoped per user."""
 
 from __future__ import annotations
 
 import asyncio
-import tempfile
+import hashlib
 from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, Form, HTTPException, UploadFile, File, Query
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from sqlalchemy.orm import Session
 
 from docops.api.schemas import IngestPathRequest, IngestResponse
+from docops.auth.dependencies import get_current_user
 from docops.config import config
+from docops.db.crud import create_document_record
+from docops.db.database import get_db
+from docops.db.models import User
+from docops.ingestion.metadata import build_doc_id, infer_file_type
 from docops.logging import get_logger
+from docops.storage.paths import get_user_upload_dir
 
 logger = get_logger("docops.api.ingest")
 router = APIRouter()
 
 
-def _run_ingest(paths: List[Path], chunk_size: int, chunk_overlap: int) -> IngestResponse:
-    """Synchronous ingestion pipeline — call in threadpool."""
-    from docops.ingestion.loaders import load_file, load_directory
-    from docops.ingestion.splitter import split_documents
-    from docops.ingestion.indexer import index_chunks
+def _file_sha256(path: Path) -> str | None:
+    if not path.exists() or not path.is_file():
+        return None
 
-    cs = chunk_size or config.chunk_size
-    co = chunk_overlap or config.chunk_overlap
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(8192), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _run_ingest(
+    user_id: int,
+    paths: List[Path],
+    chunk_size: int,
+    chunk_overlap: int,
+) -> tuple[IngestResponse, list[dict]]:
+    """Run ingestion/indexing for a user and return SQL registration payload."""
+    from docops.ingestion.indexer import index_chunks_for_user
+    from docops.ingestion.loaders import load_directory, load_file
+    from docops.ingestion.splitter import split_documents
+    from docops.rag.hybrid import build_bm25_index_for_user
+
+    effective_chunk_size = chunk_size or config.chunk_size
+    effective_chunk_overlap = chunk_overlap or config.chunk_overlap
 
     all_docs = []
-    file_names: List[str] = []
-
-    for p in paths:
-        if p.is_dir():
-            docs = load_directory(p)
-        elif p.is_file():
-            docs = load_file(p)
+    for path in paths:
+        if path.is_dir():
+            loaded_docs = load_directory(path)
+        elif path.is_file():
+            loaded_docs = load_file(path)
         else:
-            raise HTTPException(status_code=400, detail=f"Path not found: {p}")
-        all_docs.extend(docs)
-        file_names.extend({d.metadata.get("file_name", p.name) for d in docs})
+            raise HTTPException(status_code=400, detail=f"Path not found: {path}")
+
+        for doc in loaded_docs:
+            source_path = str(doc.metadata.get("source_path") or doc.metadata.get("source") or path)
+            source_path = source_path.replace("\\", "/")
+            doc.metadata["user_id"] = user_id
+            doc.metadata["source_path"] = source_path
+            doc.metadata["source"] = source_path
+            doc.metadata["storage_path"] = str(doc.metadata.get("storage_path") or source_path)
+            doc.metadata["doc_id"] = build_doc_id(source_path, user_id=user_id)
+            doc.metadata["file_type"] = infer_file_type(doc.metadata)
+
+        all_docs.extend(loaded_docs)
 
     if not all_docs:
-        return IngestResponse(files_loaded=0, chunks_indexed=0, file_names=[])
+        return IngestResponse(files_loaded=0, chunks_indexed=0, file_names=[]), []
 
-    chunks = split_documents(all_docs, chunk_size=cs, chunk_overlap=co)
-    indexed = index_chunks(chunks)
+    chunks = split_documents(
+        all_docs,
+        chunk_size=effective_chunk_size,
+        chunk_overlap=effective_chunk_overlap,
+        stable_ids=True,
+    )
 
-    # Build BM25 index for hybrid search
-    from docops.rag.hybrid import build_bm25_index
-    build_bm25_index(chunks)
+    for chunk in chunks:
+        chunk.metadata["user_id"] = user_id
 
-    unique_files = sorted(set(file_names))
-    return IngestResponse(
+    indexed = index_chunks_for_user(user_id=user_id, chunks=chunks)
+    build_bm25_index_for_user(user_id=user_id, chunks=chunks)
+
+    docs_map: dict[str, dict] = {}
+    for chunk in chunks:
+        metadata = chunk.metadata
+        doc_id = str(metadata.get("doc_id") or "")
+        if not doc_id:
+            continue
+
+        source_path = str(metadata.get("source_path") or metadata.get("source") or "")
+        storage_path = str(metadata.get("storage_path") or source_path)
+        file_name = str(metadata.get("file_name") or Path(source_path).name)
+
+        if doc_id not in docs_map:
+            docs_map[doc_id] = {
+                "user_id": user_id,
+                "doc_id": doc_id,
+                "file_name": file_name,
+                "original_filename": file_name,
+                "source_path": source_path,
+                "storage_path": storage_path,
+                "file_type": str(metadata.get("file_type") or infer_file_type(metadata)),
+                "chunk_count": 0,
+                "sha256_hash": _file_sha256(Path(storage_path)),
+            }
+
+        docs_map[doc_id]["chunk_count"] += 1
+
+    response = IngestResponse(
         files_loaded=len(all_docs),
         chunks_indexed=indexed,
-        file_names=unique_files,
+        file_names=sorted({entry["file_name"] for entry in docs_map.values()}),
     )
+    return response, list(docs_map.values())
 
 
 @router.post("/ingest", response_model=IngestResponse)
-async def ingest_by_path(body: IngestPathRequest) -> IngestResponse:
-    """Ingest documents from a local server path (directory or file)."""
-    p = Path(body.path).resolve()
+async def ingest_by_path(
+    body: IngestPathRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> IngestResponse:
+    """Ingest a local server path into current_user scope."""
+    path = Path(body.path).resolve()
 
-    # Allowlist: só permite paths dentro dos diretórios autorizados
-    allowed = config.ingest_allowed_dirs
-    if not any(str(p).startswith(str(d)) for d in allowed):
-        allowed_str = ", ".join(str(d) for d in allowed)
+    allowed_dirs = [allowed.resolve() for allowed in config.ingest_allowed_dirs]
+    if not any(str(path).startswith(str(allowed)) for allowed in allowed_dirs):
+        allowed_label = ", ".join(str(allowed) for allowed in allowed_dirs)
         raise HTTPException(
             status_code=403,
-            detail=f"Acesso negado. O path deve estar dentro de: {allowed_str}",
+            detail=f"Access denied. Path must be under: {allowed_label}",
         )
 
-    if not p.exists():
-        raise HTTPException(status_code=400, detail=f"Path não encontrado: {body.path}")
+    if not path.exists():
+        raise HTTPException(status_code=400, detail=f"Path not found: {body.path}")
 
-    logger.info(f"Ingesting path: {p}")
-    result = await asyncio.to_thread(
-        _run_ingest, [p], body.chunk_size, body.chunk_overlap
+    logger.info("Ingest path for user %s: %s", current_user.id, path)
+    result, records = await asyncio.to_thread(
+        _run_ingest,
+        current_user.id,
+        [path],
+        body.chunk_size,
+        body.chunk_overlap,
     )
+
+    for record in records:
+        create_document_record(db, **record)
+
     return result
 
 
@@ -87,11 +161,14 @@ async def ingest_upload(
     files: List[UploadFile] = File(...),
     chunk_size: int = Form(default=0),
     chunk_overlap: int = Form(default=0),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> IngestResponse:
-    """Upload one or more files and ingest them into the vector store."""
+    """Upload and ingest one or more files into current_user scope."""
     from docops.ingestion.loaders import SUPPORTED_EXTENSIONS
 
-    tmp_paths: List[Path] = []
+    upload_dir = get_user_upload_dir(current_user.id)
+    saved_paths: list[Path] = []
 
     for upload in files:
         ext = Path(upload.filename or "").suffix.lower()
@@ -101,29 +178,21 @@ async def ingest_upload(
                 detail=f"Unsupported file type: {ext}. Supported: {sorted(SUPPORTED_EXTENSIONS)}",
             )
 
-        # Write to temp file preserving extension so loaders detect type
-        with tempfile.NamedTemporaryFile(
-            suffix=ext, delete=False, dir=tempfile.gettempdir()
-        ) as tmp:
-            content = await upload.read()
-            tmp.write(content)
-            tmp_path = Path(tmp.name)
+        safe_name = Path(upload.filename or f"upload{ext}").name
+        destination = upload_dir / safe_name
+        destination.write_bytes(await upload.read())
+        saved_paths.append(destination)
 
-        # Rename so file_name metadata is meaningful
-        named_path = tmp_path.parent / (upload.filename or tmp_path.name)
-        tmp_path.rename(named_path)
-        tmp_paths.append(named_path)
+    logger.info("Ingest upload for user %s: %s files", current_user.id, len(saved_paths))
+    result, records = await asyncio.to_thread(
+        _run_ingest,
+        current_user.id,
+        saved_paths,
+        chunk_size,
+        chunk_overlap,
+    )
 
-    try:
-        logger.info(f"Ingesting {len(tmp_paths)} uploaded file(s)")
-        result = await asyncio.to_thread(
-            _run_ingest, tmp_paths, chunk_size, chunk_overlap
-        )
-    finally:
-        for p in tmp_paths:
-            try:
-                p.unlink(missing_ok=True)
-            except Exception:
-                pass
+    for record in records:
+        create_document_record(db, **record)
 
     return result

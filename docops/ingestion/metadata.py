@@ -51,25 +51,25 @@ def normalize_pages(meta: dict[str, Any]) -> tuple[Any, Any, Any]:
     return page, page_start, page_end
 
 
-def build_doc_id(source_path: str) -> str:
-    """Stable document id derived from source path."""
-    return hashlib.sha256(source_path.encode("utf-8")).hexdigest()[:16]
+def build_doc_id(source_path: str, user_id: int | None = None) -> str:
+    """Stable document id derived from source path + user_id.
+
+    Including user_id ensures two users uploading the same file get
+    distinct doc_ids, preventing cross-tenant collisions.
+    """
+    payload = f"user:{user_id or 0}|{source_path}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def build_chunk_id(text: str, meta: dict[str, Any]) -> str:
-    """Stable chunk id from content + path + page + section.
-
-    Required payload:
-    - source_path
-    - page_start / page_end
-    - section_path
-    - normalized text content
-    """
+    """Stable chunk id from content + path + page + section + user_id."""
+    user_id = meta.get("user_id", 0)
     source_path = normalize_source_path(meta)
     _, page_start, page_end = normalize_pages(meta)
     section_path = str(meta.get("section_path") or "")
     chunk_index = meta.get("chunk_index", "")
     payload = (
+        f"user:{user_id}\n"
         f"{source_path}\n"
         f"{page_start}\n"
         f"{page_end}\n"
@@ -84,6 +84,7 @@ def normalize_chunk_metadata(
     chunk: Document,
     chunk_index: int,
     stable_ids: bool = True,
+    user_id: int | None = None,
 ) -> None:
     """Normalize chunk metadata in-place to the unified schema."""
     meta = chunk.metadata
@@ -93,10 +94,18 @@ def normalize_chunk_metadata(
     section_title = str(meta.get("section_title") or "")
     section_path = str(meta.get("section_path") or "")
 
+    effective_user_id = user_id if user_id is not None else meta.get("user_id")
+    if effective_user_id is not None:
+        meta["user_id"] = int(effective_user_id)
+
     meta["source_path"] = source_path
     meta["source"] = meta.get("source") or source_path
+    meta["storage_path"] = str(meta.get("storage_path") or source_path)
     meta["file_type"] = file_type
-    meta["doc_id"] = meta.get("doc_id") or build_doc_id(source_path)
+    if effective_user_id is not None:
+        meta["doc_id"] = build_doc_id(source_path, user_id=int(effective_user_id))
+    else:
+        meta["doc_id"] = meta.get("doc_id") or build_doc_id(source_path)
     meta["page"] = page
     meta["page_start"] = page_start
     meta["page_end"] = page_end

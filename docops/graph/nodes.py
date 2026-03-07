@@ -64,20 +64,26 @@ def classify_intent(state: AgentState) -> dict[str, Any]:
 # ── Node 2: retrieve ────────────────────────────────────────────────────────
 
 def retrieve_node(state: AgentState) -> dict[str, Any]:
-    """Retrieve relevant chunks from the vector store via tool_search_docs."""
+    """Retrieve relevant chunks from the user's vector store via tool_search_docs."""
     query = state["query"]
+    user_id = state.get("user_id", 0)
     top_k = state.get("top_k", config.top_k)
     extra = state.get("extra", {}) or {}
     doc_name = extra.get("doc_name")
+    doc_id = extra.get("doc_id")
 
-    # For summary/comparison intents with a specific doc, retrieve ALL chunks
-    # from that document instead of doing a global top_k search.
     if doc_name and state.get("intent") in ("summary", "comparison"):
-        logger.info(f"Retrieving all chunks from '{doc_name}' for {state.get('intent')}")
-        chunks = retrieve_for_doc(doc_name, query, top_k=200)
+        logger.info(f"Retrieving all chunks from '{doc_name}' for user {user_id}, {state.get('intent')}")
+        chunks = retrieve_for_doc(
+            doc_name,
+            query=query,
+            top_k=200,
+            user_id=user_id,
+            doc_id=str(doc_id) if doc_id else None,
+        )
     else:
-        logger.info(f"Retrieving top_k={top_k} chunks for query: '{query[:60]}'")
-        chunks = tool_search_docs(query, top_k=top_k)
+        logger.info(f"Retrieving top_k={top_k} chunks for user {user_id}, query: '{query[:60]}'")
+        chunks = tool_search_docs(query, user_id=user_id, top_k=top_k)
 
     if not chunks:
         logger.warning("No chunks retrieved — will produce standard 'not found' response.")

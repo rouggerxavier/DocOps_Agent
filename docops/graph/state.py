@@ -17,6 +17,9 @@ class AgentState(TypedDict, total=False):
     query: str
     """Original user query."""
 
+    user_id: int
+    """Authenticated user ID for multi-tenant isolation."""
+
     # ── Classification ─────────────────────────────────────────────────────
     intent: str
     """Classified intent: qa | summary | comparison | checklist | study_plan | artifact | other"""
