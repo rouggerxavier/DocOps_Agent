@@ -3,10 +3,11 @@
 from datetime import datetime, timezone
 from typing import Any
 
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from docops.config import config
+from docops.llm.content import response_text
+from docops.llm.router import build_chat_model
 from docops.logging import get_logger
 from docops.rag.citations import build_context_block, build_sources_section
 from docops.rag.prompts import (
@@ -27,12 +28,19 @@ from docops.graph.state import AgentState
 logger = get_logger("docops.graph.nodes")
 
 
-def _get_llm() -> ChatGoogleGenerativeAI:
-    """Create a Gemini LLM instance."""
-    return ChatGoogleGenerativeAI(
-        model=config.gemini_model,
-        google_api_key=config.gemini_api_key,
-        temperature=0.2,
+def _get_llm(
+    *,
+    route: str = "qa_simple",
+    intent: str | None = None,
+    summary_mode: str | None = None,
+    temperature: float = 0.2,
+):
+    """Create a Gemini LLM instance using deterministic route selection."""
+    return build_chat_model(
+        route=route,
+        intent=intent,
+        summary_mode=summary_mode,
+        temperature=temperature,
     )
 
 
@@ -44,11 +52,11 @@ def classify_intent(state: AgentState) -> dict[str, Any]:
     logger.info(f"Classifying intent for: '{query[:80]}'")
 
     prompt = INTENT_CLASSIFICATION_PROMPT.format(query=query)
-    llm = _get_llm()
+    llm = _get_llm(route="cheap", temperature=0.0)
 
     try:
         response = llm.invoke([HumanMessage(content=prompt)])
-        intent = response.content.strip().lower().split()[0]
+        intent = response_text(response).lower().split()[0]
         # Validate against known intents
         valid = {"qa", "summary", "comparison", "checklist", "study_plan", "artifact", "other"}
         if intent not in valid:
@@ -104,13 +112,18 @@ def synthesize(state: AgentState) -> dict[str, Any]:
     context_block = state.get("context_block", "")
     extra = state.get("extra", {}) or {}
 
-    llm = _get_llm()
-    logger.info(f"Synthesizing answer (intent={intent})")
+    summary_mode = str(extra.get("summary_mode", "brief")).lower()
+    llm = _get_llm(
+        route="graph_synthesize",
+        intent=intent,
+        summary_mode=summary_mode,
+        temperature=0.2,
+    )
+    logger.info(f"Synthesizing answer (intent={intent}, summary_mode={summary_mode})")
 
     # Pick the right prompt based on intent
     if intent == "summary":
         doc_name = extra.get("doc_name", "documento")
-        summary_mode = extra.get("summary_mode", "brief")
         prompt_template = DEEP_SUMMARY_PROMPT if summary_mode == "deep" else BRIEF_SUMMARY_PROMPT
         user_prompt = prompt_template.format(context=context_block, doc_name=doc_name)
         logger.info(f"Summary mode: {summary_mode}")
@@ -136,7 +149,7 @@ def synthesize(state: AgentState) -> dict[str, Any]:
             HumanMessage(content=user_prompt),
         ]
         response = llm.invoke(messages)
-        raw_answer = response.content
+        raw_answer = response_text(response)
     except Exception as exc:
         logger.error(f"LLM synthesis failed: {exc}")
         raw_answer = (
@@ -171,7 +184,7 @@ def _semantic_grounding_payload(answer: str, chunks: list) -> dict:
 
 def _repair_answer(state: AgentState, unsupported_claims: list[str]) -> str:
     """Repair answer by keeping only claims that are supported by context."""
-    llm = _get_llm()
+    llm = _get_llm(route="qa_simple", temperature=0.2)
     claims_block = "\n".join(f"- {c}" for c in unsupported_claims) or "- (none)"
     prompt = GROUNDING_REPAIR_PROMPT.format(
         query=state.get("query", ""),
@@ -184,7 +197,7 @@ def _repair_answer(state: AgentState, unsupported_claims: list[str]) -> str:
         HumanMessage(content=prompt),
     ]
     response = llm.invoke(messages)
-    return str(response.content).strip()
+    return response_text(response)
 
 def verify_grounding_node(state: AgentState) -> dict[str, Any]:
     """Check that the answer is properly grounded in the retrieved documents.

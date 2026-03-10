@@ -269,3 +269,64 @@ class TestEvalRunner:
         # All cases should have errors, but runner should still complete
         assert all(r.error is not None for r in report.cases)
         assert report.summary["errors"] == 4
+
+
+DEEP_SUMMARY_SUITE_YAML = """\
+suite_name: deep_summary_regression_test
+description: test suite
+thresholds:
+  require_structure_valid: true
+  min_coverage_score: 0.30
+  max_weak_grounding_ratio: 1.00
+  min_unique_sources: 1
+cases:
+  - id: ds_ok
+    doc_name: doc_formula.pdf
+    chunk_texts:
+      - "A equação usa α e β para modelagem."
+      - "Passo 1: preparar dados."
+    summary_text: |
+      ## Panorama Geral
+      O texto apresenta a equação base [Fonte 1].
+
+      ## Linha Lógica
+      O procedimento de cálculo segue etapas simples [Fonte 2].
+
+      ## Conceitos Centrais
+      O conceito de parametrização é definido no material [Fonte 1].
+
+      ## Síntese Final
+      A conclusão integra fórmula e execução prática [Fonte 2].
+  - id: ds_fail
+    doc_name: doc_fail.pdf
+    chunk_texts:
+      - "Conteúdo sem estrutura."
+    summary_text: "Resumo sem headings e sem fontes."
+"""
+
+
+class TestDeepSummaryRegressionRunner:
+    def test_runner_detects_pass_and_fail(self, tmp_path):
+        from eval.deep_summary_runner import DeepSummaryRegressionRunner
+
+        suite_path = _write_suite(tmp_path, DEEP_SUMMARY_SUITE_YAML)
+        runner = DeepSummaryRegressionRunner(suite_path=suite_path)
+        report = runner.run()
+
+        assert report.suite_name == "deep_summary_regression_test"
+        assert len(report.cases) == 2
+        assert report.summary["failed_cases"] >= 1
+
+    def test_runner_save_writes_json(self, tmp_path):
+        from eval.deep_summary_runner import DeepSummaryRegressionRunner
+
+        suite_path = _write_suite(tmp_path, DEEP_SUMMARY_SUITE_YAML)
+        runner = DeepSummaryRegressionRunner(suite_path=suite_path)
+        report = runner.run()
+        out_path = tmp_path / "deep_summary_report.json"
+        saved = runner.save(report, out_path)
+
+        assert saved.exists()
+        data = json.loads(saved.read_text(encoding="utf-8"))
+        assert data["suite_name"] == "deep_summary_regression_test"
+        assert "summary" in data

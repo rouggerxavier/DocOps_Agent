@@ -44,6 +44,6 @@ uv.lock
 pip-wheel-metadata/
 
 
-.claude/
+AI_REPO_CONTEXT.local.md
 
-claude.md
+CLAUDE.md

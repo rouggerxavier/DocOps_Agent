@@ -9,6 +9,7 @@ from typing import Callable, List
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
 
+from docops.llm.content import response_text
 from docops.logging import get_logger
 
 logger = get_logger("docops.rag.query_rewrite")
@@ -31,7 +32,7 @@ def rewrite_queries(query: str, llm, n: int = 3) -> list[str]:
     prompt = _REWRITE_PROMPT.format(query=query, n=n)
     try:
         response = llm.invoke([HumanMessage(content=prompt)])
-        raw = response.content.strip()
+        raw = response_text(response)
     except Exception as exc:
         logger.warning(f"Query rewrite failed ({exc}); returning empty list.")
         return []

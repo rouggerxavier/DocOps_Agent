@@ -245,3 +245,58 @@ def test_artifact_not_found():
         resp = auth_client.get("/api/artifacts/nonexistent.md")
     assert resp.status_code == 404
     _clear_auth_override()
+
+
+def test_summarize_debug_true_includes_diagnostics(monkeypatch):
+    auth_client, _ = _make_auth_client()
+
+    fake_doc = MagicMock(file_name="manual.pdf", doc_id="doc-uuid-1")
+    monkeypatch.setattr("docops.api.routes.summarize.require_user_document", lambda *_a, **_k: fake_doc)
+
+    def _fake_run(*_args, **_kwargs):
+        return {
+            "answer": "Resumo profundo.",
+            "artifact_path": None,
+            "artifact_filename": None,
+            "diagnostics": {"coverage": {"overall_coverage_score": 0.92}},
+        }
+
+    monkeypatch.setattr("docops.api.routes.summarize._run_summarize", _fake_run)
+
+    resp = auth_client.post(
+        "/api/summarize",
+        json={"doc": "manual.pdf", "summary_mode": "deep", "debug_summary": True},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["answer"] == "Resumo profundo."
+    assert data["summary_diagnostics"] is not None
+    assert data["summary_diagnostics"]["coverage"]["overall_coverage_score"] == 0.92
+    _clear_auth_override()
+
+
+def test_summarize_debug_false_hides_diagnostics(monkeypatch):
+    auth_client, _ = _make_auth_client()
+
+    fake_doc = MagicMock(file_name="manual.pdf", doc_id="doc-uuid-1")
+    monkeypatch.setattr("docops.api.routes.summarize.require_user_document", lambda *_a, **_k: fake_doc)
+
+    def _fake_run(*_args, **_kwargs):
+        return {
+            "answer": "Resumo profundo.",
+            "artifact_path": None,
+            "artifact_filename": None,
+            "diagnostics": {"coverage": {"overall_coverage_score": 0.92}},
+        }
+
+    monkeypatch.setattr("docops.api.routes.summarize._run_summarize", _fake_run)
+
+    resp = auth_client.post(
+        "/api/summarize",
+        json={"doc": "manual.pdf", "summary_mode": "deep", "debug_summary": False},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["answer"] == "Resumo profundo."
+    assert data["summary_diagnostics"] is None
+    _clear_auth_override()

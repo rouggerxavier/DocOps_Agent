@@ -11,6 +11,7 @@ from typing import List
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
 
+from docops.llm.content import response_text
 from docops.logging import get_logger
 
 logger = get_logger("docops.rag.reranker")
@@ -84,7 +85,7 @@ def rerank_llm(query: str, docs: List[Document], llm, top_n: int | None = None) 
         prompt = _RERANK_PROMPT.format(query=query, text=text_preview)
         try:
             response = llm.invoke([HumanMessage(content=prompt)])
-            score = _parse_score(response.content)
+            score = _parse_score(response_text(response))
         except Exception as exc:
             logger.warning(f"LLM rerank failed for chunk: {exc}")
             score = 0.5

@@ -101,17 +101,19 @@ TRECHOS DO DOCUMENTO ({doc_name}):
 
 INSTRUÇÕES:
 - O resumo deve ter no máximo 300 palavras.
-- Capture a essência do documento: tema central, objetivo e conclusão principal.
-- Use linguagem clara e objetiva, sem jargões desnecessários.
-- Cite apenas as fontes mais relevantes no formato [Fonte N].
-- Não inclua subseções longas — prefira parágrafos curtos e fluidos.
+- Responda diretamente: sobre o que é o documento e o que ele ensina ou propõe.
+- Capture o tema central, o objetivo e a conclusão principal em texto fluido.
+- Prefira parágrafos curtos e coesos. Evite listas, subseções e enumerações.
+- Cite apenas as 2–3 fontes mais relevantes no formato [Fonte N]. Não force citações.
 - Elimine detalhes secundários, exemplos extensos e repetições.
-- Ao final, inclua uma única linha "**Palavras-chave:**" com 4-6 termos centrais.
+- EVITE verbos mecânicos repetitivos: "apresenta", "aborda", "introduz", "trata de", "discute".
+  Use "explica", "demonstra", "define", "conclui", "relaciona" quando precisar de um verbo de síntese.
+- Ao final, inclua uma única linha "**Palavras-chave:**" com 4–6 termos centrais.
 
 FORMATO DE SAÍDA:
 **Resumo Breve — {doc_name}**
 
-[2-3 parágrafos concisos cobrindo: o que é o documento, o que ele ensina/propõe, e a conclusão principal]
+[2–3 parágrafos concisos e fluidos]
 
 **Palavras-chave:** [termo1, termo2, ...]
 
@@ -213,7 +215,301 @@ Estruture o plano de estudo com:
 [lista de fontes]
 """
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Deep summary pipeline prompts (multi-step: partial → consolidate → final)
+# ──────────────────────────────────────────────────────────────────────────────
+
+DEEP_SUMMARY_PARTIAL_PROMPT = """\
+Você é um especialista em análise documental.
+Está processando a seção "{section_label}" do documento "{doc_name}".
+
+TRECHOS DESTA SEÇÃO:
+{context}
+
+TAREFA:
+Produza um resumo analítico desta seção (150–250 palavras).
+
+INSTRUÇÕES:
+- Identifique o tema central desta seção e o que ela contribui para o documento como um todo.
+- Extraia conceitos, definições e termos técnicos importantes com precisão.
+- Registre fórmulas, algoritmos ou procedimentos usando notação textual legível quando
+  símbolos estiverem corrompidos ou ambíguos (ex.: "somatório de i=1 a n de f(i)").
+- Mencione exemplos concretos e resultados apresentados, se existirem.
+- Aponte conclusões ou proposições estabelecidas nesta seção.
+- Se os trechos estiverem fragmentados, incompletos ou com qualidade degradada (artefatos de PDF),
+  extraia o máximo de sentido possível e sinalize brevemente: "(trecho parcialmente ilegível)".
+- Seja direto: não repita o texto literalmente nem abra com frases mecânicas como
+  "esta seção apresenta" ou "este trecho aborda".
+- Escreva em prosa fluida e técnica — não em lista de tópicos.
+
+RESUMO PARCIAL DA SEÇÃO "{section_label}":
+"""
+
+DEEP_SUMMARY_CONSOLIDATE_PROMPT = """\
+Você recebeu resumos parciais de todas as seções do documento "{doc_name}".
+
+RESUMOS POR SEÇÃO:
+{partials_block}
+
+TAREFA:
+Produza uma VISÃO CONSOLIDADA do documento inteiro (300–500 palavras).
+
+INSTRUÇÕES:
+- Identifique o objetivo central e a motivação do documento.
+- Descreva a linha lógica do material: como as seções se encadeiam e constroem
+  umas sobre as outras.
+- Determine quais temas e conceitos são fundamentais e quais são secundários.
+- Identifique conexões explícitas entre tópicos: dependências, contrastes, extensões.
+- Destaque definições ou conceitos que aparecem em múltiplas seções.
+- Seja analítico: explique o "porquê" da organização do documento, não apenas liste o "quê".
+- Evite verbos mecânicos repetitivos como "apresenta", "aborda", "introduz".
+
+VISÃO CONSOLIDADA:
+"""
+
+DEEP_SUMMARY_FINAL_PROMPT = """\
+Você é um especialista em síntese documental e elaboração de material de estudo.
+Sua tarefa é produzir o RESUMO APROFUNDADO FINAL do documento "{doc_name}".
+
+Você dispõe de:
+1. Uma visão consolidada analítica do documento.
+2. Resumos parciais de cada seção.
+3. Trechos de referência para citações inline.
+
+VISÃO CONSOLIDADA:
+{consolidated}
+
+RESUMOS PARCIAIS DAS SEÇÕES:
+{partials_block}
+
+TRECHOS DE REFERÊNCIA (para citações [Fonte N]):
+{context_sample}
+
+PERFIL DE COBERTURA DETECTADO (gerado automaticamente a partir do documento):
+{coverage_contract}
+
+TAREFA:
+Escreva um resumo aprofundado completo, estruturado e útil como material de estudo.
+
+INSTRUÇÕES OBRIGATÓRIAS:
+- Identifique e explique o OBJETIVO CENTRAL do documento: o que ele propõe, resolve ou ensina.
+- Explique a LINHA LÓGICA do material: como os conceitos se encadeiam do início ao fim.
+- Conecte os tópicos entre si — mostre como A fundamenta B, como C contrasta com D.
+- Distinga o que é CENTRAL do que é secundário ou ilustrativo.
+- Detalhe CONCEITOS, DEFINIÇÕES e TERMOS TÉCNICOS com clareza — não apenas cite os nomes.
+- AGRUPE conceitos relacionados na mesma explicação. Não transforme o resumo em glossário.
+- Em vez de empilhar mini-definições isoladas, explique por que cada conceito importa
+  dentro do raciocínio do documento.
+- Para FÓRMULAS e PROCEDIMENTOS: use notação textual legível quando necessário.
+  Exemplo: "Gini(t) = 1 menos somatório de p_i ao quadrado" em vez de símbolos que
+  possam aparecer corrompidos.
+- Mencione EXEMPLOS concretos usados no documento — eles ajudam a compreender os conceitos.
+- Escreva como MATERIAL ÚTIL DE ESTUDO: quem ler este resumo deve entender o documento
+  sem precisar ler o original inteiro.
+- Mantenha FIDELIDADE ao documento: não invente fatos nem extrapole além do conteúdo.
+- Cumpra o PERFIL DE COBERTURA DETECTADO:
+  cada faceta marcada como "obrigatória" deve aparecer de forma explícita e com citação.
+- Para fórmulas/notação: preserve a forma técnica da fonte quando houver risco de ambiguidade
+  (ex.: cardinalidade |T|, α_eff, log2). Não simplifique símbolos que mudem o significado.
+- Use LINGUAGEM CLARA e técnica, sem jargão desnecessário.
+- Não use linguagem promocional ou vaga: evite termos como "guia completo", "abrangente",
+  "valioso", "adequado para estudantes e profissionais" se isso não estiver explicitamente
+  sustentado no material.
+- Não infira público-alvo, intenção pedagógica, completude ou qualidade do documento sem
+  evidência explícita. Se não houver evidência clara, escreva "não explicitado no material".
+- EVITE verbos mecânicos repetitivos: "apresenta", "aborda", "introduz", "discute", "trata de".
+  Prefira: "explica", "demonstra", "define", "conclui", "relaciona", "contrasta", "fundamenta".
+- Prefira PARÁGRAFOS EXPLICATIVOS; use listas somente na seção de tópicos, quando ajudar a leitura.
+- Estrutura-alvo: use EXATAMENTE 5 seções `##` seguindo o modelo abaixo.
+- Use 4 seções `##` apenas quando não houver conteúdo técnico suficiente para a seção de métodos/fórmulas.
+- Não crie novas seções `##` fora do modelo. Se precisar detalhar, use parágrafos dentro das seções existentes.
+- Limite absoluto: NO MÁXIMO 6 seções de nível `##`.
+- OMITA seções vazias ou fracas. Não crie uma seção só para repetir nomes de tópicos.
+- Não inclua uma seção "Fontes:" no texto final; as fontes serão anexadas separadamente.
+- O resultado final deve soar como uma explicação integrada para estudo, não como índice comentado.
+- Ao fazer afirmações factuais baseadas nos trechos de referência, cite [Fonte N].
+- DISTRIBUA citações ao longo de TODAS as seções do resumo. Evite concentrar citações em
+  apenas 2–3 fontes. Quando houver suporte real em diferentes trechos de referência, prefira
+  citar fontes variadas ([Fonte 1], [Fonte 3], [Fonte 5], etc.) para cobrir partes distintas
+  do documento. NÃO invente citações — cite apenas quando houver suporte factual.
+- Use no máximo 1–2 citações por parágrafo (ou por item de lista) para não poluir leitura.
+- Nunca escreva linhas órfãs como "Fonte 9", "[Fonte 3]" isolado, ou listas de mapeamento
+  de fonte dentro do corpo.
+- A conclusão deve ser substantiva: 4–7 frases integrando os principais blocos do documento.
+- O resultado final deve ser COESO: um texto que flui, não uma lista de tópicos soltos.
+
+FORMATO DE SAÍDA:
+# Resumo Aprofundado — {doc_name}
+
+## Visão Geral
+[Tema central, escopo e objetivo do documento em 1–2 parágrafos fluidos.]
+
+## Encadeamento e Principais Tópicos
+[Abra com uma frase-guia ("A seguir, os principais tópicos abordados:") e use lista
+curta por tópico com explicação útil (não só nome da seção). Cubra o documento inteiro.]
+
+## Conceitos e Métodos Fundamentais
+[Conecte conceitos-chave, fórmulas e procedimentos com linguagem clara e didática.
+Quando útil, use notação textual legível.]
+
+## Aplicações e Variações
+[Mostre exemplos, cenários de uso, extensões (ex.: random forest, regressão) e relação
+com os conceitos centrais.]
+
+## Síntese Final
+[Conclusão de verdade (4–7 frases), integrando os tópicos e o que o documento efetivamente
+entrega em termos de entendimento técnico.]
+"""
+
+DEEP_SUMMARY_STYLE_POLISH_PROMPT = """\
+Você está revisando o rascunho final de um resumo aprofundado do documento "{doc_name}".
+
+RASCUNHO ATUAL:
+{draft}
+
+TAREFA:
+Reescreva o texto para deixá-lo mais coeso, pedagógico e útil como material de estudo,
+sem alterar o conteúdo factual sustentado pelas citações existentes.
+
+REGRAS OBRIGATÓRIAS:
+- Preserve as citações inline já existentes no formato [Fonte N]. Não invente novas.
+- Mantenha no máximo 6 seções `##`.
+- Una seções excessivamente fragmentadas ou enciclopédicas quando isso melhorar a fluidez.
+- Substitua sequências de mini-definições por explicações integradas em prosa.
+- Deixe explícito o encadeamento lógico do documento: o que fundamenta, deriva, contrasta ou amplia.
+- Destaque apenas fórmulas, definições e exemplos realmente importantes.
+- Prefira parágrafos explicativos. Não transforme a saída em lista ou glossário.
+- Evite verbos mecânicos repetitivos como "apresenta", "aborda", "introduz", "discute".
+- Remova frases promocionais, genéricas ou não sustentadas pelo texto-base.
+- Se houver afirmação sobre público-alvo, escopo "completo" ou intenção do autor sem base
+  explícita, substitua por formulação neutra ou "não explicitado no material".
+- Use notação matemática textual legível quando símbolos parecerem quebrados.
+- Não inclua a seção "Fontes:"; ela será anexada separadamente.
+
+RETORNE APENAS A VERSÃO FINAL POLIDA.
+"""
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Repair prompt: used when semantic grounding support is below threshold.
+DEEP_SUMMARY_RESYNTHESIS_PROMPT = """\
+Voce esta reescrevendo um resumo aprofundado que falhou em alguns criterios de qualidade.
+Documento: "{doc_name}"
+
+DIAGNOSTICO DE QUALIDADE:
+{quality_feedback}
+
+LACUNAS PRIORITARIAS A CORRIGIR:
+{gap_contract}
+
+RASCUNHO ATUAL:
+{draft}
+
+VISAO CONSOLIDADA:
+{consolidated}
+
+RESUMOS PARCIAIS:
+{partials_block}
+
+TRECHOS DE REFERENCIA PARA CITACOES [Fonte N]:
+{context_sample}
+
+TAREFA:
+Reescreva o resumo aprofundado inteiro para ficar coeso, fiel e util para estudo.
+
+REGRAS OBRIGATORIAS:
+- Preserve apenas afirmacoes sustentadas pelos trechos de referencia.
+- Use citacoes inline [Fonte N] para afirmacoes factuais.
+- Corrija explicitamente as lacunas listadas em "LACUNAS PRIORITARIAS A CORRIGIR".
+- Se houver lacuna de notacao/fidelidade formal, prefira a notacao da fonte
+  (por exemplo: |T| em vez de T quando a fonte representa cardinalidade).
+- Distribua citacoes ao longo de TODAS as secoes do texto. Use pelo menos {min_unique_sources}
+  fontes distintas quando houver suporte. Evite concentrar em 2-3 fontes — cite fontes variadas
+  ([Fonte 1], [Fonte 3], [Fonte 5], etc.) para cobrir partes diferentes do documento.
+- Estrutura-alvo: 5 secoes com titulo "##" (aceitavel: 4 a 6).
+- Use este scaffold de titulos (ou variacao semantica equivalente):
+  1) Visao Geral
+  2) Encadeamento e Principais Topicos
+  3) Conceitos e Metodos Fundamentais
+  4) Aplicacoes e Variacoes
+  5) Sintese Final
+- Nao crie novas secoes "##" fora desse scaffold.
+- Na secao de topicos, use lista curta com cobertura ampla do documento (evite itens telegráficos).
+- Em cada secao, use no maximo 1-2 citacoes por paragrafo/item.
+- Nao gere linhas orfas de citacao/fonte ("Fonte N", "[Fonte N]" isolado, mapping com pagina/pdf).
+- Nao inclua secoes fracas, vazias, genericas ou meta-comentarios.
+- Nao inclua "Fontes:" no corpo do texto final.
+- Nao escreva frases de processo como "nao foi possivel reescrever" ou "as fontes tratam de".
+- Evite linguagem mecanica repetitiva.
+- Prefira explicacao integrada em paragrafos.
+- Se nao houver evidencia para algo, remova em vez de especular.
+
+RETORNE APENAS O RESUMO FINAL.
+"""
+
+SUMMARY_BLOCK_REPAIR_PROMPT = """\
+Um bloco de um resumo aprofundado apresenta baixa sobreposição com as fontes que cita.
+Sua tarefa: reescreva o bloco usando APENAS informações presentes nas fontes fornecidas.
+
+REGRAS:
+- Mantenha as referências [Fonte N] apenas quando a afirmação for diretamente sustentada.
+- Remova afirmações que não estejam nas fontes.
+- Preserve o escopo temático do bloco original.
+- Mantenha estilo analítico e objetivo; evite repetir o texto fonte literalmente.
+- Não escreva metacomentários sobre o processo (ex.: "não encontrei informações",
+  "as fontes tratam de", "seria necessário fornecer documentos").
+- Se algo não for suportado pelas fontes, simplesmente remova o trecho.
+- Não gere linha de fontes no corpo, como: "Fontes:", "[Fonte N]" isolado,
+  "Fonte N", ou "[Fonte N]: ...".
+- Retorne apenas o bloco reescrito, sem comentários adicionais.
+
+BLOCO ORIGINAL:
+{block}
+
+FONTES CITADAS:
+{sources_block}
+
+BLOCO REESCRITO:
+"""
+
+DEEP_SUMMARY_STRUCTURE_FIX_PROMPT = """\
+Você está reorganizando um resumo aprofundado com problemas de estrutura.
+Documento: "{doc_name}"
+
+RASCUNHO ATUAL:
+{draft}
+
+TAREFA:
+Reorganize o resumo corrigindo APENAS estrutura e coesão, sem alterar o conteúdo factual.
+
+REGRAS OBRIGATÓRIAS:
+- Preserve todas as citações inline [Fonte N] existentes — não invente novas nem remova as válidas.
+- Meta de estrutura: 5 seções ## (faixa aceitável: no mínimo 4 e no máximo 6).
+- Reescreva os títulos para o scaffold canônico abaixo (ou variação semântica muito próxima):
+  1) Visão Geral
+  2) Encadeamento e Principais Tópicos
+  3) Conceitos e Métodos Fundamentais
+  4) Aplicações e Variações
+  5) Síntese Final
+- OBRIGATÓRIO: os títulos das seções ## devem cobrir TODAS estas categorias temáticas:
+  1. Objetivo/Contexto/Introdução — o que o documento propõe
+  2. Estrutura/Metodologia/Organização — como o conteúdo se encadeia
+  3. Conceitos/Definições/Fundamentos — termos e ideias centrais
+  4. Síntese/Conclusão/Resultados — fechamento e contribuições
+- Os títulos podem variar na redação, mas devem claramente pertencer a cada categoria.
+- Não crie seções ## extras fora do scaffold.
+- Se houver seção de tópicos, mantenha lista curta e explicativa (cada item com informação real).
+- Remova qualquer linha órfã de fonte/citação no corpo ("Fonte N", "[Fonte N]" isolado, mapping).
+- Garanta que "Síntese Final" tenha conteúdo substantivo (não aceitar conclusão de 1 frase).
+- Remova seções fracas, vazias ou genéricas (com menos de 3 frases úteis de conteúdo real).
+- Una seções sobrepostas ou excessivamente fragmentadas quando melhorar a fluidez.
+- Prefira parágrafos explicativos a listas de tópicos soltos.
+- Não inclua bloco "Fontes:" no corpo — ele será anexado separadamente.
+- Não invente fatos nem extrapole além do conteúdo existente.
+- Não escreva metacomentários sobre o processo de reorganização.
+
+RETORNE APENAS O RESUMO REORGANIZADO.
+"""
+
 GROUNDING_REPAIR_PROMPT = """\
 Reescreva a resposta abaixo usando SOMENTE informacoes suportadas pelos trechos.
 

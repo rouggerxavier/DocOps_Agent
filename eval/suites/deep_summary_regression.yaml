@@ -1,0 +1,77 @@
+suite_name: deep_summary_regression
+description: >
+  Offline regression checks for deep-summary quality gates using a fixed corpus
+  of synthetic cases (no live LLM call required).
+
+thresholds:
+  require_structure_valid: true
+  min_coverage_score: 0.30
+  max_weak_grounding_ratio: 1.00
+  min_unique_sources: 1
+  structure_min_chars: 20
+
+cases:
+  - id: ds_narrative_01
+    doc_name: relatorio_mercado.pdf
+    description: "Narrative document with examples and concepts."
+    chunk_texts:
+      - "O relatório apresenta análise de mercado para tecnologia na América Latina."
+      - "Por exemplo, o segmento de SaaS cresceu acima da média anual."
+      - "A competitividade é definida como capacidade de manter margens sustentáveis."
+      - "As recomendações incluem revisão de pricing e foco em retenção."
+    summary_text: |
+      ## Panorama Geral
+      Panorama analítico do mercado tecnológico descreve contexto regional, tendências de demanda, pressão competitiva, riscos operacionais e prioridades estratégicas para o próximo ciclo anual [Fonte 1].
+
+      ## Linha Lógica
+      A linha argumentativa conecta evidências quantitativas com interpretação qualitativa, por exemplo na leitura de churn, retenção de receita, margens por segmento e impacto de preço no comportamento de clientes [Fonte 2].
+
+      ## Conceitos Centrais
+      Conceitos centrais incluem competitividade, elasticidade de preço e posicionamento estratégico, com definição operacional clara, critérios de priorização e relação direta com execução comercial e capacidade de crescimento sustentável [Fonte 3].
+
+      ## Síntese Final
+      Síntese final integra recomendações acionáveis, prioriza retenção e eficiência operacional, define sequência de implementação e explicita ganhos esperados para receita recorrente e estabilidade de longo prazo [Fonte 4].
+    thresholds:
+      min_unique_sources: 1
+
+  - id: ds_formula_01
+    doc_name: algebra_linear_aplicada.pdf
+    description: "Formula-heavy document should preserve math-oriented coverage."
+    chunk_texts:
+      - "A função objetivo é f(x) = αx² + βx + γ com α > 0."
+      - "A solução usa x* = argmin f(x) e derivações por ∂f/∂x = 0."
+      - "O erro médio é calculado por E = (1/n)∑(yi - ŷi)^2."
+      - "A equação final inclui normalização por σ e μ."
+    summary_text: |
+      ## Panorama Geral
+      Panorama matemático descreve a função objetivo, parâmetros de regularização, hipóteses adotadas, notação algébrica e limites de aplicação do modelo em cenários com ruído moderado [Fonte 1].
+
+      ## Linha Lógica
+      A construção lógica deriva expressão analítica passo a passo, mostra cálculo de x* por derivada, discute estabilidade numérica e relaciona escolhas de parâmetros com convergência do processo [Fonte 2].
+
+      ## Conceitos Centrais
+      Conceitos centrais detalham fórmula do erro médio quadrático, interpretação de gradiente, definição de ótimo local e critérios para avaliar qualidade de ajuste em diferentes conjuntos experimentais [Fonte 3].
+
+      ## Síntese Final
+      Síntese final consolida resultados matemáticos, aponta utilidade prática da abordagem, destaca limitações de suposições lineares e recomenda verificação empírica antes de aplicação em produção [Fonte 4].
+
+  - id: ds_procedural_01
+    doc_name: guia_treinamento_modelo.pdf
+    description: "Procedural case should have algorithmic-step coverage."
+    chunk_texts:
+      - "Passo 1: carregar os dados de treino e validação."
+      - "Passo 2: normalizar atributos e separar features de rótulos."
+      - "Passo 3: treinar o algoritmo com ajuste de hiperparâmetros."
+      - "Passo 4: validar e registrar métricas finais."
+    summary_text: |
+      ## Panorama Geral
+      Panorama operacional descreve fluxo completo para treinamento supervisionado, papéis de cada etapa, dependências entre tarefas e critérios mínimos para garantir rastreabilidade do experimento [Fonte 1].
+
+      ## Linha Lógica
+      A linha lógica segue etapas sequenciais de preparação, treino e validação, detalha pontos de controle, ordem de execução e critérios de aceitação para cada transição do processo [Fonte 2].
+
+      ## Conceitos Centrais
+      Conceitos centrais apresentam o algoritmo como pipeline iterativo, definem critérios de parada, explicam noção de generalização e mostram como interpretar métricas durante ciclos sucessivos [Fonte 3].
+
+      ## Síntese Final
+      Síntese final encerra procedimento com avaliação estruturada, documentação de métricas, registro de decisões técnicas e plano de melhoria contínua para novas execuções [Fonte 4].

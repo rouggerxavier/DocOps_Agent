@@ -397,6 +397,67 @@ def eval_cmd(
         raise typer.Exit(code=1)
 
 
+# ── eval-summary ──────────────────────────────────────────────────────────────
+
+@app.command("eval-summary")
+def eval_summary_cmd(
+    suite: str = typer.Option(
+        "deep_summary_regression",
+        "--suite",
+        "-s",
+        help="Suite name or path to deep-summary YAML file",
+    ),
+    out: Optional[str] = typer.Option(None, "--out", "-o", help="Output JSON path"),
+) -> None:
+    """Run offline deep-summary regression suite (structure/coverage/grounding/citations)."""
+    from docops.config import config as cfg
+    from eval.deep_summary_runner import (
+        DeepSummaryRegressionRunner,
+        load_deep_summary_suite,
+    )
+
+    suite_path = Path(suite)
+    if not suite_path.exists():
+        candidate = cfg.eval_suites_dir / f"{suite}.yaml"
+        if candidate.exists():
+            suite_path = candidate
+        else:
+            console.print(f"[red]Deep-summary suite not found: {suite}[/red]")
+            raise typer.Exit(code=1)
+
+    out_path = Path(out) if out else cfg.eval_output_dir / f"eval_{suite_path.stem}.json"
+    loaded = load_deep_summary_suite(suite_path)
+    console.print(
+        Panel(
+            f"[bold]Deep Summary Regression[/bold]\n"
+            f"Suite: [cyan]{loaded.suite_name}[/cyan]\n"
+            f"Cases: {len(loaded.cases)}",
+            border_style="blue",
+        )
+    )
+
+    runner = DeepSummaryRegressionRunner(suite_path=suite_path)
+    with console.status("Running deep-summary regression suite..."):
+        report = runner.run()
+    saved = runner.save(report, out_path)
+
+    s = report.summary
+    table = Table(title="Deep Summary Eval Summary", border_style="blue")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", justify="right")
+    table.add_row("Total cases", str(s.get("total_cases", 0)))
+    table.add_row("Passed", str(s.get("passed_cases", 0)))
+    table.add_row("Failed", str(s.get("failed_cases", 0)))
+    table.add_row("Pass rate", f"{s.get('pass_rate', 0):.3f}")
+    table.add_row("Avg coverage", f"{s.get('avg_coverage_score', 0):.3f}")
+    table.add_row("Avg weak grounding", f"{s.get('avg_weak_grounding_ratio', 0):.3f}")
+    console.print(table)
+    console.print(f"\n[green]Report saved to {saved}[/green]")
+
+    if int(s.get("failed_cases", 0)) > 0:
+        raise typer.Exit(code=1)
+
+
 # ── serve ─────────────────────────────────────────────────────────────────────
 
 @app.command("serve")

@@ -26,32 +26,43 @@ def _run_summarize(
     save: bool,
     summary_mode: str,
     user_id: int,
+    debug_summary: bool = False,
 ) -> dict:
-    from docops.graph.graph import run
     from docops.tools.doc_tools import tool_write_artifact
 
-    query = (
-        f"Faca um resumo breve do documento {file_name}"
-        if summary_mode == "brief"
-        else f"Faca um resumo aprofundado e detalhado do documento {file_name}"
-    )
+    diagnostics = None
+    if summary_mode == "deep":
+        # Multi-step pipeline: treats the document as a closed, ordered corpus
+        from docops.summarize.pipeline import run_deep_summary
 
-    state = dict(
-        run(
-            query=query,
-            extra={
-                "doc_name": file_name,
-                "doc_id": doc_id,
-                "summary_mode": summary_mode,
-            },
-            user_id=user_id,
+        result_dict = run_deep_summary(
+            file_name,
+            doc_id,
+            user_id,
+            include_diagnostics=debug_summary,
         )
-    )
+        answer = result_dict.get("answer", "")
+        diagnostics = result_dict.get("diagnostics")
+    else:
+        # Brief mode: existing single-shot graph flow (no regression)
+        from docops.graph.graph import run
+
+        state = dict(
+            run(
+                query=f"Faca um resumo breve do documento {file_name}",
+                extra={
+                    "doc_name": file_name,
+                    "doc_id": doc_id,
+                    "summary_mode": "brief",
+                },
+                user_id=user_id,
+            )
+        )
+        answer = state.get("answer", "")
 
     artifact_path = None
     artifact_filename = None
     if save:
-        answer = state.get("answer", "")
         stem = Path(file_name).stem
         mode_suffix = "breve" if summary_mode == "brief" else "aprofundado"
         filename = f"summary_{mode_suffix}_{stem}.md"
@@ -60,9 +71,10 @@ def _run_summarize(
         artifact_filename = path.name
 
     return {
-        "answer": state.get("answer", ""),
+        "answer": answer,
         "artifact_path": artifact_path,
         "artifact_filename": artifact_filename,
+        "diagnostics": diagnostics,
     }
 
 
@@ -90,6 +102,7 @@ async def summarize(
             body.save,
             body.summary_mode,
             current_user.id,
+            body.debug_summary,
         )
     except EnvironmentError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -112,4 +125,5 @@ async def summarize(
     return SummarizeResponse(
         answer=str(result.get("answer", "")),
         artifact_path=result.get("artifact_path"),
+        summary_diagnostics=result.get("diagnostics") if body.debug_summary else None,
     )

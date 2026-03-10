@@ -100,11 +100,16 @@ class SummarizeRequest(BaseModel):
         default="brief",
         description="'brief' for a short synthesis, 'deep' for a full detailed analysis",
     )
+    debug_summary: bool = Field(
+        default=False,
+        description="When true and summary_mode='deep', include summary diagnostics in response.",
+    )
 
 
 class SummarizeResponse(BaseModel):
     answer: str
     artifact_path: Optional[str] = None
+    summary_diagnostics: Optional[dict[str, Any]] = None
 
 
 # ── /api/compare ──────────────────────────────────────────────────────────────

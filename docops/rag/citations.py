@@ -185,6 +185,148 @@ def build_sources_section(chunks: List[Document], query: str = "") -> str:
     return "\n".join(lines)
 
 
+def build_summary_sources_section(
+    chunks: List[Document],
+    max_sources: int = 12,
+) -> str:
+    """Build a deduplicated 'Fontes:' section tailored for summary-mode responses.
+
+    Unlike ``build_sources_section`` (one entry per chunk, which can produce
+    hundreds of lines for large documents), this function groups chunks by their
+    ``(file_name, section_path)`` pair, shows a page range, and caps the output
+    at ``max_sources`` entries — keeping the section legible even for documents
+    with 200+ chunks.
+
+    Ordering: groups appear in document order (first chunk seen per group).
+
+    Args:
+        chunks: All document chunks used in the summary (ordered or not).
+        max_sources: Hard cap on the number of source lines (default: 12).
+
+    Returns:
+        Formatted markdown string starting with ``**Fontes:**``.
+    """
+    if not chunks:
+        return "**Fontes:** (nenhuma fonte recuperada)"
+
+    # Collect group metadata in insertion order (preserves document order when
+    # chunks are pre-sorted by chunk_index).
+    seen: dict[tuple[str, str], dict] = {}
+    for doc in chunks:
+        meta = doc.metadata
+        fname = meta.get("file_name", "desconhecido")
+        section = (
+            meta.get("section_path", "")
+            or meta.get("section_title", "")
+        )
+        key = (fname, section)
+
+        if key not in seen:
+            seen[key] = {"pages": set()}
+
+        page_val = meta.get("page") or meta.get("page_start")
+        if page_val is not None:
+            try:
+                seen[key]["pages"].add(int(page_val))
+            except (ValueError, TypeError):
+                pass
+
+    lines: List[str] = ["**Fontes:**"]
+    total_groups = len(seen)
+
+    for i, ((fname, section), info) in enumerate(seen.items(), start=1):
+        if i > max_sources:
+            break
+
+        pages = sorted(info["pages"])
+        if len(pages) == 1:
+            page_str = f"p. {pages[0]}"
+        elif len(pages) >= 2:
+            page_str = f"pp. {pages[0]}–{pages[-1]}"
+        else:
+            page_str = ""
+
+        parts: List[str] = [fname]
+        if section:
+            parts.append(section)
+        if page_str:
+            parts.append(page_str)
+
+        location = " > ".join(parts)
+        lines.append(f"- [Fonte {i}] **{location}**")
+
+    if total_groups > max_sources:
+        remainder = total_groups - max_sources
+        lines.append(f"- _... e mais {remainder} seção(ões) do documento_")
+
+    return "\n".join(lines)
+
+
+def _format_anchor_source_line(source_idx: int, doc: Document) -> str:
+    """Format one deep-summary source line preserving the source index label."""
+    meta = doc.metadata
+    fname = meta.get("file_name", "desconhecido")
+    section = meta.get("section_path", "") or meta.get("section_title", "")
+
+    page_start = meta.get("page_start") or meta.get("page")
+    page_end = meta.get("page_end") or page_start
+
+    page_str = ""
+    if page_start is not None:
+        try:
+            ps = int(page_start)
+            pe = int(page_end) if page_end is not None else ps
+            page_str = f"pp. {ps}–{pe}" if ps != pe else f"p. {ps}"
+        except (ValueError, TypeError):
+            pass
+
+    parts: List[str] = [fname]
+    if section:
+        parts.append(section)
+    if page_str:
+        parts.append(page_str)
+
+    return f"- [Fonte {source_idx}] **{' > '.join(parts)}**"
+
+
+def build_anchor_sources_section(
+    anchors: List[Document],
+    source_indices: List[int] | None = None,
+) -> str:
+    """Build 'Fontes:' for deep summary with stable source numbering.
+
+    When ``source_indices`` is omitted, renders all anchors as [Fonte 1..N].
+    When provided, renders only requested indices and preserves original labels.
+    """
+    if not anchors:
+        return "**Fontes:** (nenhuma fonte recuperada)"
+
+    lines: List[str] = ["**Fontes:**"]
+
+    if source_indices is None:
+        for i, doc in enumerate(anchors, start=1):
+            lines.append(_format_anchor_source_line(i, doc))
+        return "\n".join(lines)
+
+    # Preserve order from source_indices while removing duplicates/invalid values.
+    seen: set[int] = set()
+    valid_indices: List[int] = []
+    for idx in source_indices:
+        if idx in seen:
+            continue
+        if 1 <= idx <= len(anchors):
+            seen.add(idx)
+            valid_indices.append(idx)
+
+    if not valid_indices:
+        return "**Fontes:** (nenhuma fonte citada no corpo)"
+
+    for idx in valid_indices:
+        lines.append(_format_anchor_source_line(idx, anchors[idx - 1]))
+
+    return "\n".join(lines)
+
+
 def count_citations_in_answer(answer: str) -> int:
     """Count how many [Fonte N] references appear in an answer string."""
     return len(re.findall(r"\[Fonte\s*\d+\]", answer, re.IGNORECASE))

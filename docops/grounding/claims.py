@@ -7,6 +7,8 @@ import re
 from typing import List
 
 from docops.config import config
+from docops.llm.content import response_text
+from docops.llm.router import build_chat_model
 from docops.logging import get_logger
 
 logger = get_logger("docops.grounding.claims")
@@ -63,18 +65,13 @@ def _heuristic_claims(text: str, include_cited: bool = False) -> List[str]:
 def _llm_claims(text: str) -> List[str]:
     """Optional LLM extraction pass used in llm/hybrid claim modes."""
     try:
-        from langchain_google_genai import ChatGoogleGenerativeAI
         from langchain_core.messages import HumanMessage
 
-        llm = ChatGoogleGenerativeAI(
-            model=config.gemini_model,
-            google_api_key=config.gemini_api_key,
-            temperature=0.0,
-        )
+        llm = build_chat_model(route="cheap", temperature=0.0)
         response = llm.invoke(
             [HumanMessage(content=_CLAIMS_LLM_PROMPT.format(text=text[:4000]))]
         )
-        raw = response.content.strip()
+        raw = response_text(response)
         match = re.search(r"\{.*\}", raw, re.DOTALL)
         if not match:
             return []

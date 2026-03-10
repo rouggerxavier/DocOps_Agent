@@ -86,7 +86,29 @@ class Config:
 
     @property
     def gemini_model(self) -> str:
-        return os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+        return os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+    @property
+    def gemini_model_router_enabled(self) -> bool:
+        """Enable deterministic model routing by task (default: True)."""
+        return os.getenv("GEMINI_MODEL_ROUTER_ENABLED", "true").lower() in (
+            "true", "1", "yes"
+        )
+
+    @property
+    def gemini_model_complex(self) -> str:
+        """Model for complex synthesis tasks (default: gemini-3-flash-preview)."""
+        return os.getenv("GEMINI_MODEL_COMPLEX", "gemini-3-flash-preview")
+
+    @property
+    def gemini_model_cheap(self) -> str:
+        """Model for cheap/auxiliary steps (default: gemini-3.1-flash-lite-preview)."""
+        return os.getenv("GEMINI_MODEL_CHEAP", "gemini-3.1-flash-lite-preview")
+
+    @property
+    def gemini_model_qa_simple(self) -> str:
+        """Model for simple QA responses (default: gemini-2.5-flash)."""
+        return os.getenv("GEMINI_MODEL_QA_SIMPLE", "gemini-2.5-flash")
 
     @property
     def max_retries(self) -> int:
@@ -218,6 +240,308 @@ class Config:
     def semantic_grounding_enabled(self) -> bool:
         """Master switch for the semantic grounding verifier (default: True)."""
         return os.getenv("SEMANTIC_GROUNDING_ENABLED", "true").lower() in ("true", "1", "yes")
+
+    # ── Deep summary pipeline tuning ─────────────────────────────────────────
+
+    @property
+    def summary_group_size(self) -> int:
+        """Target number of chunks per partial-summary group (default: 6).
+
+        Larger values reduce LLM calls but produce coarser partial summaries.
+        Smaller values give finer granularity but increase latency.
+        Override with SUMMARY_GROUP_SIZE env var.
+        """
+        return int(os.getenv("SUMMARY_GROUP_SIZE", "6"))
+
+    @property
+    def summary_max_groups(self) -> int:
+        """Hard cap on the number of groups in the deep summary pipeline (default: 8).
+
+        Controls max partial-summary LLM calls, keeping latency predictable for
+        very large documents. Override with SUMMARY_MAX_GROUPS env var.
+        """
+        return int(os.getenv("SUMMARY_MAX_GROUPS", "8"))
+
+    @property
+    def summary_section_threshold(self) -> float:
+        """Min fraction of chunks with section metadata to use section-based
+        grouping instead of a fixed sliding window (default: 0.70).
+
+        Set lower (e.g. 0.5) to prefer section grouping on partially-structured docs.
+        Override with SUMMARY_SECTION_THRESHOLD env var.
+        """
+        return float(os.getenv("SUMMARY_SECTION_THRESHOLD", "0.70"))
+
+    @property
+    def summary_max_sources(self) -> int:
+        """Hard cap on source entries in the summary 'Fontes:' section (default: 12).
+
+        Sources are grouped by (file, section) — this caps the total entries shown.
+        Override with SUMMARY_MAX_SOURCES env var.
+        """
+        return int(os.getenv("SUMMARY_MAX_SOURCES", "12"))
+
+    @property
+    def summary_grounding_threshold(self) -> float:
+        """Minimum token overlap to consider a summary block grounded (default: 0.20).
+
+        Intentionally lenient: summary text is paraphrased, not verbatim.
+        Lower = more permissive; raise (e.g. 0.35) for stricter validation.
+        Override with SUMMARY_GROUNDING_THRESHOLD env var.
+        """
+        return float(os.getenv("SUMMARY_GROUNDING_THRESHOLD", "0.20"))
+
+    @property
+    def summary_grounding_repair(self) -> bool:
+        """Enable LLM repair pass for weakly grounded blocks (default: True).
+
+        When True, blocks below SUMMARY_GROUNDING_THRESHOLD receive an LLM
+        rewrite restricted to the cited anchor texts. Adds 1 LLM call per
+        weakly grounded block.
+        Override with SUMMARY_GROUNDING_REPAIR env var.
+        """
+        return os.getenv("SUMMARY_GROUNDING_REPAIR", "true").lower() in (
+            "true", "1", "yes"
+        )
+
+    @property
+    def summary_structure_min_chars(self) -> int:
+        """Minimum non-citation text size per `##` section in deep summary (default: 160)."""
+        return int(os.getenv("SUMMARY_STRUCTURE_MIN_CHARS", "160"))
+
+    @property
+    def summary_min_unique_sources(self) -> int:
+        """Minimum number of distinct [Fonte N] references in deep summary (default: 5)."""
+        return int(os.getenv("SUMMARY_MIN_UNIQUE_SOURCES", "5"))
+
+    @property
+    def summary_resynthesis_enabled(self) -> bool:
+        """Enable one global re-synthesis pass when quality gates fail (default: True)."""
+        return os.getenv("SUMMARY_RESYNTHESIS_ENABLED", "true").lower() in (
+            "true", "1", "yes"
+        )
+
+    @property
+    def summary_resynthesis_weak_block_ratio(self) -> float:
+        """Trigger global re-synthesis when weak/cited grounding ratio >= this value (default: 0.50)."""
+        return float(os.getenv("SUMMARY_RESYNTHESIS_WEAK_BLOCK_RATIO", "0.50"))
+
+    @property
+    def summary_resynthesis_max_weak_ratio_degradation(self) -> float:
+        """Max allowed weak_ratio degradation when diversity improves (default: 0.05).
+
+        If re-synthesis is triggered by citation diversity and candidate diversity
+        improves, the candidate is only accepted when:
+            candidate_weak_ratio <= current_weak_ratio + this_threshold
+        """
+        return float(os.getenv("SUMMARY_RESYNTHESIS_MAX_WEAK_RATIO_DEGRADATION", "0.05"))
+
+    @property
+    def summary_grounding_threshold_noisy(self) -> float:
+        """Grounding threshold used for noisy extraction artifacts (default: 0.12)."""
+        return float(os.getenv("SUMMARY_GROUNDING_THRESHOLD_NOISY", "0.12"))
+
+    @property
+    def summary_grounding_noisy_chunk_ratio(self) -> float:
+        """Noisy-document trigger: fraction of noisy chunks required (default: 0.25)."""
+        return float(os.getenv("SUMMARY_GROUNDING_NOISY_CHUNK_RATIO", "0.25"))
+
+    @property
+    def summary_grounding_noisy_reduction_ratio(self) -> float:
+        """Noisy-chunk trigger: min raw->clean reduction ratio (default: 0.03)."""
+        return float(os.getenv("SUMMARY_GROUNDING_NOISY_REDUCTION_RATIO", "0.03"))
+
+    @property
+    def summary_resynthesis_require_structure(self) -> bool:
+        """Require structure validation to pass before accepting re-synthesized candidate (default: True).
+
+        When True, a re-synthesized candidate is only accepted if its structure
+        is valid (correct heading count, required categories, no weak sections).
+        Set False to fall back to the quality-signature-only gate.
+        Override with SUMMARY_RESYNTHESIS_REQUIRE_STRUCTURE env var.
+        """
+        return os.getenv("SUMMARY_RESYNTHESIS_REQUIRE_STRUCTURE", "true").lower() in (
+            "true", "1", "yes"
+        )
+
+    @property
+    def summary_structure_fix_pass_enabled(self) -> bool:
+        """Enable one LLM pass to fix structure when re-synthesis improves quality but fails structure (default: True).
+
+        When True and a re-synthesized candidate improves grounding/diversity but
+        has invalid structure, one extra LLM call is made to reorganize sections
+        before the candidate is accepted or discarded.
+        Override with SUMMARY_STRUCTURE_FIX_PASS_ENABLED env var.
+        """
+        return os.getenv("SUMMARY_STRUCTURE_FIX_PASS_ENABLED", "true").lower() in (
+            "true", "1", "yes"
+        )
+
+    @property
+    def summary_structure_fix_max_calls(self) -> int:
+        """Maximum number of structure-fix LLM calls per re-synthesis attempt (default: 2)."""
+        return int(os.getenv("SUMMARY_STRUCTURE_FIX_MAX_CALLS", "2"))
+
+    # ── Phase 3: Coverage gate ────────────────────────────────────────────────
+
+    @property
+    def summary_coverage_gate_enabled(self) -> bool:
+        """Enable content coverage gate for deep summary (default: True).
+
+        When True, detected content signals (formulas, procedures, examples, concepts)
+        from source chunks are compared against the final summary. Low coverage
+        triggers a re-synthesis pass with explicit coverage feedback.
+        Override with SUMMARY_COVERAGE_GATE_ENABLED env var.
+        """
+        return os.getenv("SUMMARY_COVERAGE_GATE_ENABLED", "true").lower() in (
+            "true", "1", "yes"
+        )
+
+    @property
+    def summary_coverage_profile(self) -> str:
+        """Coverage profile selection mode for deep summary.
+
+        Supported values:
+        - ``auto`` (default): choose profile heuristically from document signals.
+        - ``balanced`` | ``formula_heavy`` | ``procedural`` | ``narrative``.
+        """
+        return os.getenv("SUMMARY_COVERAGE_PROFILE", "auto").strip().lower()
+
+    @property
+    def summary_coverage_min_score_override(self) -> float | None:
+        """Optional explicit override for profile min_score.
+
+        Returns ``None`` when ``SUMMARY_COVERAGE_MIN_SCORE`` is not set in env.
+        """
+        raw = os.getenv("SUMMARY_COVERAGE_MIN_SCORE")
+        if raw is None:
+            return None
+        return float(raw)
+
+    @property
+    def summary_coverage_min_score(self) -> float:
+        """Minimum overall coverage score to pass the coverage gate (default: 0.50).
+
+        Weighted mean of per-type coverage scores over active signal types.
+        Score of 1.0 = full coverage; 0.0 = no coverage.
+        Override with SUMMARY_COVERAGE_MIN_SCORE env var.
+        """
+        return float(os.getenv("SUMMARY_COVERAGE_MIN_SCORE", "0.50"))
+
+    @property
+    def summary_coverage_concept_min_hits(self) -> int:
+        """Minimum number of concept-signal chunks to enable concept coverage check (default: 2).
+
+        Prevents false positives when only one chunk has a definition-like pattern.
+        Override with SUMMARY_COVERAGE_CONCEPT_MIN_HITS env var.
+        """
+        return int(os.getenv("SUMMARY_COVERAGE_CONCEPT_MIN_HITS", "2"))
+
+    @property
+    def summary_coverage_weight_formula(self) -> float:
+        """Weight of formula/math signal in overall coverage score (default: 0.30).
+
+        Override with SUMMARY_COVERAGE_WEIGHT_FORMULA env var.
+        """
+        return float(os.getenv("SUMMARY_COVERAGE_WEIGHT_FORMULA", "0.30"))
+
+    @property
+    def summary_coverage_weight_procedure(self) -> float:
+        """Weight of procedure/algorithm signal in overall coverage score (default: 0.30).
+
+        Override with SUMMARY_COVERAGE_WEIGHT_PROCEDURE env var.
+        """
+        return float(os.getenv("SUMMARY_COVERAGE_WEIGHT_PROCEDURE", "0.30"))
+
+    @property
+    def summary_coverage_weight_example(self) -> float:
+        """Weight of example signal in overall coverage score (default: 0.20).
+
+        Override with SUMMARY_COVERAGE_WEIGHT_EXAMPLE env var.
+        """
+        return float(os.getenv("SUMMARY_COVERAGE_WEIGHT_EXAMPLE", "0.20"))
+
+    @property
+    def summary_coverage_weight_concept(self) -> float:
+        """Weight of concept/definition signal in overall coverage score (default: 0.20).
+
+        Override with SUMMARY_COVERAGE_WEIGHT_CONCEPT env var.
+        """
+        return float(os.getenv("SUMMARY_COVERAGE_WEIGHT_CONCEPT", "0.20"))
+
+    @property
+    def summary_facet_min_hits(self) -> int:
+        """Minimum chunk hits to mark a facet as required in deep-summary profile (default: 2)."""
+        return int(os.getenv("SUMMARY_FACET_MIN_HITS", "2"))
+
+    @property
+    def summary_facet_gate_enabled(self) -> bool:
+        """Enable facet-coverage gate based on detected document profile (default: True)."""
+        return os.getenv("SUMMARY_FACET_GATE_ENABLED", "true").lower() in (
+            "true", "1", "yes"
+        )
+
+    @property
+    def summary_facet_min_score(self) -> float:
+        """Minimum score for required facet coverage (default: 0.70)."""
+        return float(os.getenv("SUMMARY_FACET_MIN_SCORE", "0.70"))
+
+    @property
+    def summary_notation_gate_enabled(self) -> bool:
+        """Enable notation-fidelity gate for mathematical/cardinality notation (default: True)."""
+        return os.getenv("SUMMARY_NOTATION_GATE_ENABLED", "true").lower() in (
+            "true", "1", "yes"
+        )
+
+    @property
+    def summary_notation_min_score(self) -> float:
+        """Minimum notation-fidelity score for deep-summary acceptance (default: 0.75)."""
+        return float(os.getenv("SUMMARY_NOTATION_MIN_SCORE", "0.75"))
+
+    @property
+    def summary_claim_gate_enabled(self) -> bool:
+        """Enable critical-claim gate (procedures/formulas/validation) (default: True)."""
+        return os.getenv("SUMMARY_CLAIM_GATE_ENABLED", "true").lower() in (
+            "true", "1", "yes"
+        )
+
+    @property
+    def summary_claim_min_score(self) -> float:
+        """Minimum score for critical-claim cited coverage (default: 0.80)."""
+        return float(os.getenv("SUMMARY_CLAIM_MIN_SCORE", "0.80"))
+
+    @property
+    def summary_rubric_gate_enabled(self) -> bool:
+        """Enable composite quality-rubric gate for deep-summary acceptance (default: True)."""
+        return os.getenv("SUMMARY_RUBRIC_GATE_ENABLED", "true").lower() in (
+            "true", "1", "yes"
+        )
+
+    @property
+    def summary_rubric_min_score(self) -> float:
+        """Minimum composite rubric score for deep-summary acceptance (default: 0.72)."""
+        return float(os.getenv("SUMMARY_RUBRIC_MIN_SCORE", "0.72"))
+
+    @property
+    def summary_notation_require_variable_legend(self) -> bool:
+        """Require explicit variable legend when formula notation is present (default: True)."""
+        return os.getenv("SUMMARY_NOTATION_REQUIRE_VARIABLE_LEGEND", "true").lower() in (
+            "true", "1", "yes"
+        )
+
+    @property
+    def summary_claim_local_repair_enabled(self) -> bool:
+        """Enable deterministic local repair for missing critical claims (default: False)."""
+        return os.getenv("SUMMARY_CLAIM_LOCAL_REPAIR_ENABLED", "false").lower() in (
+            "true", "1", "yes"
+        )
+
+    @property
+    def summary_final_gate_enabled(self) -> bool:
+        """Enable strict fail-closed final quality gate (default: False)."""
+        return os.getenv("SUMMARY_FINAL_GATE_ENABLED", "false").lower() in (
+            "true", "1", "yes"
+        )
 
     # ── Phase 3: Eval harness ─────────────────────────────────────────────────
 

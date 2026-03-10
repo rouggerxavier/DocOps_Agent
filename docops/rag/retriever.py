@@ -12,6 +12,7 @@ from langchain_core.documents import Document
 
 from docops.config import config
 from docops.ingestion.indexer import get_vectorstore, get_vectorstore_for_user
+from docops.llm.router import build_chat_model
 from docops.logging import get_logger
 
 logger = get_logger("docops.rag.retriever")
@@ -132,13 +133,8 @@ def retrieve(query: str, user_id: int = 0, top_k: int | None = None) -> List[Doc
     """Retrieve chunks for a query, scoped to a user."""
     if config.multi_query:
         from docops.rag.query_rewrite import multi_query_retrieve
-        from langchain_google_genai import ChatGoogleGenerativeAI
 
-        llm = ChatGoogleGenerativeAI(
-            model=config.gemini_model,
-            google_api_key=config.gemini_api_key,
-            temperature=0.3,
-        )
+        llm = build_chat_model(route="cheap", temperature=0.3)
         docs = multi_query_retrieve(
             query=query,
             retriever_fn=lambda q, k=None: _base_retrieve(q, user_id=user_id, top_k=k),
@@ -154,13 +150,7 @@ def retrieve(query: str, user_id: int = 0, top_k: int | None = None) -> List[Doc
 
         top_n = config.rerank_top_n
         if config.reranker == "llm":
-            from langchain_google_genai import ChatGoogleGenerativeAI
-
-            llm = ChatGoogleGenerativeAI(
-                model=config.gemini_model,
-                google_api_key=config.gemini_api_key,
-                temperature=0.0,
-            )
+            llm = build_chat_model(route="cheap", temperature=0.0)
             docs = rerank_llm(query, docs, llm, top_n=top_n)
         else:
             docs = rerank_local(query, docs, top_n=top_n)

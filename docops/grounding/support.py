@@ -10,6 +10,8 @@ from typing import List, Literal
 from langchain_core.documents import Document
 
 from docops.config import config
+from docops.llm.content import response_text
+from docops.llm.router import build_chat_model
 from docops.logging import get_logger
 
 logger = get_logger("docops.grounding.support")
@@ -153,18 +155,13 @@ _LLM_PROMPT = (
 
 def _llm_support(claim: str, evidence: str) -> SupportResult:
     try:
-        from langchain_google_genai import ChatGoogleGenerativeAI
         from langchain_core.messages import HumanMessage
 
-        llm = ChatGoogleGenerativeAI(
-            model=config.gemini_model,
-            google_api_key=config.gemini_api_key,
-            temperature=0.0,
-        )
+        llm = build_chat_model(route="cheap", temperature=0.0)
         response = llm.invoke(
             [HumanMessage(content=_LLM_PROMPT.format(claim=claim, evidence=evidence[:1200]))]
         )
-        raw = response.content.strip()
+        raw = response_text(response)
         match = re.search(r"\{.*\}", raw, re.DOTALL)
         if not match:
             return _heuristic_support(claim, evidence)
@@ -231,4 +228,3 @@ def compute_support_rate(
         "unsupported_claims": unsupported,
         "results": per_claim_results,
     }
-
