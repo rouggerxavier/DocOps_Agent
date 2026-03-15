@@ -1,0 +1,38 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: docops-backend
+    env_file:
+      - .env
+    environment:
+      CHROMA_DIR: /app/data/chroma
+      DOCS_DIR: /app/docs
+      UPLOADS_DIR: /app/uploads
+      ARTIFACTS_DIR: /app/artifacts
+      BM25_DIR: /app/data/bm25
+      DATABASE_URL: sqlite:////app/data/app.db
+      INGEST_ALLOWED_DIRS: /app/docs
+      CORS_ORIGINS: http://localhost:5173,http://localhost:8000
+    volumes:
+      - ./data:/app/data
+      - ./docs:/app/docs
+      - ./uploads:/app/uploads
+      - ./artifacts:/app/artifacts
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:5173}
+    container_name: docops-frontend
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+    restart: unless-stopped

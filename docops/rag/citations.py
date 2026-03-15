@@ -9,6 +9,10 @@ from langchain_core.documents import Document
 # Max chars for the full chunk text injected into the LLM context.
 # Configurable via CONTEXT_MAX_CHARS env var. 0 = no limit (use full text).
 _DEFAULT_CONTEXT_MAX_CHARS = 1500
+_META_SECTION_LABEL_RE = re.compile(
+    r"^\s*\[meta\]\s*(?:section_path|section_title|page(?:_range)?)\s*:",
+    re.IGNORECASE,
+)
 
 
 def _snippet(text: str, max_chars: int = 120) -> str:
@@ -34,6 +38,16 @@ def _strip_embedding_header(text: str) -> str:
         if len(lines) >= 2:
             return "\n".join(lines[1:]).lstrip()
     return text
+
+
+def _clean_section_label(value: str | None) -> str:
+    """Normalize section labels and hide leaked [meta] artifacts."""
+    label = str(value or "").strip()
+    if not label:
+        return ""
+    if _META_SECTION_LABEL_RE.match(label) or label.lower().startswith("[meta]"):
+        return ""
+    return re.sub(r"\s+", " ", label)
 
 
 def _context_text(text: str, max_chars: int | None = None) -> str:
@@ -66,8 +80,8 @@ def _format_location(meta: dict) -> str:
     """
     fname = meta.get("file_name", "desconhecido")
     page = meta.get("page", "N/A")
-    section_path = meta.get("section_path", "")
-    section_title = meta.get("section_title", "")
+    section_path = _clean_section_label(meta.get("section_path", ""))
+    section_title = _clean_section_label(meta.get("section_title", ""))
 
     # Prefer section_path (breadcrumbs), fall back to section_title
     breadcrumb = section_path or section_title
@@ -100,7 +114,9 @@ def build_context_block(chunks: List[Document]) -> str:
         meta = doc.metadata
         fname = meta.get("file_name", "desconhecido")
         page = meta.get("page", "N/A")
-        section_path = meta.get("section_path", "") or meta.get("section_title", "")
+        section_path = _clean_section_label(
+            meta.get("section_path", "") or meta.get("section_title", "")
+        )
         page_str = f"página {page}" if page != "N/A" else "sem página"
 
         if section_path:
@@ -215,7 +231,7 @@ def build_summary_sources_section(
     for doc in chunks:
         meta = doc.metadata
         fname = meta.get("file_name", "desconhecido")
-        section = (
+        section = _clean_section_label(
             meta.get("section_path", "")
             or meta.get("section_title", "")
         )
@@ -266,7 +282,7 @@ def _format_anchor_source_line(source_idx: int, doc: Document) -> str:
     """Format one deep-summary source line preserving the source index label."""
     meta = doc.metadata
     fname = meta.get("file_name", "desconhecido")
-    section = meta.get("section_path", "") or meta.get("section_title", "")
+    section = _clean_section_label(meta.get("section_path", "") or meta.get("section_title", ""))
 
     page_start = meta.get("page_start") or meta.get("page")
     page_end = meta.get("page_end") or page_start

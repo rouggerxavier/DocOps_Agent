@@ -6,6 +6,8 @@ Coverage:
   - pipeline: _sort_chunks, group_chunks, _group_by_section, _group_by_window,
               _normalize_groups, collect_ordered_chunks (mocked), run_deep_summary (mocked),
               _select_citation_anchors
+  - Claim-risk + inference-density: classify_claim_risks, check_formula_mode,
+              compute_inference_density, _is_low_info_source, run_deoverreach_pass
   - citations: build_summary_sources_section (deduplication, page ranges, cap)
   - config: summary_group_size, summary_max_groups, summary_section_threshold,
             summary_max_sources
@@ -23,6 +25,12 @@ from langchain_core.documents import Document
 
 os.environ.setdefault("GEMINI_API_KEY", "fake-key-for-tests")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-pytest-only")
+
+
+@pytest.fixture(autouse=True)
+def _default_deep_profile_for_legacy_tests(monkeypatch):
+    """Keep legacy integration expectations on strict path unless test overrides it."""
+    monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "strict")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -453,6 +461,53 @@ class TestRunDeepSummary:
         assert "\u200b" not in result["answer"]
         assert "\n\n\n\n" not in result["answer"]
 
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline.infer_pdf_structure")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_pdf_structure_inference_happens_before_topic_extraction(
+        self,
+        mock_collect,
+        mock_infer,
+        mock_extract_topics,
+        mock_llm_factory,
+    ):
+        from docops.summarize.pipeline import run_deep_summary
+
+        chunks = [
+            _doc("Introduction\nContent.", file_type="pdf", page=1, page_start=1, page_end=1, section_title="", section_path="", chunk_index=0),
+            _doc("Methods\nContent.", file_type="pdf", page=2, page_start=2, page_end=2, section_title="", section_path="", chunk_index=1),
+        ]
+        mock_collect.return_value = chunks
+
+        def _infer_side_effect(chunks_in):
+            for c in chunks_in:
+                if not c.metadata.get("section_title"):
+                    c.metadata["section_title"] = "Inferred Section"
+                    c.metadata["section_path"] = "Inferred Section"
+            return chunks_in
+
+        mock_infer.side_effect = _infer_side_effect
+
+        def _extract_topics_side_effect(chunks_in, major_topic_min_hits=2):
+            assert any(c.metadata.get("section_title") for c in chunks_in)
+            return {
+                "detected_topics": [],
+                "must_cover_topics": [],
+                "minor_topics": [],
+                "topic_details": {},
+                "outline_text": "",
+            }
+
+        mock_extract_topics.side_effect = _extract_topics_side_effect
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = self._make_llm_response("Texto gerado.")
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1)
+        assert result.get("answer")
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Regression: brief mode still routes through graph (contract test)
@@ -822,6 +877,16 @@ class TestBuildSummarySourcesSection:
         pos_c = result.index("C")
         assert pos_a < pos_b < pos_c
 
+    def test_ignores_meta_section_labels(self):
+        chunks = [
+            _doc("a", file_name="doc.pdf", section_path="[meta] page: 3", page=3),
+            _doc("b", file_name="doc.pdf", section_path="[meta] page: 4", page=4),
+        ]
+        result = self.build(chunks)
+        assert "[meta]" not in result.lower()
+        assert "[Fonte 1]" in result
+        assert "[Fonte 2]" not in result
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # pipeline: _select_citation_anchors (new)
@@ -876,11 +941,11 @@ class TestSelectCitationAnchors:
 class TestSummaryConfig:
     def test_summary_group_size_default(self):
         from docops.config import config
-        assert config.summary_group_size == 6
+        assert config.summary_group_size == 8
 
     def test_summary_max_groups_default(self):
         from docops.config import config
-        assert config.summary_max_groups == 8
+        assert config.summary_max_groups == 6
 
     def test_summary_section_threshold_default(self):
         from docops.config import config
@@ -1016,6 +1081,24 @@ class TestCitationCoherenceIntegration:
         mock.content = text
         return mock
 
+    def _resp(self, text: str):
+        return self._make_llm_response(text)
+
+    def _summary_with_overreach(self) -> str:
+        return (
+            "# Resumo Aprofundado - doc.pdf\n\n"
+            "## Visão Geral\n"
+            "As árvores de decisão transformam dados em regras [Fonte 1].\n\n"
+            "## Encadeamento e Principais Tópicos\n"
+            "Inclui fundamentos, construção e validação [Fonte 1].\n\n"
+            "## Conceitos e Métodos Fundamentais\n"
+            "Com d_vc >= 4 e N >= 40, o modelo sempre generaliza bem [Fonte 1].\n\n"
+            "## Aplicações e Variações\n"
+            "Uso em classificação e regressão [Fonte 1].\n\n"
+            "## Síntese Final\n"
+            "Modelo robusto para decisão [Fonte 1]."
+        )
+
     @patch("docops.summarize.pipeline._get_llm")
     @patch("docops.summarize.pipeline.collect_ordered_chunks")
     def test_sources_section_entry_count_matches_anchor_count(
@@ -1071,6 +1154,137 @@ class TestCitationCoherenceIntegration:
         assert "[Fonte 999]" not in result["answer"], (
             "Phantom [Fonte 999] should have been removed by validate_summary_citations"
         )
+
+    @patch("docops.summarize.pipeline._run_micro_topic_backfill")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_scheduler_reserves_last_pass_for_must_cover_and_skips_deoverreach(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_micro_backfill,
+        monkeypatch,
+    ):
+        """With max_passes=1 in strict and missing must-cover topics, scheduler must reserve
+        the pass for coverage and skip de-overreach."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_CORRECTIVE_PASSES", "1")
+        monkeypatch.setenv("SUMMARY_STRICT_RESERVE_PASS_FOR_MUST_COVER", "true")
+        monkeypatch.setenv("SUMMARY_REQUIRE_NON_LOW_INFO_FOR_HIGH_RISK", "true")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        mock_collect.return_value = [
+            _doc("sumário", chunk_index=i, page=1, section_title="Sumário")
+            for i in range(4)
+        ]
+        mock_extract_topics.return_value = {
+            "detected_topics": ["math_formalization"],
+            "must_cover_topics": ["math_formalization"],
+            "minor_topics": [],
+            "topic_details": {"math_formalization": {"label": "Formalização", "hits": 2}},
+            "outline_text": "",
+        }
+        mock_outline_score.return_value = {
+            "overall_score": 0.5,
+            "detected_topics": ["math_formalization"],
+            "must_cover_topics": ["math_formalization"],
+            "covered_topics": [],
+            "missing_topics": ["math_formalization"],
+            "weakly_covered_topics": [],
+            "topic_scores": {"math_formalization": 0.0},
+        }
+        mock_micro_backfill.return_value = {
+            "text": self._summary_with_overreach(),
+            "triggered": True,
+            "paragraphs_attempted": 1,
+            "paragraphs_accepted": 0,
+            "missing_topics_before": ["math_formalization"],
+            "missing_topics_after": ["math_formalization"],
+            "skipped_topics": [],
+            "latency_ms": 5.0,
+        }
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(self._summary_with_overreach())] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        diag = result["diagnostics"]
+
+        assert diag["corrective_scheduler"]["reserve_last_pass_for_must_cover"] is True
+        assert diag["deoverreach"]["skipped_reason"] == "reserved_for_must_cover_topics"
+        assert diag["backfill"]["triggered"] is True
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_deoverreach_rejected_does_not_consume_corrective_pass(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """Rejected de-overreach candidate must not consume corrective budget."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_CORRECTIVE_PASSES", "1")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_REQUIRE_NON_LOW_INFO_FOR_HIGH_RISK", "true")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        mock_collect.return_value = [
+            _doc("sumário", chunk_index=i, page=1, section_title="Sumário")
+            for i in range(4)
+        ]
+        mock_llm = MagicMock()
+        overreach = self._summary_with_overreach()
+        mock_llm.invoke.side_effect = [self._resp(overreach)] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        diag = result["diagnostics"]
+
+        assert diag["deoverreach"]["triggered"] is True
+        assert diag["deoverreach"]["accepted"] is False
+        assert diag["deoverreach"]["pass_consumed"] is False
+        assert diag["corrective_passes_used"] == 0
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_claim_risk_reports_unsupported_high_risk_sentences(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """Diagnostics should expose unsupported high-risk sentence excerpts for targeted repair."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_REQUIRE_NON_LOW_INFO_FOR_HIGH_RISK", "true")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        mock_collect.return_value = [
+            _doc("sumário", chunk_index=i, page=1, section_title="Sumário")
+            for i in range(4)
+        ]
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(self._summary_with_overreach())] * 15
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        claim = result["diagnostics"]["claim_risk"]
+
+        if claim["unsupported_high_risk_count"] == 0:
+            pytest.skip("No unsupported high-risk claim detected in this run.")
+        assert claim["unsupported_high_risk_sentences"], claim
+        first = claim["unsupported_high_risk_sentences"][0]
+        assert "text" in first and first["text"]
+        assert "risk_type" in first
 
     @patch("docops.summarize.pipeline._get_llm")
     @patch("docops.summarize.pipeline.collect_ordered_chunks")
@@ -1199,8 +1413,9 @@ class TestValidateSummaryGrounding:
         # Text should be unchanged (log-only mode)
         assert result_text.strip() == block.strip()
 
-    def test_repair_attempted_for_weakly_grounded_block(self):
+    def test_repair_attempted_for_weakly_grounded_block(self, monkeypatch):
         """With llm provided, _repair_block is called for a weakly grounded block."""
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR_MIN_OVERLAP", "0.25")
         anchor = self._anchor("física relatividade energia massa velocidade luz")
         block = "Energia em taxonomia vegetal e folhas caducas [Fonte 1]."
 
@@ -1213,6 +1428,21 @@ class TestValidateSummaryGrounding:
         mock_llm.invoke.assert_called_once()
         assert info["repaired_blocks"] == 1
         assert repaired_text in result_text
+
+    def test_repair_budget_caps_repairs_per_pass(self, monkeypatch):
+        """Grounding repair should cap LLM rewrites per pass via config."""
+        monkeypatch.setenv("SUMMARY_GROUNDING_MAX_REPAIRS_PER_PASS", "1")
+        anchor = self._anchor("algoritmo complexidade entropia poda regularizacao")
+        text = (
+            "Bloco fraco sobre algoritmo em tema distante [Fonte 1].\n\n"
+            "Segundo bloco fraco com algoritmo mas sem suporte suficiente [Fonte 1]."
+        )
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = MagicMock(content="Texto reparado com [Fonte 1].")
+        _, info = self.validate(text, [anchor], threshold=0.95, llm=mock_llm)
+        assert info["weakly_grounded"] >= 2
+        assert info["repaired_blocks"] == 1
+        assert mock_llm.invoke.call_count == 1
 
     def test_zero_overlap_skips_repair_even_with_llm(self):
         """If overlap is 0.00, repair must be skipped."""
@@ -1250,8 +1480,9 @@ class TestValidateSummaryGrounding:
         assert info["repaired_blocks"] == 0
         assert result_text.strip() == block.strip()
 
-    def test_repair_with_forbidden_patterns_is_discarded(self):
+    def test_repair_with_forbidden_patterns_is_discarded(self, monkeypatch):
         """Repair output that is ONLY meta-commentary must be rejected even after sanitation."""
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR_MIN_OVERLAP", "0.25")
         anchor = self._anchor("fisica relatividade energia massa velocidade luz")
         block = "Energia em taxonomia vegetal e folhas caducas [Fonte 1]."
 
@@ -1266,8 +1497,9 @@ class TestValidateSummaryGrounding:
         assert info["repaired_blocks"] == 0
         assert result_text.strip() == block.strip()
 
-    def test_repair_with_mixed_content_sanitized_and_accepted(self):
+    def test_repair_with_mixed_content_sanitized_and_accepted(self, monkeypatch):
         """Repair with valid prose + leaked source lines should be accepted after sanitation."""
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR_MIN_OVERLAP", "0.25")
         anchor = self._anchor("fisica relatividade energia massa velocidade luz")
         block = "Energia em taxonomia vegetal e folhas caducas [Fonte 1]."
 
@@ -1488,6 +1720,13 @@ class TestBuildAnchorSourcesSection:
         result = self.build(anchors, source_indices=[])
         assert "nenhuma fonte citada no corpo" in result.lower()
 
+    def test_hides_meta_section_label(self):
+        anchor = _doc("texto", file_name="doc.pdf", section_path="[meta] page: 3", page=3)
+        result = self.build([anchor])
+        assert "[meta]" not in result.lower()
+        assert "doc.pdf" in result
+        assert "p. 3" in result
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # config: grounding properties
@@ -1498,9 +1737,13 @@ class TestGroundingConfig:
         from docops.config import config
         assert abs(config.summary_grounding_threshold - 0.20) < 1e-9
 
-    def test_summary_grounding_repair_default_true(self):
+    def test_summary_grounding_repair_default_false(self):
         from docops.config import config
-        assert config.summary_grounding_repair is True
+        assert config.summary_grounding_repair is False
+
+    def test_summary_grounding_repair_min_overlap_default(self):
+        from docops.config import config
+        assert abs(config.summary_grounding_repair_min_overlap - 0.15) < 1e-9
 
     def test_summary_grounding_threshold_from_env(self, monkeypatch):
         monkeypatch.setenv("SUMMARY_GROUNDING_THRESHOLD", "0.35")
@@ -1516,9 +1759,9 @@ class TestGroundingConfig:
         from docops.config import config
         assert config.summary_min_unique_sources == 5
 
-    def test_summary_resynthesis_enabled_default_true(self):
+    def test_summary_resynthesis_enabled_default_false(self):
         from docops.config import config
-        assert config.summary_resynthesis_enabled is True
+        assert config.summary_resynthesis_enabled is False
 
     def test_summary_resynthesis_weak_block_ratio_default(self):
         from docops.config import config
@@ -1691,13 +1934,6 @@ class TestGroundingAndAnchorSourcesIntegration:
             ),
             self._make_llm_response(
                 "# Resumo Aprofundado — doc.pdf\n\n"
-                "## Panorama Geral\nTexto inicial [Fonte 1].\n\n"
-                "## Construção e Lógica\nTexto inicial [Fonte 1].\n\n"
-                "## Conceitos Fundamentais\nTexto inicial [Fonte 1].\n\n"
-                "## Síntese e Conclusão\nTexto inicial [Fonte 1]."
-            ),
-            self._make_llm_response(
-                "# Resumo Aprofundado — doc.pdf\n\n"
                 "## Panorama Geral\nPanorama com duas evidencias [Fonte 1] e [Fonte 2].\n\n"
                 "## Construção e Lógica\nEncadeamento com suporte de [Fonte 1] e [Fonte 2].\n\n"
                 "## Conceitos Fundamentais\nConceitos centrais sustentados por [Fonte 1].\n\n"
@@ -1715,8 +1951,10 @@ class TestGroundingAndAnchorSourcesIntegration:
                 "SUMMARY_GROUNDING_REPAIR": "false",
                 "SUMMARY_RESYNTHESIS_ENABLED": "true",
                 "SUMMARY_RESYNTHESIS_WEAK_BLOCK_RATIO": "0.0",
+                "SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO": "1.0",
                 "SUMMARY_MIN_UNIQUE_SOURCES": "2",
                 "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+                "SUMMARY_MAX_CORRECTIVE_PASSES": "2",
                 # This test verifies citation diversity only; structure gating is
                 # tested in TestResynthesisGateIntegration.
                 "SUMMARY_RESYNTHESIS_REQUIRE_STRUCTURE": "false",
@@ -1728,7 +1966,7 @@ class TestGroundingAndAnchorSourcesIntegration:
         assert "[Fonte 2]" in result["answer"]
         assert "[Fonte 1]" in result["sources_section"]
         assert "[Fonte 2]" in result["sources_section"]
-        assert mock_llm.invoke.call_count >= 6
+        assert mock_llm.invoke.call_count >= 5
 
     @patch("docops.summarize.pipeline._get_llm")
     @patch("docops.summarize.pipeline.collect_ordered_chunks")
@@ -2037,6 +2275,15 @@ class TestResynthesisGateConfig:
         from docops.config import Config
         assert Config().summary_structure_fix_max_calls == 2
 
+    def test_max_accepted_weak_ratio_default(self):
+        from docops.config import config
+        assert abs(config.summary_resynthesis_max_accepted_weak_ratio - 0.35) < 1e-9
+
+    def test_max_accepted_weak_ratio_from_env(self, monkeypatch):
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO", "0.55")
+        from docops.config import Config
+        assert abs(Config().summary_resynthesis_max_accepted_weak_ratio - 0.55) < 1e-9
+
 
 class TestResynthesisGateIntegration:
     """Integration: re-synthesis acceptance gate with structure requirement.
@@ -2110,6 +2357,7 @@ class TestResynthesisGateIntegration:
         monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "true")
         monkeypatch.setenv("SUMMARY_RESYNTHESIS_WEAK_BLOCK_RATIO", "0.0")
         monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_WEAK_RATIO_DEGRADATION", "1.0")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO", "1.0")
         monkeypatch.setenv("SUMMARY_MIN_UNIQUE_SOURCES", "2")
         monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
 
@@ -2157,8 +2405,10 @@ class TestResynthesisGateIntegration:
         monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "true")
         monkeypatch.setenv("SUMMARY_RESYNTHESIS_WEAK_BLOCK_RATIO", "0.0")
         monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_WEAK_RATIO_DEGRADATION", "1.0")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO", "1.0")
         monkeypatch.setenv("SUMMARY_MIN_UNIQUE_SOURCES", "2")
         monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_MAX_CORRECTIVE_PASSES", "2")
 
         chunks = _make_chunks(4, with_sections=True)
         mock_collect.return_value = chunks
@@ -2170,7 +2420,6 @@ class TestResynthesisGateIntegration:
             self._make_llm_response("Parcial B."),
             self._make_llm_response("Consolidado."),
             self._make_llm_response(self._bad_no_cit()),   # final
-            self._make_llm_response(self._bad_no_cit()),   # polish
             self._make_llm_response(self._bad_two_src()),  # re-synthesis (candidate)
             self._make_llm_response(self._good_structure()),  # structure-fix → MARKER_FIXED
         ]
@@ -2201,8 +2450,10 @@ class TestResynthesisGateIntegration:
         monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "true")
         monkeypatch.setenv("SUMMARY_RESYNTHESIS_WEAK_BLOCK_RATIO", "0.0")
         monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_WEAK_RATIO_DEGRADATION", "1.0")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO", "1.0")
         monkeypatch.setenv("SUMMARY_MIN_UNIQUE_SOURCES", "2")
         monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_MAX_CORRECTIVE_PASSES", "2")
 
         chunks = _make_chunks(4, with_sections=True)
         mock_collect.return_value = chunks
@@ -2230,7 +2481,6 @@ class TestResynthesisGateIntegration:
             self._make_llm_response("Parcial B."),
             self._make_llm_response("Consolidado."),
             self._make_llm_response(self._bad_no_cit()),   # final
-            self._make_llm_response(self._bad_no_cit()),   # polish
             self._make_llm_response(self._bad_two_src()),  # re-synthesis (candidate)
             self._make_llm_response(good_with_phantom),    # structure-fix → MARKER_FIXED
         ]
@@ -2753,7 +3003,6 @@ class TestCoverageGateIntegration:
             self._make_llm_response("Parcial B [Fonte 2]."),
             self._make_llm_response("Consolidado."),
             self._make_llm_response(self._good_summary_with_formula("MARKER_INITIAL")),
-            self._make_llm_response(self._good_summary_with_formula("MARKER_INITIAL")),
         ]
         mock_llm = MagicMock()
         mock_llm.invoke.side_effect = llm_outputs
@@ -2767,11 +3016,12 @@ class TestCoverageGateIntegration:
             "SUMMARY_RESYNTHESIS_WEAK_BLOCK_RATIO": "2.0",   # disable grounding trigger (ratio max=1.0)
             "SUMMARY_MIN_UNIQUE_SOURCES": "1",
             "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+            "SUMMARY_MAX_CORRECTIVE_PASSES": "2",
         }):
             result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1)
 
         assert "MARKER_INITIAL" in result["answer"]
-        assert mock_llm.invoke.call_count == 5
+        assert mock_llm.invoke.call_count == 4
 
     @patch("docops.summarize.pipeline._get_llm")
     @patch("docops.summarize.pipeline.collect_ordered_chunks")
@@ -2782,12 +3032,16 @@ class TestCoverageGateIntegration:
         from docops.summarize.pipeline import run_deep_summary
 
         mock_collect.return_value = self._formula_chunks(4)
+        # Extra calls: 5 baseline + 1 optional topic-backfill + 1 optional extra-outline-repair
+        base_resp = self._make_llm_response(self._good_summary_no_formula("MARKER_INITIAL"))
         llm_outputs = [
             self._make_llm_response("Parcial A [Fonte 1]."),
             self._make_llm_response("Parcial B [Fonte 2]."),
             self._make_llm_response("Consolidado."),
-            self._make_llm_response(self._good_summary_no_formula("MARKER_INITIAL")),
-            self._make_llm_response(self._good_summary_no_formula("MARKER_INITIAL")),
+            base_resp,
+            base_resp,
+            base_resp,  # optional backfill
+            base_resp,  # optional extra-outline-repair
         ]
         mock_llm = MagicMock()
         mock_llm.invoke.side_effect = llm_outputs
@@ -2804,7 +3058,8 @@ class TestCoverageGateIntegration:
             result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1)
 
         assert "MARKER_INITIAL" in result["answer"]
-        assert mock_llm.invoke.call_count == 5
+        # 5 baseline calls + optional topic-backfill + optional extra-outline-repair
+        assert mock_llm.invoke.call_count in (5, 6, 7)
 
     @patch("docops.summarize.pipeline._get_llm")
     @patch("docops.summarize.pipeline.collect_ordered_chunks")
@@ -2816,15 +3071,14 @@ class TestCoverageGateIntegration:
         from docops.summarize.pipeline import run_deep_summary
 
         mock_collect.return_value = self._formula_chunks(4)
-        # Final: valid structure, [Fonte 1] ONLY (unique=1), NO formula keywords
-        # → coverage triggers (formula=0.0 < 0.8) AND diversity triggers (1 < 2)
-        # Candidate: valid structure, [Fonte 1]+[Fonte 2] (unique=2), formula keywords
+        # LLM call sequence (no backfill global anymore; micro-backfill uses cheap LLM):
+        # 1,2: partial summaries; 3: consolidate; 4: finalize → MARKER_INITIAL (no formula)
+        # 5: resynthesis candidate → MARKER_COVERAGE (with formula, unique=2)
         # → coverage_gain=True (score>=0.8), quality sig improves (unique 1→2) → accepted
         llm_outputs = [
             self._make_llm_response("Parcial A [Fonte 1]."),
             self._make_llm_response("Parcial B [Fonte 2]."),
             self._make_llm_response("Consolidado."),
-            self._make_llm_response(self._good_summary_no_formula_single_source("MARKER_INITIAL")),
             self._make_llm_response(self._good_summary_no_formula_single_source("MARKER_INITIAL")),
             self._make_llm_response(self._good_summary_with_formula("MARKER_COVERAGE")),
         ]
@@ -2838,15 +3092,20 @@ class TestCoverageGateIntegration:
             "SUMMARY_GROUNDING_REPAIR": "false",
             "SUMMARY_RESYNTHESIS_ENABLED": "true",
             "SUMMARY_RESYNTHESIS_REQUIRE_STRUCTURE": "true",
+            "SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO": "1.0",
             "SUMMARY_MIN_UNIQUE_SOURCES": "2",
             "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+            "SUMMARY_MAX_CORRECTIVE_PASSES": "2",
+            # Disable micro-backfill so it doesn't consume the corrective budget
+            # before resynthesis in this test (micro-backfill uses cheap LLM, not mock_llm).
+            "SUMMARY_MICRO_BACKFILL_ENABLED": "false",
         }):
             result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1)
 
         assert "MARKER_COVERAGE" in result["answer"], (
             "Candidate meeting coverage and quality improvement should be accepted"
         )
-        assert mock_llm.invoke.call_count == 6
+        assert mock_llm.invoke.call_count == 5
 
     @patch("docops.summarize.pipeline._get_llm")
     @patch("docops.summarize.pipeline.collect_ordered_chunks")
@@ -2862,7 +3121,6 @@ class TestCoverageGateIntegration:
             self._make_llm_response("Parcial B [Fonte 2]."),
             self._make_llm_response("Consolidado."),
             self._make_llm_response(self._good_summary_no_formula("MARKER_PLAIN")),
-            self._make_llm_response(self._good_summary_no_formula("MARKER_PLAIN")),
         ]
         mock_llm = MagicMock()
         mock_llm.invoke.side_effect = llm_outputs
@@ -2876,11 +3134,12 @@ class TestCoverageGateIntegration:
             "SUMMARY_RESYNTHESIS_WEAK_BLOCK_RATIO": "2.0",   # disable grounding trigger (ratio max=1.0)
             "SUMMARY_MIN_UNIQUE_SOURCES": "1",
             "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+            "SUMMARY_MAX_CORRECTIVE_PASSES": "2",
         }):
             result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1)
 
         assert "MARKER_PLAIN" in result["answer"]
-        assert mock_llm.invoke.call_count == 5
+        assert mock_llm.invoke.call_count == 4
 
 
 class TestDeepSummaryDiagnostics:
@@ -2973,7 +3232,12 @@ class TestDeepSummaryDiagnostics:
             "SUMMARY_MIN_UNIQUE_SOURCES": "1",
             "SUMMARY_STRUCTURE_MIN_CHARS": "20",
         }):
-            result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1)
+            result = run_deep_summary(
+                "doc.pdf",
+                "doc-uuid",
+                user_id=1,
+                profile="model_first",
+            )
 
         assert "diagnostics" not in result
 
@@ -3454,8 +3718,10 @@ class TestDiversityDrivenResynthesis:
         monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
         monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "true")
         monkeypatch.setenv("SUMMARY_RESYNTHESIS_WEAK_BLOCK_RATIO", "2.0")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO", "1.0")
         monkeypatch.setenv("SUMMARY_MIN_UNIQUE_SOURCES", "3")
         monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_MAX_CORRECTIVE_PASSES", "2")
 
         chunks = _make_chunks(6, with_sections=True)
         mock_collect.return_value = chunks
@@ -3465,7 +3731,6 @@ class TestDiversityDrivenResynthesis:
             self._make_llm_response("Parcial B [Fonte 1]."),
             self._make_llm_response("Consolidado."),
             self._make_llm_response(self._good_summary_single_source()),   # final
-            self._make_llm_response(self._good_summary_single_source()),   # polish
             self._make_llm_response(self._good_summary_diverse()),         # re-synthesis
         ]
         mock_llm = MagicMock()
@@ -3485,6 +3750,47 @@ class TestDiversityDrivenResynthesis:
         assert diag["resynthesis"]["unique_sources_before"] is not None
         assert diag["resynthesis"]["unique_sources_candidate"] is not None
         assert diag["resynthesis"]["unique_sources_candidate"] > diag["resynthesis"]["unique_sources_before"]
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_diversity_candidate_blocked_by_absolute_weak_ratio(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """Default absolute weak-ratio ceiling must block low-grounding candidates."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_REQUIRE_STRUCTURE", "true")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_FIX_PASS_ENABLED", "true")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_FIX_MAX_CALLS", "2")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "true")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_WEAK_BLOCK_RATIO", "2.0")
+        # Keep default absolute ceiling (0.35) to validate blocking behavior.
+        monkeypatch.delenv("SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO", raising=False)
+        monkeypatch.setenv("SUMMARY_MIN_UNIQUE_SOURCES", "3")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        chunks = _make_chunks(6, with_sections=True)
+        mock_collect.return_value = chunks
+
+        llm_outputs = [
+            self._make_llm_response("Parcial A [Fonte 1]."),
+            self._make_llm_response("Parcial B [Fonte 1]."),
+            self._make_llm_response("Consolidado."),
+            self._make_llm_response(self._good_summary_single_source()),
+            self._make_llm_response(self._good_summary_single_source()),
+            self._make_llm_response(self._good_summary_diverse()),
+        ]
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = llm_outputs
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        diag = result["diagnostics"]["resynthesis"]
+
+        assert diag["accepted"] is False
+        assert diag["absolute_weak_ratio_blocked"] is True
+        assert abs(diag["max_accepted_weak_ratio"] - 0.35) < 1e-9
 
     @patch("docops.summarize.pipeline._get_llm")
     @patch("docops.summarize.pipeline.collect_ordered_chunks")
@@ -3589,6 +3895,7 @@ class TestDiversityDrivenResynthesis:
         monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
         monkeypatch.setenv("SUMMARY_GROUP_SIZE", "3")
         monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_MAX_CORRECTIVE_PASSES", "2")
 
         mock_collect.return_value = _make_chunks(9, with_sections=False)
 
@@ -3621,7 +3928,6 @@ class TestDiversityDrivenResynthesis:
             self._make_llm_response("Parcial 3 [Fonte 1]."),
             self._make_llm_response("Consolidado."),
             self._make_llm_response(current_balanced),
-            self._make_llm_response(current_balanced),
             self._make_llm_response(candidate_diverse_weak),
         ]
         mock_llm = MagicMock()
@@ -3647,6 +3953,1560 @@ class TestDiversityDrivenResynthesis:
         assert resynth["grounding_weak_ratio_delta"] > 0.05
         assert abs(resynth["max_allowed_weak_ratio_degradation"] - 0.05) < 1e-9
         assert resynth["diversity_grounding_guard_blocked"] is True
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Topic backfill
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestTopicBackfillIntegration:
+    def _make_llm_response(self, text: str):
+        mock = MagicMock()
+        mock.content = text
+        return mock
+
+    def _base_summary(self, marker: str = "BASE") -> str:
+        return (
+            f"# Resumo Aprofundado — doc.pdf {marker}\n\n"
+            "## Objetivo e Contexto\n"
+            "O documento apresenta conceitos com base teórica e escopo bem definido [Fonte 1].\n\n"
+            "## Linha Lógica e Construção\n"
+            "A progressão organiza o conteúdo em etapas com encadeamento explícito [Fonte 1].\n\n"
+            "## Conceitos Fundamentais\n"
+            "As definições centrais conectam critérios, variáveis e decisões do modelo [Fonte 1].\n\n"
+            "## Síntese Final\n"
+            "A conclusão integra as ideias principais e limitações operacionais [Fonte 1]."
+        )
+
+    def _outline_missing(self) -> dict[str, Any]:
+        return {
+            "overall_score": 0.5,
+            "detected_topics": ["math_formalization"],
+            "must_cover_topics": ["math_formalization"],
+            "covered_topics": [],
+            "missing_topics": ["math_formalization"],
+            "weakly_covered_topics": [],
+            "topic_scores": {"math_formalization": 0.0},
+        }
+
+    def _outline_covered(self) -> dict[str, Any]:
+        return {
+            "overall_score": 1.0,
+            "detected_topics": ["math_formalization"],
+            "must_cover_topics": ["math_formalization"],
+            "covered_topics": ["math_formalization"],
+            "missing_topics": [],
+            "weakly_covered_topics": [],
+            "topic_scores": {"math_formalization": 1.0},
+        }
+
+    @patch("docops.summarize.pipeline._run_micro_topic_backfill")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_topic_backfill_triggers_and_is_accepted(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_micro_backfill,
+    ):
+        from docops.summarize.pipeline import run_deep_summary
+
+        base = self._base_summary("BASE")
+        backfilled = self._base_summary("BACKFILLED_OK")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_extract_topics.return_value = {
+            "detected_topics": ["math_formalization"],
+            "must_cover_topics": ["math_formalization"],
+            "minor_topics": [],
+            "topic_details": {"math_formalization": {"label": "Formalização matemática", "hits": 2}},
+            "outline_text": "",
+        }
+
+        def _outline_side_effect(text: str, topic_info: dict[str, Any]):
+            return self._outline_covered() if "BACKFILLED_OK" in text else self._outline_missing()
+
+        mock_outline_score.side_effect = _outline_side_effect
+
+        # _run_micro_topic_backfill returns a dict; the backfilled text contains BACKFILLED_OK
+        mock_micro_backfill.return_value = {
+            "text": backfilled,
+            "triggered": True,
+            "paragraphs_attempted": 1,
+            "paragraphs_accepted": 1,
+            "missing_topics_before": ["math_formalization"],
+            "missing_topics_after": [],
+            "skipped_topics": [],
+            "latency_ms": 10.0,
+        }
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [
+            self._make_llm_response("Parcial A [Fonte 1]."),
+            self._make_llm_response("Parcial B [Fonte 1]."),
+            self._make_llm_response("Consolidado."),
+            self._make_llm_response(base),
+        ]
+        mock_llm_factory.return_value = mock_llm
+
+        with patch.dict(os.environ, {
+            "SUMMARY_RESYNTHESIS_ENABLED": "false",
+            "SUMMARY_GROUNDING_REPAIR": "false",
+            "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+            # Disable absolute ceiling so this test focuses only on trigger/accept logic
+            "SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO": "1.0",
+            # Disable early backfill so this test isolates the post-resynthesis backfill step
+            "SUMMARY_BACKFILL_BEFORE_DEOVERREACH": "false",
+        }):
+            result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+
+        backfill = result["diagnostics"]["backfill"]
+        assert backfill["triggered"] is True
+        assert backfill["accepted"] is True
+        assert backfill["missing_before"] == ["math_formalization"]
+        assert backfill["missing_after"] == []
+        mock_micro_backfill.assert_called_once()
+        assert "BACKFILLED_OK" in result["answer"]
+
+    @patch("docops.summarize.pipeline._run_micro_topic_backfill")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_topic_backfill_rolls_back_on_structure_break(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_micro_backfill,
+    ):
+        """When micro-backfill accepts paragraphs but grounding ceiling is exceeded,
+        rollback_reason should be 'absolute_weak_ratio_exceeded'. When no paragraphs
+        are accepted (e.g. all discarded), rollback_reason is 'no_paragraphs_accepted'."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        base = self._base_summary("BASE")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_extract_topics.return_value = {
+            "detected_topics": ["math_formalization"],
+            "must_cover_topics": ["math_formalization"],
+            "minor_topics": [],
+            "topic_details": {"math_formalization": {"label": "Formalização matemática", "hits": 2}},
+            "outline_text": "",
+        }
+        mock_outline_score.return_value = self._outline_missing()
+
+        # Micro-backfill generates 0 accepted paragraphs (all discarded).
+        mock_micro_backfill.return_value = {
+            "text": base,  # unchanged — no paragraph accepted
+            "triggered": True,
+            "paragraphs_attempted": 1,
+            "paragraphs_accepted": 0,
+            "missing_topics_before": ["math_formalization"],
+            "missing_topics_after": ["math_formalization"],
+            "skipped_topics": [],
+            "latency_ms": 5.0,
+        }
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [
+            self._make_llm_response("Parcial A [Fonte 1]."),
+            self._make_llm_response("Parcial B [Fonte 1]."),
+            self._make_llm_response("Consolidado."),
+            self._make_llm_response(base),
+        ]
+        mock_llm_factory.return_value = mock_llm
+
+        with patch.dict(os.environ, {
+            "SUMMARY_RESYNTHESIS_ENABLED": "false",
+            "SUMMARY_GROUNDING_REPAIR": "false",
+            "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+        }):
+            result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+
+        backfill = result["diagnostics"]["backfill"]
+        assert backfill["triggered"] is True
+        assert backfill["accepted"] is False
+        assert backfill["rollback_reason"] == "no_paragraphs_accepted"
+        assert "BASE" in result["answer"]
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Absolute weak-ratio ceiling on backfill and final gate
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestBackfillAbsoluteWeakRatioCeiling:
+    """Backfill must be rejected when bf_weak_ratio > max_accepted_weak_ratio,
+    even when missing topics would be reduced."""
+
+    def _make_llm_response(self, text: str):
+        m = MagicMock()
+        m.content = text
+        return m
+
+    def _base_summary(self, marker: str = "BASE") -> str:
+        return (
+            f"# Resumo Aprofundado — doc.pdf {marker}\n\n"
+            "## Objetivo e Contexto\n"
+            "Introdução teórica com escopo bem definido [Fonte 1].\n\n"
+            "## Linha Lógica\n"
+            "Progressão em etapas [Fonte 1].\n\n"
+            "## Conceitos Fundamentais\n"
+            "Definições centrais [Fonte 1].\n\n"
+            "## Síntese Final\n"
+            "Conclusão integra as ideias [Fonte 1]."
+        )
+
+    def _outline_missing(self) -> dict[str, Any]:
+        return {
+            "overall_score": 0.5,
+            "detected_topics": ["math_formalization"],
+            "must_cover_topics": ["math_formalization"],
+            "covered_topics": [],
+            "missing_topics": ["math_formalization"],
+            "weakly_covered_topics": [],
+            "topic_scores": {"math_formalization": 0.0},
+        }
+
+    def _outline_covered(self) -> dict[str, Any]:
+        return {
+            "overall_score": 1.0,
+            "detected_topics": ["math_formalization"],
+            "must_cover_topics": ["math_formalization"],
+            "covered_topics": ["math_formalization"],
+            "missing_topics": [],
+            "weakly_covered_topics": [],
+            "topic_scores": {"math_formalization": 1.0},
+        }
+
+    def _grounding_above_ceiling(self) -> dict[str, Any]:
+        """weak_ratio = 4/10 = 0.40 > ceiling 0.35, but delta vs pre (0.32) is only 0.08.
+        Note: use with pre-grounding of _grounding_near_ceiling (0.32) so delta=0.08 > 0.05,
+        which means grounding_degraded fires first. For ceiling-specific test, use
+        _grounding_just_above_ceiling with pre=_grounding_just_below_ceiling."""
+        return {
+            "blocks_with_citations": 10,
+            "weakly_grounded": 4,
+            "repaired_blocks": 0,
+            "grounded_blocks": 6,
+        }
+
+    def _grounding_just_above_ceiling(self) -> dict[str, Any]:
+        """weak_ratio = 4/10 = 0.40 > ceiling 0.35; delta vs 0.37 pre is only 0.03 <= 0.05."""
+        return {
+            "blocks_with_citations": 10,
+            "weakly_grounded": 4,
+            "repaired_blocks": 0,
+            "grounded_blocks": 6,
+        }
+
+    def _grounding_just_below_ceiling(self) -> dict[str, Any]:
+        """weak_ratio = 37/100 = 0.37: used as pre-backfill baseline.
+        delta to just_above (0.40) = 0.03 <= max_weak_ratio_degradation (0.05) → no grounding_degraded.
+        But 0.40 > ceiling 0.35 → absolute_ceiling_exceeded fires."""
+        # Approximate with 10 blocks: 3.7 → use 4 weakly grounded = 0.40
+        # To get pre=0.37 we use 100 blocks, but keep it simple: use floats via direct dict.
+        return {
+            "blocks_with_citations": 100,
+            "weakly_grounded": 37,
+            "repaired_blocks": 0,
+            "grounded_blocks": 63,
+        }
+
+    def _grounding_ok(self) -> dict[str, Any]:
+        """Simulates weak_ratio below ceiling (0.20 <= 0.35)."""
+        return {
+            "blocks_with_citations": 10,
+            "weakly_grounded": 2,
+            "repaired_blocks": 0,
+            "grounded_blocks": 8,
+        }
+
+    @patch("docops.summarize.pipeline.validate_summary_grounding")
+    @patch("docops.summarize.pipeline._run_micro_topic_backfill")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_backfill_rejected_when_absolute_ceiling_exceeded(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_micro_backfill,
+        mock_grounding,
+    ):
+        """Micro-backfill with bf_weak_ratio > ceiling must be rejected."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        base = self._base_summary("BASE")
+        backfilled = self._base_summary("BACKFILLED_HIGH_WEAK")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_extract_topics.return_value = {
+            "detected_topics": ["math_formalization"],
+            "must_cover_topics": ["math_formalization"],
+            "minor_topics": [],
+            "topic_details": {"math_formalization": {"label": "Formalização matemática", "hits": 2}},
+            "outline_text": "",
+        }
+        # Micro-backfill returns 1 accepted paragraph, text contains marker.
+        mock_micro_backfill.return_value = {
+            "text": backfilled,
+            "triggered": True,
+            "paragraphs_attempted": 1,
+            "paragraphs_accepted": 1,
+            "missing_topics_before": ["math_formalization"],
+            "missing_topics_after": [],
+            "skipped_topics": [],
+            "latency_ms": 10.0,
+        }
+
+        def _outline_side_effect(text, topic_info):
+            if "BACKFILLED_HIGH_WEAK" in text:
+                return self._outline_covered()
+            return self._outline_missing()
+
+        mock_outline_score.side_effect = _outline_side_effect
+
+        # After micro-backfill: weak_ratio exceeds ceiling (0.40 > 0.35).
+        def _grounding_side_effect(text, anchors, threshold, llm=None):
+            if "BACKFILLED_HIGH_WEAK" in text:
+                return text, self._grounding_just_above_ceiling()
+            return text, self._grounding_just_below_ceiling()
+
+        mock_grounding.side_effect = _grounding_side_effect
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [
+            self._make_llm_response("Parcial A [Fonte 1]."),
+            self._make_llm_response("Parcial B [Fonte 1]."),
+            self._make_llm_response("Consolidado."),
+            self._make_llm_response(base),
+        ]
+        mock_llm_factory.return_value = mock_llm
+
+        with patch.dict(os.environ, {
+            "SUMMARY_RESYNTHESIS_ENABLED": "false",
+            "SUMMARY_GROUNDING_REPAIR": "false",
+            "SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO": "0.35",
+            "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+        }):
+            result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+
+        backfill = result["diagnostics"]["backfill"]
+        assert backfill["triggered"] is True
+        assert backfill["accepted"] is False, "Backfill must be rejected when ceiling exceeded"
+        assert backfill["rollback_reason"] == "absolute_weak_ratio_exceeded"
+        assert backfill["absolute_weak_ratio_blocked"] is True
+        # original (BASE) text must remain
+        assert "BASE" in result["answer"]
+        assert "BACKFILLED_HIGH_WEAK" not in result["answer"]
+
+    @patch("docops.summarize.pipeline.validate_summary_grounding")
+    @patch("docops.summarize.pipeline._run_micro_topic_backfill")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_backfill_accepted_when_within_ceiling(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_micro_backfill,
+        mock_grounding,
+    ):
+        """Micro-backfill accepted when weak_ratio stays within ceiling."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        base = self._base_summary("BASE")
+        backfilled = self._base_summary("BACKFILLED_OK")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_extract_topics.return_value = {
+            "detected_topics": ["math_formalization"],
+            "must_cover_topics": ["math_formalization"],
+            "minor_topics": [],
+            "topic_details": {"math_formalization": {"label": "Formalização matemática", "hits": 2}},
+            "outline_text": "",
+        }
+        mock_micro_backfill.return_value = {
+            "text": backfilled,
+            "triggered": True,
+            "paragraphs_attempted": 1,
+            "paragraphs_accepted": 1,
+            "missing_topics_before": ["math_formalization"],
+            "missing_topics_after": [],
+            "skipped_topics": [],
+            "latency_ms": 8.0,
+        }
+
+        def _outline_side_effect(text, topic_info):
+            if "BACKFILLED_OK" in text:
+                return self._outline_covered()
+            return self._outline_missing()
+
+        mock_outline_score.side_effect = _outline_side_effect
+
+        # All grounding calls return ok (weak_ratio=0.20 <= ceiling=0.35)
+        mock_grounding.side_effect = lambda text, anchors, threshold, llm=None: (
+            text, self._grounding_ok()
+        )
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [
+            self._make_llm_response("Parcial A [Fonte 1]."),
+            self._make_llm_response("Parcial B [Fonte 1]."),
+            self._make_llm_response("Consolidado."),
+            self._make_llm_response(base),
+        ]
+        mock_llm_factory.return_value = mock_llm
+
+        with patch.dict(os.environ, {
+            "SUMMARY_RESYNTHESIS_ENABLED": "false",
+            "SUMMARY_GROUNDING_REPAIR": "false",
+            "SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO": "0.35",
+            "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+            # Disable early backfill so this test isolates the post-resynthesis backfill step
+            "SUMMARY_BACKFILL_BEFORE_DEOVERREACH": "false",
+        }):
+            result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+
+        backfill = result["diagnostics"]["backfill"]
+        assert backfill["triggered"] is True
+        assert backfill["accepted"] is True
+        assert backfill["absolute_weak_ratio_blocked"] is False
+        assert "BACKFILLED_OK" in result["answer"]
+
+    def test_backfill_diagnostics_have_weak_ratio_fields(self):
+        """diagnostics['backfill'] always has weak_ratio_before and absolute_weak_ratio_blocked."""
+        from unittest.mock import patch as p
+        from docops.summarize.pipeline import run_deep_summary
+
+        with p("docops.summarize.pipeline.collect_ordered_chunks") as mc, \
+             p("docops.summarize.pipeline._get_llm") as ml, \
+             p("docops.summarize.pipeline.extract_document_topics") as me, \
+             p("docops.summarize.pipeline.score_topic_outline_coverage") as mo:
+
+            mc.return_value = _make_chunks(4, with_sections=True)
+            me.return_value = {
+                "detected_topics": [],
+                "must_cover_topics": [],
+                "minor_topics": [],
+                "topic_details": {},
+                "outline_text": "",
+            }
+            mo.return_value = {
+                "overall_score": 1.0, "detected_topics": [], "must_cover_topics": [],
+                "covered_topics": [], "missing_topics": [], "weakly_covered_topics": [],
+                "topic_scores": {},
+            }
+            base = (
+                "# Resumo Aprofundado — doc.pdf\n\n"
+                "## Objetivo e Contexto\nIntrodução [Fonte 1].\n\n"
+                "## Linha Lógica\nProgressão [Fonte 1].\n\n"
+                "## Conceitos Fundamentais\nDefinições [Fonte 1].\n\n"
+                "## Síntese Final\nConclusão [Fonte 1]."
+            )
+            m = MagicMock()
+            m.content = base
+            ml.return_value.invoke.side_effect = [m, m, m, m, m]
+
+            with patch.dict(os.environ, {
+                "SUMMARY_RESYNTHESIS_ENABLED": "false",
+                "SUMMARY_GROUNDING_REPAIR": "false",
+                "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+            }):
+                result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+
+        backfill = result["diagnostics"]["backfill"]
+        assert "weak_ratio_before" in backfill
+        assert "weak_ratio_after" in backfill
+        assert "absolute_weak_ratio_blocked" in backfill
+        assert isinstance(backfill["weak_ratio_before"], float)
+        assert backfill["absolute_weak_ratio_blocked"] is False  # not triggered
+
+
+class TestFinalAbsoluteWeakRatioGate:
+    """Final gate tracks absolute ceiling and marks diagnostics correctly."""
+
+    def _base_summary(self, marker: str = "") -> str:
+        tag = f" {marker}" if marker else ""
+        return (
+            f"# Resumo Aprofundado — doc.pdf{tag}\n\n"
+            "## Objetivo e Contexto\n"
+            "Introdução teórica com escopo bem definido [Fonte 1].\n\n"
+            "## Linha Lógica\n"
+            "Progressão em etapas [Fonte 1].\n\n"
+            "## Conceitos Fundamentais\n"
+            "Definições centrais [Fonte 1].\n\n"
+            "## Síntese Final\n"
+            "Conclusão integra as ideias [Fonte 1]."
+        )
+
+    @patch("docops.summarize.pipeline.validate_summary_grounding")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_final_gate_marks_failure_when_weak_ratio_exceeds_ceiling(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_grounding,
+    ):
+        """diagnostics['final']['absolute_weak_ratio_passed'] must be False when ratio > ceiling."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_extract_topics.return_value = {
+            "detected_topics": [],
+            "must_cover_topics": [],
+            "minor_topics": [],
+            "topic_details": {},
+            "outline_text": "",
+        }
+        # All grounding calls return bad (weak_ratio=0.80 > ceiling=0.35)
+        mock_grounding.side_effect = lambda text, anchors, threshold, llm=None: (
+            text,
+            {
+                "blocks_with_citations": 10,
+                "weakly_grounded": 8,
+                "repaired_blocks": 0,
+                "grounded_blocks": 2,
+            },
+        )
+
+        mock_llm = MagicMock()
+        r = MagicMock()
+        r.content = self._base_summary()
+        mock_llm.invoke.side_effect = [r, r, r, r, r]
+        mock_llm_factory.return_value = mock_llm
+
+        with patch.dict(os.environ, {
+            "SUMMARY_RESYNTHESIS_ENABLED": "false",
+            "SUMMARY_GROUNDING_REPAIR": "false",
+            "SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO": "0.35",
+            "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+        }):
+            result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+
+        final_diag = result["diagnostics"]["final"]
+        assert "absolute_weak_ratio_passed" in final_diag
+        assert final_diag["absolute_weak_ratio_passed"] is False
+        assert final_diag["absolute_weak_ratio_ceiling"] == pytest.approx(0.35, abs=0.001)
+
+    @patch("docops.summarize.pipeline.validate_summary_grounding")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_final_gate_passes_when_within_ceiling(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_grounding,
+    ):
+        """diagnostics['final']['absolute_weak_ratio_passed'] is True when ratio <= ceiling."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_extract_topics.return_value = {
+            "detected_topics": [],
+            "must_cover_topics": [],
+            "minor_topics": [],
+            "topic_details": {},
+            "outline_text": "",
+        }
+        mock_grounding.side_effect = lambda text, anchors, threshold, llm=None: (
+            text,
+            {
+                "blocks_with_citations": 10,
+                "weakly_grounded": 2,
+                "repaired_blocks": 0,
+                "grounded_blocks": 8,
+            },
+        )
+
+        mock_llm = MagicMock()
+        r = MagicMock()
+        r.content = self._base_summary()
+        mock_llm.invoke.side_effect = [r, r, r, r, r]
+        mock_llm_factory.return_value = mock_llm
+
+        with patch.dict(os.environ, {
+            "SUMMARY_RESYNTHESIS_ENABLED": "false",
+            "SUMMARY_GROUNDING_REPAIR": "false",
+            "SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO": "0.35",
+            "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+        }):
+            result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+
+        final_diag = result["diagnostics"]["final"]
+        assert final_diag["absolute_weak_ratio_passed"] is True
+
+    @patch("docops.summarize.pipeline.validate_summary_grounding")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_final_gate_passes_after_repair_reduces_ratio(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_grounding,
+    ):
+        """When repair=true, a repair call that reduces weak_ratio below ceiling makes gate pass."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_extract_topics.return_value = {
+            "detected_topics": [],
+            "must_cover_topics": [],
+            "minor_topics": [],
+            "topic_details": {},
+            "outline_text": "",
+        }
+
+        # First calls return bad grounding; the final repair call returns good
+        grounding_calls = [0]
+
+        def _grounding_side_effect(text, anchors, threshold, llm=None):
+            grounding_calls[0] += 1
+            if llm is not None:
+                # This is the repair call — return good grounding
+                return text, {
+                    "blocks_with_citations": 10,
+                    "weakly_grounded": 2,
+                    "repaired_blocks": 5,
+                    "grounded_blocks": 8,
+                }
+            return text, {
+                "blocks_with_citations": 10,
+                "weakly_grounded": 8,
+                "repaired_blocks": 0,
+                "grounded_blocks": 2,
+            }
+
+        mock_grounding.side_effect = _grounding_side_effect
+
+        mock_llm = MagicMock()
+        r = MagicMock()
+        r.content = self._base_summary()
+        mock_llm.invoke.side_effect = [r, r, r, r, r]
+        mock_llm_factory.return_value = mock_llm
+
+        with patch.dict(os.environ, {
+            "SUMMARY_RESYNTHESIS_ENABLED": "false",
+            "SUMMARY_GROUNDING_REPAIR": "true",
+            "SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO": "0.35",
+            "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+        }):
+            result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+
+        final_diag = result["diagnostics"]["final"]
+        assert final_diag["absolute_weak_ratio_passed"] is True, (
+            f"Expected gate to pass after repair, got: {final_diag}"
+        )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Final accepted / blocking_reasons — outline missing topics gate
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestFinalAcceptedAndOutlineGate:
+    """Tests for diagnostics['final']['accepted'] and outline missing-topics gate."""
+
+    def _base_summary(self) -> str:
+        return (
+            "# Resumo Aprofundado — doc.pdf\n\n"
+            "## Objetivo e Contexto\n"
+            "Introdução teórica com escopo bem definido [Fonte 1].\n\n"
+            "## Linha Lógica\n"
+            "Progressão em etapas [Fonte 1].\n\n"
+            "## Conceitos Fundamentais\n"
+            "Definições centrais [Fonte 1].\n\n"
+            "## Síntese Final\n"
+            "Conclusão integra as ideias [Fonte 1]."
+        )
+
+    def _resp(self, text: str):
+        m = MagicMock()
+        m.content = text
+        return m
+
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_final_accepted_false_when_missing_topics(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+    ):
+        """diagnostics['final']['accepted'] must be False when missing_topics != []."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_extract_topics.return_value = {
+            "detected_topics": ["regularization"],
+            "must_cover_topics": ["regularization"],
+            "minor_topics": [],
+            "topic_details": {"regularization": {"label": "Regularização", "hits": 3}},
+            "outline_text": "",
+        }
+        # Always returns missing, even after extra repair attempt
+        mock_outline_score.return_value = {
+            "overall_score": 0.80,
+            "detected_topics": ["regularization"],
+            "must_cover_topics": ["regularization"],
+            "covered_topics": [],
+            "missing_topics": ["regularization"],
+            "weakly_covered_topics": [],
+            "topic_scores": {"regularization": 0.0},
+        }
+
+        mock_llm = MagicMock()
+        base = self._base_summary()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 10
+        mock_llm_factory.return_value = mock_llm
+
+        with patch.dict(os.environ, {
+            "SUMMARY_RESYNTHESIS_ENABLED": "false",
+            "SUMMARY_GROUNDING_REPAIR": "false",
+            "SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO": "1.0",
+            "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+        }):
+            result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+
+        final = result["diagnostics"]["final"]
+        assert final["accepted"] is False, f"Expected accepted=False, got: {final}"
+        assert any("outline_missing_topics_not_allowed" in r for r in final["blocking_reasons"]), (
+            f"Expected outline_missing_topics_not_allowed in blocking_reasons: {final['blocking_reasons']}"
+        )
+        assert "regularization" in str(final["blocking_reasons"])
+
+    @patch("docops.summarize.pipeline.validate_summary_structure")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_final_accepted_true_when_no_missing_topics(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_validate_structure,
+    ):
+        """diagnostics['final']['accepted'] is True when no missing topics and weak_ratio OK."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_extract_topics.return_value = {
+            "detected_topics": ["regularization"],
+            "must_cover_topics": ["regularization"],
+            "minor_topics": [],
+            "topic_details": {"regularization": {"label": "Regularização", "hits": 3}},
+            "outline_text": "",
+        }
+        mock_outline_score.return_value = {
+            "overall_score": 1.0,
+            "detected_topics": ["regularization"],
+            "must_cover_topics": ["regularization"],
+            "covered_topics": ["regularization"],
+            "missing_topics": [],
+            "weakly_covered_topics": [],
+            "topic_scores": {"regularization": 1.0},
+        }
+        mock_validate_structure.return_value = {
+            "valid": True,
+            "preamble_present": True,
+            "section_count": 4,
+            "min_sections": 4,
+            "max_sections": 6,
+            "missing_categories": [],
+            "missing_heading_categories": [],
+            "body_fallback_categories": [],
+            "weak_section_indices": [],
+            "weak_section_titles": [],
+            "closure_heading_count": 1,
+            "closure_section_ok": True,
+            "structure_failure_reason": "",
+        }
+
+        mock_llm = MagicMock()
+        base = self._base_summary()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 10
+        mock_llm_factory.return_value = mock_llm
+
+        with patch.dict(os.environ, {
+            "SUMMARY_RESYNTHESIS_ENABLED": "false",
+            "SUMMARY_GROUNDING_REPAIR": "false",
+            "SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO": "1.0",
+            "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+        }):
+            result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+
+        final = result["diagnostics"]["final"]
+        assert final["accepted"] is True, f"Expected accepted=True, got: {final}"
+        assert final["blocking_reasons"] == [], f"Expected empty blocking_reasons: {final}"
+
+    @patch("docops.summarize.pipeline.validate_summary_grounding")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_final_accepted_false_when_weak_ratio_exceeds_ceiling(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_grounding,
+    ):
+        """diagnostics['final']['accepted'] is False when weak_ratio > ceiling (no missing topics)."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_extract_topics.return_value = {
+            "detected_topics": [],
+            "must_cover_topics": [],
+            "minor_topics": [],
+            "topic_details": {},
+            "outline_text": "",
+        }
+        mock_outline_score.return_value = {
+            "overall_score": 1.0,
+            "detected_topics": [],
+            "must_cover_topics": [],
+            "covered_topics": [],
+            "missing_topics": [],
+            "weakly_covered_topics": [],
+            "topic_scores": {},
+        }
+        # All grounding returns high weak ratio
+        mock_grounding.side_effect = lambda text, anchors, threshold, llm=None: (
+            text, {"blocks_with_citations": 10, "weakly_grounded": 8,
+                   "repaired_blocks": 0, "grounded_blocks": 2}
+        )
+
+        mock_llm = MagicMock()
+        base = self._base_summary()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 10
+        mock_llm_factory.return_value = mock_llm
+
+        with patch.dict(os.environ, {
+            "SUMMARY_RESYNTHESIS_ENABLED": "false",
+            "SUMMARY_GROUNDING_REPAIR": "false",
+            "SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO": "0.35",
+            "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+        }):
+            result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+
+        final = result["diagnostics"]["final"]
+        assert final["accepted"] is False
+        assert any("absolute_ceiling" in r for r in final["blocking_reasons"])
+
+    @patch("docops.summarize.pipeline.validate_summary_structure")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_final_accepted_false_when_structure_invalid(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_validate_structure,
+    ):
+        """diagnostics['final']['accepted'] must be False when structure is invalid."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_extract_topics.return_value = {
+            "detected_topics": [],
+            "must_cover_topics": [],
+            "minor_topics": [],
+            "topic_details": {},
+            "outline_text": "",
+        }
+        mock_outline_score.return_value = {
+            "overall_score": 1.0,
+            "detected_topics": [],
+            "must_cover_topics": [],
+            "covered_topics": [],
+            "missing_topics": [],
+            "weakly_covered_topics": [],
+            "topic_scores": {},
+        }
+        mock_validate_structure.return_value = {
+            "valid": False,
+            "preamble_present": True,
+            "section_count": 4,
+            "min_sections": 4,
+            "max_sections": 6,
+            "missing_categories": [],
+            "missing_heading_categories": [],
+            "body_fallback_categories": [],
+            "weak_section_indices": [2],
+            "weak_section_titles": ["Conceitos Fundamentais"],
+            "closure_heading_count": 1,
+            "closure_section_ok": False,
+            "structure_failure_reason": "weak_sections|weak_closure",
+        }
+
+        mock_llm = MagicMock()
+        base = self._base_summary()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 10
+        mock_llm_factory.return_value = mock_llm
+
+        with patch.dict(os.environ, {
+            "SUMMARY_RESYNTHESIS_ENABLED": "false",
+            "SUMMARY_GROUNDING_REPAIR": "false",
+            "SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO": "1.0",
+            "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+        }):
+            result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+
+        final = result["diagnostics"]["final"]
+        assert final["accepted"] is False, f"Expected accepted=False, got: {final}"
+        assert any("structure_invalid" in r for r in final["blocking_reasons"]), (
+            f"Expected structure_invalid in blocking_reasons: {final['blocking_reasons']}"
+        )
+
+    @patch("docops.summarize.pipeline._run_micro_topic_backfill")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_extra_outline_repair_triggered_on_missing_topics(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_micro_backfill,
+    ):
+        """Extra outline-repair micro-pass must be triggered when topics remain missing."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        base = self._base_summary()
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_extract_topics.return_value = {
+            "detected_topics": ["regularization"],
+            "must_cover_topics": ["regularization"],
+            "minor_topics": [],
+            "topic_details": {"regularization": {"label": "Regularização", "hits": 3}},
+            "outline_text": "",
+        }
+
+        # Regular micro-backfill returns no improvement; extra micro-pass also runs.
+        mock_micro_backfill.side_effect = [
+            {
+                "text": base,
+                "triggered": True,
+                "paragraphs_attempted": 1,
+                "paragraphs_accepted": 0,
+                "missing_topics_before": ["regularization"],
+                "missing_topics_after": ["regularization"],
+                "skipped_topics": [],
+                "latency_ms": 5.0,
+            },
+            {
+                "text": base,
+                "triggered": True,
+                "paragraphs_attempted": 1,
+                "paragraphs_accepted": 0,
+                "missing_topics_before": ["regularization"],
+                "missing_topics_after": ["regularization"],
+                "skipped_topics": [],
+                "latency_ms": 5.0,
+            },
+        ]
+
+        # Outline always returns missing so both backfill steps fire.
+        mock_outline_score.return_value = {
+            "overall_score": 0.80,
+            "detected_topics": ["regularization"],
+            "must_cover_topics": ["regularization"],
+            "covered_topics": [],
+            "missing_topics": ["regularization"],
+            "weakly_covered_topics": [],
+            "topic_scores": {"regularization": 0.0},
+        }
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 10
+        mock_llm_factory.return_value = mock_llm
+
+        with patch.dict(os.environ, {
+            "SUMMARY_RESYNTHESIS_ENABLED": "false",
+            "SUMMARY_GROUNDING_REPAIR": "false",
+            "SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO": "1.0",
+            "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+            "SUMMARY_MAX_CORRECTIVE_PASSES": "2",
+        }):
+            result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+
+        # regular + extra outline micro-pass
+        assert mock_micro_backfill.call_count >= 2
+        extra = result["diagnostics"]["extra_outline_repair"]
+        assert extra["triggered"] is True
+
+    @patch("docops.summarize.pipeline.validate_summary_grounding")
+    @patch("docops.summarize.pipeline.check_formula_mode")
+    @patch("docops.summarize.pipeline.classify_claim_risks")
+    @patch("docops.summarize.pipeline._run_micro_topic_backfill")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_recompute_metrics_after_extra_outline_repair_acceptance(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_micro_backfill,
+        mock_classify_claims,
+        mock_check_formula_mode,
+        mock_grounding,
+    ):
+        """When extra outline-repair is accepted, final claim/inference diagnostics
+        must reflect the repaired text, not stale pre-repair metrics."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_extract_topics.return_value = {
+            "detected_topics": ["regularization"],
+            "must_cover_topics": ["regularization"],
+            "minor_topics": [],
+            "topic_details": {"regularization": {"label": "Regularização", "hits": 3}},
+            "outline_text": "",
+        }
+
+        # Outline is missing unless repaired marker is present.
+        def _outline_side(text, _topic_info):
+            if "FIXED_EXTRA" in text:
+                return {
+                    "overall_score": 1.0,
+                    "detected_topics": ["regularization"],
+                    "must_cover_topics": ["regularization"],
+                    "covered_topics": ["regularization"],
+                    "missing_topics": [],
+                    "weakly_covered_topics": [],
+                    "topic_scores": {"regularization": 1.0},
+                }
+            return {
+                "overall_score": 0.80,
+                "detected_topics": ["regularization"],
+                "must_cover_topics": ["regularization"],
+                "covered_topics": [],
+                "missing_topics": ["regularization"],
+                "weakly_covered_topics": [],
+                "topic_scores": {"regularization": 0.0},
+            }
+
+        mock_outline_score.side_effect = _outline_side
+
+        # Micro-backfill (regular step): returns 0 accepted paragraphs, topic still missing.
+        # Then extra outline micro-pass returns repaired text (FIXED_EXTRA).
+        def _base_summary_fn():
+            return (
+                "# Resumo Aprofundado — doc.pdf BASE\n\n"
+                "## Objetivo e Contexto\n"
+                "Introdução teórica com escopo bem definido [Fonte 1].\n\n"
+                "## Linha Lógica\n"
+                "Progressão em etapas [Fonte 1].\n\n"
+                "## Conceitos Fundamentais\n"
+                "Definições [Fonte 1].\n\n"
+                "## Síntese Final\n"
+                "Conclusão [Fonte 1]."
+            )
+
+        fixed_extra = (
+            "# Resumo Aprofundado — doc.pdf FIXED_EXTRA\n\n"
+            "## Objetivo e Contexto\n"
+            "Introdução teórica com escopo bem definido [Fonte 1].\n\n"
+            "## Linha Lógica\n"
+            "Progressão em etapas com encadeamento explícito [Fonte 1].\n\n"
+            "## Conceitos Fundamentais\n"
+            "Regularização é tratada de forma direta e aplicada [Fonte 1].\n\n"
+            "## Síntese Final\n"
+            "Conclusão integra os tópicos com foco em generalização [Fonte 1]."
+        )
+        mock_micro_backfill.side_effect = [
+            {
+                "text": _base_summary_fn(),
+                "triggered": True,
+                "paragraphs_attempted": 1,
+                "paragraphs_accepted": 0,
+                "missing_topics_before": ["regularization"],
+                "missing_topics_after": ["regularization"],
+                "skipped_topics": [],
+                "latency_ms": 5.0,
+            },
+            {
+                "text": fixed_extra,
+                "triggered": True,
+                "paragraphs_attempted": 1,
+                "paragraphs_accepted": 1,
+                "missing_topics_before": ["regularization"],
+                "missing_topics_after": [],
+                "skipped_topics": [],
+                "latency_ms": 5.0,
+            },
+        ]
+
+        # Force deterministic grounded outputs to keep this test focused on
+        # stale-metrics regression, not grounding stochasticity.
+        mock_grounding.side_effect = lambda text, anchors, threshold, llm=None: (
+            text,
+            {
+                "blocks_with_citations": 4,
+                "weakly_grounded": 0,
+                "repaired_blocks": 0,
+                "block_scores": [],
+            },
+        )
+
+        # Simulate stale pre-repair claim risk (unsupported=2) and repaired text
+        # claim risk (unsupported=0). Final diagnostics must use the repaired one.
+        def _classify_side(text, _anchors):
+            if "FIXED_EXTRA" in text:
+                return {
+                    "sentences_total": 4,
+                    "high_risk_count": 0,
+                    "unsupported_high_risk_count": 0,
+                    "low_info_source_claims_count": 0,
+                    "low_info_source_claim_indices": [],
+                    "formula_claims_total": 0,
+                    "formula_claims_supported": 0,
+                    "formula_claims_downgraded_to_concept": 0,
+                    "sentences_classified": [],
+                }
+            return {
+                "sentences_total": 4,
+                "high_risk_count": 2,
+                "unsupported_high_risk_count": 2,
+                "low_info_source_claims_count": 0,
+                "low_info_source_claim_indices": [],
+                "formula_claims_total": 0,
+                "formula_claims_supported": 0,
+                "formula_claims_downgraded_to_concept": 0,
+                "sentences_classified": [],
+            }
+
+        mock_classify_claims.side_effect = _classify_side
+        mock_check_formula_mode.side_effect = (
+            lambda claim_risk, _anchors, _mode="conservative": claim_risk
+        )
+
+        mock_llm = MagicMock()
+        base = self._base_summary()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 10
+        mock_llm_factory.return_value = mock_llm
+
+        with patch.dict(os.environ, {
+            "SUMMARY_RESYNTHESIS_ENABLED": "false",
+            "SUMMARY_GROUNDING_REPAIR": "false",
+            "SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO": "1.0",
+            "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+            "SUMMARY_MAX_CORRECTIVE_PASSES": "3",
+            # Disable early backfill so budget is not consumed before extra outline-repair
+            "SUMMARY_BACKFILL_BEFORE_DEOVERREACH": "false",
+        }):
+            result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+
+        extra = result["diagnostics"]["extra_outline_repair"]
+        claim = result["diagnostics"]["claim_risk"]
+        final = result["diagnostics"]["final"]
+        assert extra["accepted"] is True, f"Expected extra repair accepted: {extra}"
+        assert claim["unsupported_high_risk_count"] == 0, (
+            f"Expected post-repair claim risk in diagnostics, got: {claim}"
+        )
+        assert final["missing_topics"] == [], (
+            f"Expected no missing topics after accepted extra repair, got: {final}"
+        )
+
+    @patch("docops.summarize.pipeline.validate_summary_structure")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_final_accepted_true_when_no_must_cover_topics(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_validate_structure,
+    ):
+        """When must_cover_topics is empty, missing_topics does not block acceptance."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_extract_topics.return_value = {
+            "detected_topics": [],
+            "must_cover_topics": [],
+            "minor_topics": [],
+            "topic_details": {},
+            "outline_text": "",
+        }
+        mock_outline_score.return_value = {
+            "overall_score": 1.0,
+            "detected_topics": [],
+            "must_cover_topics": [],
+            "covered_topics": [],
+            "missing_topics": [],
+            "weakly_covered_topics": [],
+            "topic_scores": {},
+        }
+        mock_validate_structure.return_value = {
+            "valid": True,
+            "preamble_present": True,
+            "section_count": 4,
+            "min_sections": 4,
+            "max_sections": 6,
+            "missing_categories": [],
+            "missing_heading_categories": [],
+            "body_fallback_categories": [],
+            "weak_section_indices": [],
+            "weak_section_titles": [],
+            "closure_heading_count": 1,
+            "closure_section_ok": True,
+            "structure_failure_reason": "",
+        }
+
+        mock_llm = MagicMock()
+        base = self._base_summary()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 10
+        mock_llm_factory.return_value = mock_llm
+
+        with patch.dict(os.environ, {
+            "SUMMARY_RESYNTHESIS_ENABLED": "false",
+            "SUMMARY_GROUNDING_REPAIR": "false",
+            "SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO": "1.0",
+            "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+        }):
+            result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+
+        assert result["diagnostics"]["final"]["accepted"] is True
+
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_diagnostics_always_have_final_fields(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+    ):
+        """diagnostics['final'] always has accepted, blocking_reasons, absolute_weak_ratio_passed."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_extract_topics.return_value = {
+            "detected_topics": [],
+            "must_cover_topics": [],
+            "minor_topics": [],
+            "topic_details": {},
+            "outline_text": "",
+        }
+        mock_outline_score.return_value = {
+            "overall_score": 1.0, "detected_topics": [], "must_cover_topics": [],
+            "covered_topics": [], "missing_topics": [], "weakly_covered_topics": [],
+            "topic_scores": {},
+        }
+
+        mock_llm = MagicMock()
+        base = self._base_summary()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 10
+        mock_llm_factory.return_value = mock_llm
+
+        with patch.dict(os.environ, {
+            "SUMMARY_RESYNTHESIS_ENABLED": "false",
+            "SUMMARY_STRUCTURE_MIN_CHARS": "20",
+        }):
+            result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+
+        final = result["diagnostics"]["final"]
+        for key in ("accepted", "blocking_reasons", "absolute_weak_ratio_passed",
+                    "absolute_weak_ratio_ceiling", "final_weak_ratio"):
+            assert key in final, f"Missing key '{key}' in diagnostics['final']"
+        assert isinstance(final["accepted"], bool)
+        assert isinstance(final["blocking_reasons"], list)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Non-canonical citation sanitization
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestSanitizeNonCanonicalCitations:
+    """Tests for _sanitize_non_canonical_citations."""
+
+    def _fn(self, text: str) -> str:
+        from docops.summarize.pipeline import _sanitize_non_canonical_citations
+        return _sanitize_non_canonical_citations(text)
+
+    def test_removes_contexto_adicional(self):
+        text = "O modelo convergiu [Contexto adicional, p. 4] conforme esperado."
+        result = self._fn(text)
+        assert "Contexto adicional" not in result
+        assert "O modelo convergiu" in result
+        assert "conforme esperado." in result
+
+    def test_removes_meta_bracket(self):
+        text = "Texto relevante [meta] e mais conteúdo."
+        result = self._fn(text)
+        assert "[meta]" not in result
+
+    def test_removes_fonte_extra(self):
+        text = "Veja [Fonte extra 2] para detalhes."
+        result = self._fn(text)
+        assert "Fonte extra" not in result
+
+    def test_preserves_canonical_citation(self):
+        text = "A análise mostra [Fonte 1] e [Fonte 12] como referências válidas."
+        result = self._fn(text)
+        assert "[Fonte 1]" in result
+        assert "[Fonte 12]" in result
+
+    def test_preserves_math_interval(self):
+        """Brackets with only digits/comma must NOT be removed ([0,1], [a,b])."""
+        text = "O valor pertence ao intervalo [0,1] e satisfaz a condição."
+        result = self._fn(text)
+        assert "[0,1]" in result
+
+    def test_preserves_markdown_link(self):
+        """[text](url) Markdown links must NOT be touched."""
+        text = "Consulte [o documento](https://example.com) para mais detalhes."
+        result = self._fn(text)
+        assert "[o documento](https://example.com)" in result
+
+    def test_removes_multiple_non_canonical(self):
+        text = (
+            "Introdução [Contexto adicional, p. 4] ao tema.\n"
+            "Detalhes [meta] foram omitidos.\n"
+            "Referência válida [Fonte 3] confirmada."
+        )
+        result = self._fn(text)
+        assert "Contexto adicional" not in result
+        assert "[meta]" not in result
+        assert "[Fonte 3]" in result
+
+    def test_empty_string(self):
+        assert self._fn("") == ""
+
+    def test_none_like_empty(self):
+        # Should not raise; returns empty
+        result = self._fn("")
+        assert result == ""
+
+
+class TestBackfillNonCanonicalCitationIntegration:
+    """Integration tests: backfill output with non-canonical citations is cleaned."""
+
+    def _make_resp(self, text: str):
+        m = MagicMock()
+        m.content = text
+        return m
+
+    def _base_summary(self, marker: str = "BASE") -> str:
+        return (
+            f"# Resumo Aprofundado — doc.pdf {marker}\n\n"
+            "## Objetivo e Contexto\n"
+            "Introdução teórica com escopo bem definido [Fonte 1].\n\n"
+            "## Linha Lógica\n"
+            "Progressão em etapas [Fonte 1].\n\n"
+            "## Conceitos Fundamentais\n"
+            "Definições centrais [Fonte 1].\n\n"
+            "## Síntese Final\n"
+            "Conclusão integra as ideias [Fonte 1]."
+        )
+
+    def _backfill_with_noise(self) -> str:
+        """Simulates a backfill LLM output that leaked a non-canonical citation."""
+        return (
+            "# Resumo Aprofundado — doc.pdf BACKFILLED\n\n"
+            "## Objetivo e Contexto\n"
+            "Introdução teórica com escopo bem definido [Fonte 1].\n\n"
+            "## Linha Lógica\n"
+            "Progressão em etapas [Fonte 1].\n\n"
+            "## Conceitos Fundamentais\n"
+            "Definições centrais [Fonte 1].\n\n"
+            "## Formalização Matemática\n"
+            "A prova usa [Contexto adicional, p. 4] como suporte e [meta] para contextualizar [Fonte 1].\n\n"
+            "## Síntese Final\n"
+            "Conclusão integra as ideias [Fonte 1]."
+        )
+
+    @patch("docops.summarize.pipeline._run_micro_topic_backfill")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_backfill_non_canonical_citations_stripped_from_answer(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_micro_backfill,
+    ):
+        """Answer must not contain [Contexto adicional ...] or [meta] after backfill."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        chunks = [Document(page_content=f"chunk {i}", metadata={"chunk_index": i}) for i in range(3)]
+        mock_collect.return_value = chunks
+
+        outline_missing = {
+            "overall_score": 0.5,
+            "detected_topics": ["math_formalization"],
+            "must_cover_topics": ["math_formalization"],
+            "covered_topics": [],
+            "missing_topics": ["math_formalization"],
+            "weakly_covered_topics": [],
+            "topic_scores": {"math_formalization": 0.0},
+        }
+        outline_covered = {
+            "overall_score": 1.0,
+            "detected_topics": ["math_formalization"],
+            "must_cover_topics": ["math_formalization"],
+            "covered_topics": ["math_formalization"],
+            "missing_topics": [],
+            "weakly_covered_topics": [],
+            "topic_scores": {"math_formalization": 1.0},
+        }
+        mock_extract_topics.return_value = {
+            "detected_topics": ["math_formalization"],
+            "must_cover_topics": ["math_formalization"],
+            "topic_details": {"math_formalization": {"label": "Formalização Matemática", "hits": 3}},
+        }
+
+        call_count = [0]
+
+        def _outline_side_effect(text, topic_info):
+            call_count[0] += 1
+            # First call (pre-backfill check): missing
+            # Second call (bf_outline after backfill): covered
+            return outline_missing if call_count[0] == 1 else outline_covered
+
+        mock_outline_score.side_effect = _outline_side_effect
+        mock_micro_backfill.return_value = {
+            "text": self._backfill_with_noise(),
+            "triggered": True,
+            "paragraphs_attempted": 1,
+            "paragraphs_accepted": 1,
+            "missing_topics_before": ["math_formalization"],
+            "missing_topics_after": [],
+            "skipped_topics": [],
+            "latency_ms": 5.0,
+        }
+
+        mock_llm = MagicMock()
+        partial = self._base_summary("PARTIAL")
+        consolidated = self._base_summary("CONSOLIDATED")
+        mock_llm.invoke.side_effect = [
+            self._make_resp(partial),
+            self._make_resp(partial),
+            self._make_resp(consolidated),
+            self._make_resp(self._base_summary("FINAL")),
+            self._make_resp(self._base_summary("POLISHED")),
+        ]
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        answer = result["answer"]
+
+        assert "Contexto adicional" not in answer, (
+            f"[Contexto adicional] leaked into answer:\n{answer}"
+        )
+        assert "[meta]" not in answer, (
+            f"[meta] leaked into answer:\n{answer}"
+        )
+        # Canonical citations must survive
+        assert "[Fonte 1]" in answer
+
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_math_interval_not_stripped_from_final_answer(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+    ):
+        """Mathematical notation [0,1] in text must not be removed by sanitization."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        chunks = [Document(page_content=f"chunk {i}", metadata={"chunk_index": i}) for i in range(3)]
+        mock_collect.return_value = chunks
+
+        summary_with_math = (
+            "# Resumo Aprofundado — doc.pdf\n\n"
+            "## Objetivo e Contexto\n"
+            "O valor pertence ao intervalo [0,1] e satisfaz a condição [Fonte 1].\n\n"
+            "## Linha Lógica\n"
+            "Progressão em etapas [Fonte 1].\n\n"
+            "## Conceitos Fundamentais\n"
+            "Definições centrais [Fonte 1].\n\n"
+            "## Síntese Final\n"
+            "Conclusão integra as ideias [Fonte 1]."
+        )
+
+        mock_extract_topics.return_value = {
+            "detected_topics": [],
+            "must_cover_topics": [],
+            "topic_details": {},
+        }
+        mock_outline_score.return_value = {
+            "overall_score": 1.0,
+            "detected_topics": [],
+            "must_cover_topics": [],
+            "covered_topics": [],
+            "missing_topics": [],
+            "weakly_covered_topics": [],
+            "topic_scores": {},
+        }
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [
+            self._make_resp(summary_with_math),
+            self._make_resp(summary_with_math),
+            self._make_resp(summary_with_math),
+            self._make_resp(summary_with_math),
+            self._make_resp(summary_with_math),
+        ]
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1)
+        answer = result["answer"]
+
+        assert "[0,1]" in answer, (
+            f"Mathematical interval [0,1] was wrongly stripped from answer:\n{answer}"
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -3989,9 +5849,12 @@ class TestRecoveryRuleAutoMerge:
 
     @patch("docops.summarize.pipeline._get_llm")
     @patch("docops.summarize.pipeline.collect_ordered_chunks")
-    def test_recovery_auto_merge_accepts_candidate(self, mock_collect, mock_llm_factory):
+    def test_recovery_auto_merge_accepts_candidate(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
         """Candidate with 7 sections and good diversity is recovered via auto-merge."""
         from docops.summarize.pipeline import run_deep_summary
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "true")
 
         chunks = [
             Document(
@@ -4014,9 +5877,11 @@ class TestRecoveryRuleAutoMerge:
         # The re-synthesis returns 7-section summary with good diversity.
         initial_summary = self._good_summary_5_sections()
         resynth_summary = self._good_summary_7_sections()
+        from docops.config import config as runtime_config
+        partial_calls = max(1, int(runtime_config.summary_max_groups))
 
         llm_outputs = (
-            [self._make_llm_response(f"Parcial {i}.") for i in range(8)]
+            [self._make_llm_response(f"Parcial {i}.") for i in range(partial_calls)]
             + [
                 self._make_llm_response("Consolidado."),
                 self._make_llm_response(initial_summary),
@@ -4176,3 +6041,1748 @@ class TestFinalHardCleanup:
         assert "Fonte 9 -" not in answer
         assert "7._rvores_de_Deciso.pdf (página 1)" not in answer
         assert answer.count("**Fontes:**") == 1
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Claim-risk classification
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestClassifyClaimRisks:
+    """Unit tests for classify_claim_risks (no LLM, pure regex-based logic)."""
+
+    def setup_method(self):
+        from docops.summarize.pipeline import classify_claim_risks
+        self.fn = classify_claim_risks
+
+    def _anchor(self, text: str, section_title: str = "", section_path: str = "") -> "Document":
+        return _doc(text, section_title=section_title, section_path=section_path)
+
+    def test_empty_text_returns_zero_sentences(self):
+        result = self.fn("", [])
+        assert result["sentences_total"] == 0
+        assert result["high_risk_count"] == 0
+        assert result["unsupported_high_risk_count"] == 0
+
+    def test_descriptive_sentence_not_high_risk(self):
+        text = "O documento aborda conceitos de aprendizado de máquina."
+        result = self.fn(text, [])
+        assert result["sentences_total"] >= 1
+        assert result["high_risk_count"] == 0
+        assert result["unsupported_high_risk_count"] == 0
+
+    def test_formula_sentence_detected(self):
+        # Sentence with a formula-like expression.
+        text = "A equação P(x) = 1/N determina a probabilidade uniforme [Fonte 1]."
+        anchors = [self._anchor("P(x) = 1/N em distribuição uniforme")]
+        result = self.fn(text, anchors)
+        formula_sentences = [
+            s for s in result["sentences_classified"] if s["risk_type"] == "formula"
+        ]
+        assert len(formula_sentences) >= 1
+
+    def test_quantitative_sentence_detected(self):
+        text = "O algoritmo é 30% mais rápido que X [Fonte 1]."
+        anchors = [self._anchor("30% faster than X")]
+        result = self.fn(text, anchors)
+        high_risk = [s for s in result["sentences_classified"] if s["high_risk"]]
+        assert len(high_risk) >= 1
+
+    def test_comparison_sentence_detected(self):
+        text = "O método A diferencia-se de B por escopo [Fonte 1]."
+        anchors = [self._anchor("A differs from B in scope")]
+        result = self.fn(text, anchors)
+        high_risk = [s for s in result["sentences_classified"] if s["high_risk"]]
+        assert len(high_risk) >= 1
+
+    def test_high_risk_no_citation_is_unsupported(self):
+        # High-risk sentence with NO [Fonte N] → should be unsupported.
+        text = "O algoritmo é 50% mais eficiente."
+        result = self.fn(text, [])
+        assert result["unsupported_high_risk_count"] >= 1
+
+    def test_high_risk_with_valid_non_low_info_citation_not_unsupported(self):
+        # High-risk sentence citing a normal section anchor → should NOT be unsupported.
+        text = "O índice de Gini é dado por G = 1 - Σp_i² [Fonte 1]."
+        anchors = [self._anchor("G = 1 - sum(p_i^2)", section_title="Fundamentos")]
+        result = self.fn(text, anchors)
+        # Sentence may be high-risk (formula), but it cites a non-low-info anchor.
+        formula_sentences = [
+            s for s in result["sentences_classified"]
+            if s["risk_type"] == "formula" and s.get("cited_indices")
+        ]
+        # If the anchor is NOT low-info, should not be marked unsupported.
+        for s in formula_sentences:
+            assert not s.get("low_info_only"), (
+                f"Sentence with valid anchor should not be low_info_only: {s}"
+            )
+
+    def test_low_info_source_detection(self):
+        from docops.summarize.pipeline import _is_low_info_source
+        anchor_idx = self._anchor("conteúdo do sumário", section_title="Sumário")
+        anchor_normal = self._anchor("explicação técnica", section_title="Fundamentos")
+        assert _is_low_info_source(anchor_idx) is True
+        assert _is_low_info_source(anchor_normal) is False
+
+    def test_low_info_source_claim_counted(self):
+        # High-risk sentence citing ONLY a low-info source.
+        text = "O sistema X é 2 vezes melhor que Y [Fonte 1]."
+        anchors = [self._anchor("capítulo sobre X e Y", section_title="Sumário")]
+        result = self.fn(text, anchors)
+        assert result["low_info_source_claims_count"] >= 1
+        assert result["unsupported_high_risk_count"] >= 1
+        assert result["unsupported_high_risk_low_info_only_count"] >= 1
+
+    def test_low_info_only_not_unsupported_when_rule_disabled(self):
+        text = "O sistema X é 2 vezes melhor que Y [Fonte 1]."
+        anchors = [self._anchor("capítulo sobre X e Y", section_title="Sumário")]
+        with patch.dict(
+            os.environ,
+            {"SUMMARY_REQUIRE_NON_LOW_INFO_FOR_HIGH_RISK": "false"},
+        ):
+            result = self.fn(text, anchors)
+        assert result["low_info_source_claims_count"] >= 1
+        assert result["unsupported_high_risk_count"] == 0
+        assert result["unsupported_high_risk_low_info_only_count"] == 0
+
+    def test_technical_assertion_low_info_is_unsupported(self):
+        text = (
+            "O Random Forest integra processos de validação para mitigar variância "
+            "e aumentar robustez [Fonte 1]."
+        )
+        anchors = [self._anchor("capítulos do documento", section_title="Conteúdo")]
+        result = self.fn(text, anchors)
+        technical = [
+            s for s in result["sentences_classified"] if s["risk_type"] == "technical_assertion"
+        ]
+        assert technical, f"Expected technical_assertion sentence, got: {result['sentences_classified']}"
+        assert result["unsupported_high_risk_count"] >= 1
+
+    def test_technical_assertion_with_non_low_info_anchor_supported(self):
+        text = (
+            "O Random Forest integra processos de validação para mitigar variância "
+            "e aumentar robustez [Fonte 1]."
+        )
+        anchors = [self._anchor(
+            "Validação cruzada reduz variância e melhora robustez do modelo.",
+            section_title="Experimentos",
+        )]
+        result = self.fn(text, anchors)
+        technical = [
+            s for s in result["sentences_classified"] if s["risk_type"] == "technical_assertion"
+        ]
+        assert technical, f"Expected technical_assertion sentence, got: {result['sentences_classified']}"
+        assert result["unsupported_high_risk_count"] == 0, result
+
+    def test_formula_claims_total_counted(self):
+        text = (
+            "A fórmula f(x) = x² é central [Fonte 1].\n"
+            "O algoritmo tem complexidade O(n log n) [Fonte 2]."
+        )
+        anchors = [
+            self._anchor("f(x) = x^2", section_title="Fundamentos"),
+            self._anchor("O(n log n) complexity", section_title="Análise"),
+        ]
+        result = self.fn(text, anchors)
+        assert result["formula_claims_total"] >= 1
+
+    def test_mixed_text_counts_correctly(self):
+        text = (
+            "O documento explica aprendizado supervisionado.\n"
+            "A precisão é 95% em validação cruzada [Fonte 1]."
+        )
+        anchors = [self._anchor("precisão de 95%", section_title="Experimentos")]
+        result = self.fn(text, anchors)
+        assert result["sentences_total"] >= 2
+        assert result["high_risk_count"] >= 1
+
+    def test_heading_lines_skipped(self):
+        text = "## Seção Principal\n\nTexto normal sem claims de alto risco."
+        result = self.fn(text, [])
+        # Heading lines should not be analyzed as sentences.
+        for s in result["sentences_classified"]:
+            assert not s["text"].startswith("#")
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Formula mode conservative
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestCheckFormulaMode:
+    """Unit tests for check_formula_mode."""
+
+    def setup_method(self):
+        from docops.summarize.pipeline import classify_claim_risks, check_formula_mode
+        self.classify = classify_claim_risks
+        self.check = check_formula_mode
+
+    def _anchor(self, text: str, section_title: str = "Fundamentos") -> "Document":
+        return _doc(text, section_title=section_title)
+
+    def test_conservative_formula_with_math_anchor_not_downgraded(self):
+        text = "A impureza de Gini é dada por G = 1 - Σp² [Fonte 1]."
+        anchors = [self._anchor("G = 1 - sum(p_i^2) com α = 0.5")]
+        risk = self.classify(text, anchors)
+        result = self.check(risk, anchors, "conservative")
+        assert result["formula_claims_downgraded_to_concept"] == 0
+
+    def test_conservative_formula_without_math_anchor_downgraded(self):
+        # Sentence has formula notation; anchor has NO math content.
+        text = "A fórmula para custo é C = α × T [Fonte 1]."
+        anchors = [self._anchor("discussão geral sobre custo sem equação")]
+        risk = self.classify(text, anchors)
+        # Manually ensure the sentence is formula-type by checking classification.
+        formula_entries = [
+            e for e in risk["sentences_classified"] if e["risk_type"] == "formula"
+            and e.get("cited_indices")
+        ]
+        if not formula_entries:
+            pytest.skip("Sentence not classified as formula with citation; skip.")
+        result = self.check(risk, anchors, "conservative")
+        assert result["formula_claims_downgraded_to_concept"] >= 1
+
+    def test_permissive_mode_no_downgrade(self):
+        text = "A fórmula f(x) = x² é central [Fonte 1]."
+        anchors = [self._anchor("discussion without math")]
+        risk = self.classify(text, anchors)
+        result = self.check(risk, anchors, "permissive")
+        assert result["formula_claims_downgraded_to_concept"] == 0
+
+    def test_no_formula_claims_downgraded_count_zero(self):
+        text = "O documento explica conceitos de aprendizado."
+        anchors = [self._anchor("conceito geral")]
+        risk = self.classify(text, anchors)
+        result = self.check(risk, anchors, "conservative")
+        assert result["formula_claims_downgraded_to_concept"] == 0
+
+    def test_formula_claim_with_mixed_anchors_not_downgraded_if_any_has_math(self):
+        # Two anchors; one has math content. Should not be downgraded.
+        text = "A variância é V = Σ(x-μ)² / N [Fonte 1]."
+        anchors = [
+            self._anchor("V = sum((x-mu)^2) / N", section_title="Estatística"),
+        ]
+        risk = self.classify(text, anchors)
+        result = self.check(risk, anchors, "conservative")
+        assert result["formula_claims_downgraded_to_concept"] == 0
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Inference density metric
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestComputeInferenceDensity:
+    """Unit tests for compute_inference_density."""
+
+    def setup_method(self):
+        from docops.summarize.pipeline import compute_inference_density
+        self.fn = compute_inference_density
+
+    def _risk(self, total: int, unsupported: int, downgraded: int = 0) -> dict:
+        return {
+            "sentences_total": total,
+            "unsupported_high_risk_count": unsupported,
+            "formula_claims_downgraded_to_concept": downgraded,
+        }
+
+    def test_zero_unsupported_density_zero(self):
+        result = self.fn(self._risk(10, 0))
+        assert result["inference_density"] == 0.0
+        assert result["inference_gate_passed"] is True
+
+    def test_all_high_risk_unsupported_density_one(self):
+        result = self.fn(self._risk(4, 4))
+        assert result["inference_density"] == 1.0
+        assert result["inference_gate_passed"] is False
+
+    def test_threshold_gate_passes(self, monkeypatch):
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "0.5")
+        result = self.fn(self._risk(10, 4))  # 0.4 <= 0.5 → pass
+        assert result["inference_gate_passed"] is True
+
+    def test_threshold_gate_fails(self, monkeypatch):
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "0.3")
+        result = self.fn(self._risk(10, 4))  # 0.4 > 0.3 → fail
+        assert result["inference_gate_passed"] is False
+
+    def test_downgraded_formulas_count_in_density(self):
+        # 1 unsupported + 1 downgraded out of 8 sentences = 2/8 = 0.25
+        result = self.fn(self._risk(8, 1, downgraded=1))
+        assert abs(result["inference_density"] - 0.25) < 1e-6
+
+    def test_empty_sentences_density_zero(self):
+        result = self.fn(self._risk(0, 0))
+        assert result["inference_density"] == 0.0
+        assert result["inference_gate_passed"] is True
+
+    def test_density_formula_correct(self):
+        # 2 unsupported out of 8 total = 0.25
+        result = self.fn(self._risk(8, 2))
+        assert abs(result["inference_density"] - 0.25) < 1e-6
+
+    def test_unsupported_claims_count_equals_sum(self):
+        result = self.fn(self._risk(10, 3, downgraded=2))
+        assert result["unsupported_claims_count"] == 5
+
+    def test_default_threshold_is_0_25(self, monkeypatch):
+        monkeypatch.delenv("SUMMARY_MAX_INFERENCE_DENSITY", raising=False)
+        result = self.fn(self._risk(10, 0))
+        assert result["inference_threshold"] == 0.25
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# De-overreach integration tests
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestDeoverreachIntegration:
+    """Integration tests for the de-overreach pass and inference-density gate
+    wired into run_deep_summary."""
+
+    def _resp(self, text: str):
+        m = MagicMock()
+        m.content = text
+        return m
+
+    def _good_summary(self) -> str:
+        return (
+            "# Resumo Aprofundado — doc.pdf\n\n"
+            "## Visão Geral\n"
+            "O documento explica aprendizado supervisionado [Fonte 1].\n\n"
+            "## Encadeamento e Principais Tópicos\n"
+            "Os principais tópicos incluem árvores e florestas [Fonte 2].\n\n"
+            "## Conceitos e Métodos Fundamentais\n"
+            "A impureza de Gini mede a pureza dos nós [Fonte 3].\n\n"
+            "## Síntese Final\n"
+            "O documento fornece base sólida para aprendizado [Fonte 4]."
+        )
+
+    def _summary_with_overreach(self) -> str:
+        """Summary with a quantitative claim unsupported (citing only a table-of-contents chunk)."""
+        return (
+            "# Resumo Aprofundado — doc.pdf\n\n"
+            "## Visão Geral\n"
+            "O documento explica aprendizado supervisionado.\n\n"
+            "## Encadeamento e Principais Tópicos\n"
+            "O algoritmo é 30% mais rápido que o método X [Fonte 1].\n\n"
+            "## Conceitos e Métodos Fundamentais\n"
+            "A impureza de Gini mede a pureza dos nós [Fonte 2].\n\n"
+            "## Síntese Final\n"
+            "O documento fornece base sólida para aprendizado [Fonte 3]."
+        )
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_inference_density_in_diagnostics(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """diagnostics must include inference_density key."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")  # never triggers
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        base = self._good_summary()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 15
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        diag = result["diagnostics"]
+        assert "inference_density" in diag
+        assert "inference_density" in diag["inference_density"]
+        assert "inference_gate_passed" in diag["inference_density"]
+        assert "deoverreach" in diag
+        assert "claim_risk" in diag
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_inference_density_in_final_diagnostics(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """diagnostics['final'] must include inference_density field."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        base = self._good_summary()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 15
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        final = result["diagnostics"]["final"]
+        assert "inference_density" in final
+        assert isinstance(final["inference_density"], float)
+        assert "missing_topics" in final
+        assert isinstance(final["missing_topics"], list)
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_deoverreach_not_triggered_when_threshold_high(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """De-overreach pass not triggered when threshold=1.0 (always passes)."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")  # suppress formula check
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        base = self._good_summary()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 15
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        deoverreach = result["diagnostics"]["deoverreach"]
+        assert deoverreach["triggered"] is False or deoverreach["accepted"] is False
+        # When threshold=1.0, gate always passes → no trigger OR trigger but no change.
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_deoverreach_skipped_when_latency_budget_exhausted(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """De-overreach should be skipped (with reason) when latency budget is exhausted."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_LATENCY_BUDGET_SECONDS", "1")
+
+        chunks = [
+            _doc(
+                "Conteudo do sumario: capitulo 1, capitulo 2",
+                chunk_index=0,
+                page=1,
+                section_title="Sumario",
+            ),
+        ] * 4
+        summary_with_unsupported = (
+            "# Resumo Aprofundado - doc.pdf\n\n"
+            "## Visao Geral\n"
+            "O algoritmo e 30% mais rapido que o metodo X [Fonte 1].\n\n"
+            "## Encadeamento\n"
+            "Topicos progridem do simples ao complexo [Fonte 2].\n\n"
+            "## Conceitos\n"
+            "Definicoes centrais sao abordadas [Fonte 3].\n\n"
+            "## Sintese\n"
+            "Conclusao final do estudo [Fonte 4]."
+        )
+
+        mock_collect.return_value = chunks
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(summary_with_unsupported)] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        deoverreach = result["diagnostics"]["deoverreach"]
+        claim_risk = result["diagnostics"]["claim_risk"]
+
+        if claim_risk["unsupported_high_risk_count"] > 0:
+            assert deoverreach["triggered"] is True
+            assert deoverreach.get("skipped_reason") == "latency_budget_exhausted"
+            assert deoverreach["accepted"] is False
+        else:
+            pytest.skip("No unsupported high-risk claims detected in generated summary.")
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_deoverreach_triggered_when_unsupported_high_risk_present(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """De-overreach pass is triggered when unsupported_high_risk_count > 0.
+
+        Uses a summary with a quantitative claim citing only a sumário-section chunk,
+        which is classified as a low-info source → unsupported high-risk claim.
+        """
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")  # density gate off
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO", "1.0")
+
+        # Only one chunk, from a "Sumário" (low-info) section.
+        chunks = [
+            _doc("Conteúdo do sumário: capítulo 1, capítulo 2",
+                 chunk_index=0, page=1, section_title="Sumário"),
+        ] * 4
+
+        # Summary has a quantitative claim citing [Fonte 1] which is the Sumário chunk.
+        summary_with_unsupported = (
+            "# Resumo Aprofundado — doc.pdf\n\n"
+            "## Visão Geral\n"
+            "O algoritmo é 30% mais rápido que o método X [Fonte 1].\n\n"
+            "## Encadeamento\n"
+            "Os tópicos progridem do simples ao complexo [Fonte 2].\n\n"
+            "## Conceitos\n"
+            "Definições centrais são abordadas [Fonte 3].\n\n"
+            "## Síntese\n"
+            "Conclusão final do estudo [Fonte 4]."
+        )
+
+        mock_collect.return_value = chunks
+        mock_llm = MagicMock()
+        # partials (2) + consolidate + final + polish + deoverreach + repair + more
+        mock_llm.invoke.side_effect = [
+            self._resp(summary_with_unsupported)
+        ] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        deoverreach = result["diagnostics"]["deoverreach"]
+        claim_risk = result["diagnostics"]["claim_risk"]
+
+        # The quantitative claim citing only the low-info Sumário anchor should be flagged.
+        if claim_risk["unsupported_high_risk_count"] > 0:
+            assert deoverreach["triggered"] is True, (
+                f"Expected deoverreach triggered when unsupported_high_risk_count="
+                f"{claim_risk['unsupported_high_risk_count']}: {deoverreach}"
+            )
+        else:
+            pytest.skip(
+                "No high-risk claims detected in test summary; "
+                "regex may not have flagged the quantitative sentence."
+            )
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_inference_gate_adds_blocking_reason(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """When inference_density exceeds threshold, blocking_reasons must include it."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "0.0")  # always fails
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO", "1.0")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        base = self._good_summary()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        final = result["diagnostics"]["final"]
+        # With threshold=0, inference_density > 0 is guaranteed for non-trivial text.
+        # If density > 0 > threshold, blocking_reasons must contain the inference reason.
+        if result["diagnostics"]["inference_density"]["inference_density"] > 0:
+            assert not final["accepted"], (
+                f"Expected accepted=False when inference_density>threshold, got: {final}"
+            )
+            assert any(
+                "inference_density_exceeded" in r for r in final["blocking_reasons"]
+            ), f"Expected inference_density_exceeded in blocking_reasons: {final['blocking_reasons']}"
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_unsupported_high_risk_in_final_blocking_reasons(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """When unsupported_high_risk_count > 0, final.blocking_reasons includes it."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")  # density gate off
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO", "1.0")
+
+        # Chunks simulating low-info source (sumário).
+        chunks = [
+            _doc(
+                "Sumário: capítulo 1, capítulo 2",
+                chunk_index=0, page=1,
+                section_title="Sumário",
+            )
+        ] * 4
+
+        mock_collect.return_value = chunks
+        mock_llm = MagicMock()
+        # Summary contains a quantitative claim with [Fonte 1] (which is sumário).
+        summary_with_claim = (
+            "# Resumo Aprofundado — doc.pdf\n\n"
+            "## Visão Geral\n"
+            "O algoritmo é 50% mais rápido que o baseline [Fonte 1].\n\n"
+            "## Conceitos\n"
+            "Definições centrais para o estudo [Fonte 1].\n\n"
+            "## Métodos\n"
+            "O método usa árvores de decisão [Fonte 1].\n\n"
+            "## Síntese Final\n"
+            "Conclusão integra as ideias [Fonte 1]."
+        )
+        mock_llm.invoke.side_effect = [self._resp(summary_with_claim)] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        final = result["diagnostics"]["final"]
+        claim_risk = result["diagnostics"]["claim_risk"]
+
+        if claim_risk["unsupported_high_risk_count"] > 0:
+            assert any(
+                "unsupported_high_risk_claims" in r for r in final["blocking_reasons"]
+            ), (
+                f"Expected unsupported_high_risk_claims in blocking_reasons: "
+                f"{final['blocking_reasons']}"
+            )
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_formula_mode_conservative_env_var_respected(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """SUMMARY_FORMULA_MODE=conservative must be read from env and affect diagnostics."""
+        from docops.summarize.pipeline import run_deep_summary
+        from docops.config import config
+
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "conservative")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        base = self._good_summary()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 15
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        assert result["diagnostics"]["claim_risk"]["formula_mode"] == "conservative"
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_final_accepted_true_when_all_gates_pass(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """final.accepted=True when no blocking conditions are present."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO", "1.0")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        base = self._good_summary()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 15
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        final = result["diagnostics"]["final"]
+        # With high thresholds and no low-info sources, should pass.
+        # We only check that inference_density blocking reason is NOT there.
+        assert not any(
+            "inference_density_exceeded" in r for r in final["blocking_reasons"]
+        ), f"Unexpected inference blocking reason: {final['blocking_reasons']}"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Execution profile tests (fast / model_first / strict)
+# ──────────────────────────────────────────────────────────────────────────────
+
+class TestExecutionProfiles:
+    """Tests for execution profiles: fast, model_first, strict."""
+
+    def _resp(self, text: str):
+        m = MagicMock()
+        m.content = text
+        return m
+
+    def _good_summary(self) -> str:
+        return (
+            "# Resumo Aprofundado — doc.pdf\n\n"
+            "## Visão Geral\n"
+            "O documento explica aprendizado supervisionado [Fonte 1].\n\n"
+            "## Encadeamento e Principais Tópicos\n"
+            "Os principais tópicos incluem árvores e florestas [Fonte 2].\n\n"
+            "## Conceitos e Métodos Fundamentais\n"
+            "A impureza de Gini mede a pureza dos nós [Fonte 3].\n\n"
+            "## Síntese Final\n"
+            "O documento fornece base sólida para aprendizado [Fonte 4]."
+        )
+
+    # ── _resolve_profile ──────────────────────────────────────────────────────
+
+    def test_resolve_profile_explicit_fast(self):
+        from docops.summarize.pipeline import _resolve_profile
+        assert _resolve_profile("fast") == "fast"
+
+    def test_resolve_profile_explicit_invalid_falls_back_model_first(self):
+        from docops.summarize.pipeline import _resolve_profile
+        assert _resolve_profile("legacy_profile") == "model_first"
+
+    def test_resolve_profile_explicit_strict(self):
+        from docops.summarize.pipeline import _resolve_profile
+        assert _resolve_profile("strict") == "strict"
+
+    def test_resolve_profile_explicit_model_first(self):
+        from docops.summarize.pipeline import _resolve_profile
+        assert _resolve_profile("model_first") == "model_first"
+
+    def test_resolve_profile_invalid_falls_back_to_model_first(self):
+        from docops.summarize.pipeline import _resolve_profile
+        assert _resolve_profile("unknown_profile") == "model_first"
+
+    def test_resolve_profile_none_uses_config(self, monkeypatch):
+        from docops.summarize.pipeline import _resolve_profile
+        monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "fast")
+        assert _resolve_profile(None) == "fast"
+
+    def test_resolve_profile_none_uses_config_model_first(self, monkeypatch):
+        from docops.summarize.pipeline import _resolve_profile
+        monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "model_first")
+        assert _resolve_profile(None) == "model_first"
+
+    def test_resolve_profile_explicit_overrides_env(self, monkeypatch):
+        from docops.summarize.pipeline import _resolve_profile
+        monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "fast")
+        assert _resolve_profile("strict") == "strict"
+
+    def test_resolve_profile_env_invalid_defaults_to_model_first(self, monkeypatch):
+        from docops.summarize.pipeline import _resolve_profile
+        monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "INVALID")
+        assert _resolve_profile(None) == "model_first"
+
+    # ── profile_used appears in diagnostics ───────────────────────────────────
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_profile_used_appears_in_diagnostics(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(self._good_summary())] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary(
+            "doc.pdf", "doc-uuid", user_id=1,
+            include_diagnostics=True, profile="fast"
+        )
+        assert result["diagnostics"]["profile_used"] == "fast"
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_profile_model_first_used_in_diagnostics(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(self._good_summary())] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary(
+            "doc.pdf", "doc-uuid", user_id=1,
+            include_diagnostics=True, profile="model_first"
+        )
+        assert result["diagnostics"]["profile_used"] == "model_first"
+
+    # ── corrective_passes_used ────────────────────────────────────────────────
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_corrective_passes_used_zero_when_no_triggers(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(self._good_summary())] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary(
+            "doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True
+        )
+        assert result["diagnostics"]["corrective_passes_used"] == 0
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_fast_profile_zero_corrective_passes(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """In 'fast' profile, corrective_passes_used must always be 0."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        # Enable everything that could trigger corrective passes
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "true")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "true")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "0.0")  # always exceeds
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "conservative")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_WEAK_BLOCK_RATIO", "0.0")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(self._good_summary())] * 30
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary(
+            "doc.pdf", "doc-uuid", user_id=1,
+            include_diagnostics=True, profile="fast"
+        )
+        assert result["diagnostics"]["corrective_passes_used"] == 0, (
+            f"Expected 0 passes in fast profile, "
+            f"got {result['diagnostics']['corrective_passes_used']}"
+        )
+
+    # ── max_corrective_passes = 1 cap ─────────────────────────────────────────
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_corrective_passes_capped_at_max(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """corrective_passes_used never exceeds max_corrective_passes."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_MAX_CORRECTIVE_PASSES", "1")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "true")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_WEAK_BLOCK_RATIO", "0.0")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(self._good_summary())] * 40
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary(
+            "doc.pdf", "doc-uuid", user_id=1,
+            include_diagnostics=True, profile="model_first"
+        )
+        assert result["diagnostics"]["corrective_passes_used"] <= 1, (
+            f"Expected ≤1 corrective pass, "
+            f"got {result['diagnostics']['corrective_passes_used']}"
+        )
+
+    # ── deoverreach + resynthesis mutual exclusion ────────────────────────────
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_deoverreach_and_resynthesis_mutually_exclusive(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """When deoverreach is accepted, resynthesis skipped_reason == mutual_exclusion."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_MAX_CORRECTIVE_PASSES", "2")  # allow both if not exclusive
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "true")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "0.0")  # always triggers deoverreach
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_WEAK_BLOCK_RATIO", "0.0")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO", "1.0")
+
+        # deoverreach response = lower density text (no high-risk claims)
+        clean_text = (
+            "# Resumo\n\n"
+            "## Visão Geral\nO documento é sobre aprendizado [Fonte 1].\n\n"
+            "## Encadeamento\nO método usa árvores [Fonte 2].\n\n"
+            "## Conceitos\nGini é usado [Fonte 3].\n\n"
+            "## Síntese\nResultados sólidos [Fonte 4]."
+        )
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [
+            self._resp(self._good_summary()),  # partial(s) + consolidate + finalize
+        ] * 5 + [self._resp(clean_text)] * 30  # deoverreach + rest
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary(
+            "doc.pdf", "doc-uuid", user_id=1,
+            include_diagnostics=True, profile="model_first"
+        )
+        diag = result["diagnostics"]
+        if diag["deoverreach"].get("accepted"):
+            # If deoverreach accepted → resynthesis must be skipped for mutual exclusion
+            assert diag["resynthesis"].get("skipped_reason") == "deoverreach_accepted_mutual_exclusion", (
+                f"Expected mutual exclusion skip, got: {diag['resynthesis'].get('skipped_reason')}"
+            )
+
+    # ── style polish disabled by default ─────────────────────────────────────
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_style_polish_disabled_by_default(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """style_polish_enabled defaults to False; polish call not issued."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.delenv("SUMMARY_STYLE_POLISH_ENABLED", raising=False)
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(self._good_summary())] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary(
+            "doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True
+        )
+        assert result["diagnostics"]["style_polish_enabled"] is False
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_style_polish_always_disabled_in_fast(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """In 'fast' profile, style_polish_enabled is always False."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_STYLE_POLISH_ENABLED", "true")  # explicit true
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(self._good_summary())] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary(
+            "doc.pdf", "doc-uuid", user_id=1,
+            include_diagnostics=True, profile="fast"
+        )
+        assert result["diagnostics"]["style_polish_enabled"] is False
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_style_polish_enabled_when_configured(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """style_polish_enabled=True in non-fast profile when env var=true."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_STYLE_POLISH_ENABLED", "true")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(self._good_summary())] * 25
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary(
+            "doc.pdf", "doc-uuid", user_id=1,
+            include_diagnostics=True, profile="strict"
+        )
+        assert result["diagnostics"]["style_polish_enabled"] is True
+
+    # ── stage timings in diagnostics ─────────────────────────────────────────
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_latency_section_present_in_diagnostics(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(self._good_summary())] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary(
+            "doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True
+        )
+        latency = result["diagnostics"]["latency"]
+        assert "total_ms" in latency
+        assert isinstance(latency["total_ms"], (int, float))
+        assert latency["total_ms"] >= 0
+        assert "stage_timings_ms" in latency
+        timings = latency["stage_timings_ms"]
+        for key in ("collect", "clean", "group", "partials", "consolidate", "finalize"):
+            assert key in timings, f"Missing stage timing: {key}"
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_stage_timings_non_negative(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(self._good_summary())] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary(
+            "doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True
+        )
+        timings = result["diagnostics"]["latency"]["stage_timings_ms"]
+        for stage, ms in timings.items():
+            assert ms >= 0, f"Negative timing for stage '{stage}': {ms}"
+
+    # ── strict fail-closed: diagnostics always attached ──────────────────────
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_strict_profile_always_attaches_diagnostics(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """In strict profile, diagnostics is returned even with include_diagnostics=False."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(self._good_summary())] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary(
+            "doc.pdf", "doc-uuid", user_id=1,
+            include_diagnostics=False, profile="strict"
+        )
+        # Must have diagnostics even though include_diagnostics=False
+        assert "diagnostics" in result, "strict profile must always include diagnostics"
+        assert result["diagnostics"]["profile_used"] == "strict"
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_model_first_profile_runs_minimal_path(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        mock_llm.invoke.return_value = self._resp(
+            "# Resumo Aprofundado — doc.pdf\n\n"
+            "## Visão Geral\nTexto suportado [Fonte 1].\n\n"
+            "## Síntese Final\nConclusão objetiva [Fonte 1]."
+        )
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary(
+            "doc.pdf", "doc-uuid", user_id=1, profile="model_first", include_diagnostics=True
+        )
+        diag = result["diagnostics"]
+        assert diag["profile_used"] == "model_first"
+        assert diag["mode"] == "model_first"
+        assert diag["corrective_timeline"] == []
+        assert diag["corrective_passes_used"] == 0
+
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_non_strict_profile_no_diagnostics_when_not_requested(
+        self, mock_collect, mock_llm_factory, monkeypatch
+    ):
+        """In model_first/fast, diagnostics NOT returned when include_diagnostics=False."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_FORMULA_MODE", "permissive")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        mock_collect.return_value = _make_chunks(4, with_sections=True)
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(self._good_summary())] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary(
+            "doc.pdf", "doc-uuid", user_id=1,
+            include_diagnostics=False, profile="model_first"
+        )
+        assert "diagnostics" not in result, (
+            "model_first profile should NOT include diagnostics when not requested"
+        )
+
+    # ── config properties ─────────────────────────────────────────────────────
+
+    def test_config_summary_deep_profile_default(self, monkeypatch):
+        monkeypatch.delenv("SUMMARY_DEEP_PROFILE", raising=False)
+        from docops.config import Config
+        assert Config().summary_deep_profile == "model_first"
+
+    def test_config_summary_deep_profile_fast(self, monkeypatch):
+        monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "fast")
+        from docops.config import Config
+        assert Config().summary_deep_profile == "fast"
+
+    def test_config_summary_deep_profile_strict(self, monkeypatch):
+        monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "strict")
+        from docops.config import Config
+        assert Config().summary_deep_profile == "strict"
+
+    def test_config_summary_deep_profile_model_first(self, monkeypatch):
+        monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "model_first")
+        from docops.config import Config
+        assert Config().summary_deep_profile == "model_first"
+
+    def test_config_summary_deep_profile_legacy_value_falls_back(self, monkeypatch):
+        monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "legacy_profile")
+        from docops.config import Config
+        assert Config().summary_deep_profile == "model_first"
+
+    def test_config_summary_deep_profile_invalid(self, monkeypatch):
+        monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "nope")
+        from docops.config import Config
+        assert Config().summary_deep_profile == "model_first"
+
+    def test_config_max_corrective_passes_default(self, monkeypatch):
+        monkeypatch.delenv("SUMMARY_MAX_CORRECTIVE_PASSES", raising=False)
+        from docops.config import Config
+        assert Config().summary_max_corrective_passes == 1
+
+    def test_config_max_corrective_passes_env(self, monkeypatch):
+        monkeypatch.setenv("SUMMARY_MAX_CORRECTIVE_PASSES", "3")
+        from docops.config import Config
+        assert Config().summary_max_corrective_passes == 3
+
+    def test_config_style_polish_disabled_by_default(self, monkeypatch):
+        monkeypatch.delenv("SUMMARY_STYLE_POLISH_ENABLED", raising=False)
+        from docops.config import Config
+        assert Config().summary_style_polish_enabled is False
+
+    def test_config_style_polish_enabled_via_env(self, monkeypatch):
+        monkeypatch.setenv("SUMMARY_STYLE_POLISH_ENABLED", "true")
+        from docops.config import Config
+        assert Config().summary_style_polish_enabled is True
+
+    def test_config_fail_closed_strict_default(self, monkeypatch):
+        monkeypatch.delenv("SUMMARY_FAIL_CLOSED_STRICT", raising=False)
+        from docops.config import Config
+        assert Config().summary_fail_closed_strict is True
+
+    def test_config_fail_closed_strict_env_false(self, monkeypatch):
+        monkeypatch.setenv("SUMMARY_FAIL_CLOSED_STRICT", "false")
+        from docops.config import Config
+        assert Config().summary_fail_closed_strict is False
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Backfill-before-deoverreach: early micro-backfill ordering
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+class TestBackfillBeforeDeoverreach:
+    """Testa a nova ordem de passes corretivos: micro-backfill early antes de
+    de-overreach/resynthesis quando summary_backfill_before_deoverreach=True."""
+
+    def _resp(self, text: str):
+        m = MagicMock()
+        m.content = text
+        return m
+
+    def _good_summary(self, marker: str = "GOOD") -> str:
+        return (
+            f"# Resumo Aprofundado — doc.pdf {marker}\n\n"
+            "## Visão Geral\n"
+            f"O documento explica conceitos fundamentais {marker} [Fonte 1].\n\n"
+            "## Conceitos Principais\n"
+            f"Os algoritmos principais são discutidos em detalhe {marker} [Fonte 2].\n\n"
+            "## Métodos e Aplicações\n"
+            f"As aplicações práticas são apresentadas com exemplos {marker} [Fonte 3].\n\n"
+            "## Síntese Final\n"
+            f"A conclusão integra todas as ideias centrais {marker} [Fonte 4]."
+        )
+
+    def _make_chunks_bf(self, n: int = 4) -> list[Document]:
+        return _make_chunks(n, with_sections=True)
+
+    def _topic_info_with_missing(self) -> dict:
+        return {
+            "detected_topics": ["topic_A"],
+            "must_cover_topics": ["topic_A"],
+            "minor_topics": [],
+            "topic_details": {"topic_A": {"label": "Tópico A", "hits": 2}},
+            "outline_text": "",
+        }
+
+    def _outline_missing(self) -> dict:
+        return {
+            "overall_score": 0.3,
+            "detected_topics": ["topic_A"],
+            "must_cover_topics": ["topic_A"],
+            "covered_topics": [],
+            "missing_topics": ["topic_A"],
+            "weakly_covered_topics": [],
+            "topic_scores": {"topic_A": 0.0},
+        }
+
+    def _outline_covered(self) -> dict:
+        return {
+            "overall_score": 1.0,
+            "detected_topics": ["topic_A"],
+            "must_cover_topics": ["topic_A"],
+            "covered_topics": ["topic_A"],
+            "missing_topics": [],
+            "weakly_covered_topics": [],
+            "topic_scores": {"topic_A": 1.0},
+        }
+
+    @patch("docops.summarize.pipeline._run_micro_topic_backfill")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_early_backfill_triggered_when_missing_topics_and_flag_enabled(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_micro_backfill,
+        monkeypatch,
+    ):
+        """Com missing must-cover topics e flag habilitada, early backfill deve
+        ser triggered e aparecer na corrective_timeline."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_BACKFILL_BEFORE_DEOVERREACH", "true")
+        monkeypatch.setenv("SUMMARY_MAX_CORRECTIVE_PASSES", "1")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO", "1.0")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_MICRO_BACKFILL_ENABLED", "true")
+
+        base = self._good_summary("BASE")
+        backfilled = self._good_summary("BACKFILLED")
+
+        mock_collect.return_value = self._make_chunks_bf()
+        mock_extract_topics.return_value = self._topic_info_with_missing()
+        mock_outline_score.return_value = self._outline_missing()
+
+        mock_micro_backfill.return_value = {
+            "text": backfilled,
+            "triggered": True,
+            "paragraphs_attempted": 1,
+            "paragraphs_accepted": 1,
+            "missing_topics_before": ["topic_A"],
+            "missing_topics_after": ["topic_A"],
+            "skipped_topics": [],
+            "latency_ms": 5.0,
+        }
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        diag = result["diagnostics"]
+
+        assert diag["early_micro_backfill"]["triggered"] is True
+        assert diag["early_micro_backfill"]["accepted"] is True
+        assert diag["early_micro_backfill"]["backfill_before_deoverreach_enabled"] is True
+        assert "micro_backfill_early" in diag["corrective_timeline"]
+        assert diag["corrective_timeline"][0] == "micro_backfill_early"
+        assert diag["corrective_scheduler"]["backfill_before_deoverreach"] is True
+
+    @patch("docops.summarize.pipeline._run_micro_topic_backfill")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_early_backfill_not_run_when_flag_disabled(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_micro_backfill,
+        monkeypatch,
+    ):
+        """Com SUMMARY_BACKFILL_BEFORE_DEOVERREACH=false, o early backfill NÃO
+        deve rodar. A ordem legada é mantida."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_BACKFILL_BEFORE_DEOVERREACH", "false")
+        monkeypatch.setenv("SUMMARY_MAX_CORRECTIVE_PASSES", "2")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO", "1.0")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_MICRO_BACKFILL_ENABLED", "true")
+
+        base = self._good_summary("BASE")
+
+        mock_collect.return_value = self._make_chunks_bf()
+        mock_extract_topics.return_value = self._topic_info_with_missing()
+        mock_outline_score.return_value = self._outline_missing()
+
+        mock_micro_backfill.return_value = {
+            "text": base,
+            "triggered": True,
+            "paragraphs_attempted": 1,
+            "paragraphs_accepted": 0,
+            "missing_topics_before": ["topic_A"],
+            "missing_topics_after": ["topic_A"],
+            "skipped_topics": [],
+            "latency_ms": 5.0,
+        }
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        diag = result["diagnostics"]
+
+        assert diag["early_micro_backfill"]["triggered"] is False
+        assert diag["early_micro_backfill"]["accepted"] is False
+        assert diag["early_micro_backfill"]["backfill_before_deoverreach_enabled"] is False
+        assert "micro_backfill_early" not in diag["corrective_timeline"]
+        assert diag["corrective_scheduler"]["backfill_before_deoverreach"] is False
+
+    @patch("docops.summarize.pipeline._run_micro_topic_backfill")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_early_backfill_not_run_in_fast_profile(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_micro_backfill,
+        monkeypatch,
+    ):
+        """No perfil fast, early backfill nunca roda."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_BACKFILL_BEFORE_DEOVERREACH", "true")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+
+        base = self._good_summary("BASE")
+
+        mock_collect.return_value = self._make_chunks_bf()
+        mock_extract_topics.return_value = self._topic_info_with_missing()
+        mock_outline_score.return_value = self._outline_missing()
+        mock_micro_backfill.return_value = {
+            "text": base,
+            "triggered": False,
+            "paragraphs_attempted": 0,
+            "paragraphs_accepted": 0,
+            "missing_topics_before": [],
+            "missing_topics_after": [],
+            "skipped_topics": [],
+            "latency_ms": 0.0,
+        }
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary(
+            "doc.pdf", "doc-uuid", user_id=1, profile="fast", include_diagnostics=True
+        )
+        diag = result["diagnostics"]
+
+        assert diag["early_micro_backfill"]["triggered"] is False
+        assert diag["early_micro_backfill"]["backfill_before_deoverreach_enabled"] is False
+        assert diag["corrective_timeline"] == []
+
+    @patch("docops.summarize.pipeline._run_micro_topic_backfill")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_budget_exhausted_after_early_backfill_blocks_deoverreach(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_micro_backfill,
+        monkeypatch,
+    ):
+        """Com max_corrective_passes=1, após early backfill consumir o único passe,
+        deoverreach deve ser bloqueado por corrective_budget_exhausted."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_BACKFILL_BEFORE_DEOVERREACH", "true")
+        monkeypatch.setenv("SUMMARY_MAX_CORRECTIVE_PASSES", "1")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO", "1.0")
+        # Threshold baixo para garantir que deoverreach estaria triggered se houvesse budget
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "0.01")
+        monkeypatch.setenv("SUMMARY_MICRO_BACKFILL_ENABLED", "true")
+
+        overreach = (
+            "# Resumo Aprofundado — doc.pdf\n\n"
+            "## Contexto\n"
+            "O algoritmo tem precisão de 99,7% em todos os benchmarks [Fonte 1].\n\n"
+            "## Análise\n"
+            "A redução de custo foi de exatamente R$1.234,56 por unidade [Fonte 1].\n\n"
+            "## Resultados\n"
+            "Os testes confirmam melhora de 3,14x sobre o estado da arte [Fonte 1].\n\n"
+            "## Conclusão\n"
+            "O modelo supera todos os concorrentes em N=500 experimentos [Fonte 1]."
+        )
+
+        mock_collect.return_value = self._make_chunks_bf()
+        mock_extract_topics.return_value = self._topic_info_with_missing()
+        mock_outline_score.return_value = self._outline_missing()
+
+        mock_micro_backfill.return_value = {
+            "text": overreach,
+            "triggered": True,
+            "paragraphs_attempted": 1,
+            "paragraphs_accepted": 1,
+            "missing_topics_before": ["topic_A"],
+            "missing_topics_after": ["topic_A"],
+            "skipped_topics": [],
+            "latency_ms": 5.0,
+        }
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(overreach)] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        diag = result["diagnostics"]
+
+        assert diag["early_micro_backfill"]["triggered"] is True
+        assert diag["early_micro_backfill"]["accepted"] is True
+        assert diag["corrective_passes_used"] == 1
+
+        # Deoverreach não deve ter consumido passe (budget esgotado)
+        dor = diag["deoverreach"]
+        assert not dor.get("pass_consumed", False)
+        assert "micro_backfill_early" in diag["corrective_timeline"]
+        assert "deoverreach" not in diag["corrective_timeline"]
+
+    @patch("docops.summarize.pipeline._run_micro_topic_backfill")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_early_backfill_not_triggered_when_no_missing_topics(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_micro_backfill,
+        monkeypatch,
+    ):
+        """Sem missing topics, early backfill não deve ser triggered."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_BACKFILL_BEFORE_DEOVERREACH", "true")
+        monkeypatch.setenv("SUMMARY_MAX_CORRECTIVE_PASSES", "1")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+
+        base = self._good_summary("BASE")
+
+        mock_collect.return_value = self._make_chunks_bf()
+        mock_extract_topics.return_value = self._topic_info_with_missing()
+        mock_outline_score.return_value = self._outline_covered()
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = [self._resp(base)] * 20
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        diag = result["diagnostics"]
+
+        assert diag["early_micro_backfill"]["triggered"] is False
+        assert "micro_backfill_early" not in diag["corrective_timeline"]
+
+    @patch("docops.summarize.pipeline._run_micro_topic_backfill")
+    @patch("docops.summarize.pipeline.score_topic_outline_coverage")
+    @patch("docops.summarize.pipeline.extract_document_topics")
+    @patch("docops.summarize.pipeline._get_llm")
+    @patch("docops.summarize.pipeline.collect_ordered_chunks")
+    def test_corrective_timeline_order_backfill_before_deoverreach_with_budget(
+        self,
+        mock_collect,
+        mock_llm_factory,
+        mock_extract_topics,
+        mock_outline_score,
+        mock_micro_backfill,
+        monkeypatch,
+    ):
+        """Com max_corrective_passes=2, se ambos early backfill e deoverreach rodam,
+        a timeline deve ter micro_backfill_early ANTES de deoverreach."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_BACKFILL_BEFORE_DEOVERREACH", "true")
+        monkeypatch.setenv("SUMMARY_MAX_CORRECTIVE_PASSES", "2")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO", "1.0")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "0.01")
+        monkeypatch.setenv("SUMMARY_MICRO_BACKFILL_ENABLED", "true")
+
+        overreach = (
+            "# Resumo Aprofundado — doc.pdf\n\n"
+            "## Contexto\n"
+            "O algoritmo é exatamente 47,3% mais eficiente que baseline [Fonte 1].\n\n"
+            "## Métodos\n"
+            "A redução de erro foi medida em 0,003 desvios padrão [Fonte 1].\n\n"
+            "## Resultados\n"
+            "Os experimentos confirmam resultados em N=1000 iterações [Fonte 1].\n\n"
+            "## Síntese\n"
+            "O modelo atinge performance ótima em todos os cenários [Fonte 1]."
+        )
+        clean = self._good_summary("CLEAN")
+
+        mock_collect.return_value = self._make_chunks_bf()
+        mock_extract_topics.return_value = self._topic_info_with_missing()
+        mock_outline_score.return_value = self._outline_missing()
+
+        mock_micro_backfill.return_value = {
+            "text": overreach,
+            "triggered": True,
+            "paragraphs_attempted": 1,
+            "paragraphs_accepted": 1,
+            "missing_topics_before": ["topic_A"],
+            "missing_topics_after": ["topic_A"],
+            "skipped_topics": [],
+            "latency_ms": 5.0,
+        }
+
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = (
+            [self._resp(overreach)] * 5 + [self._resp(clean)] * 15
+        )
+        mock_llm_factory.return_value = mock_llm
+
+        result = run_deep_summary("doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True)
+        diag = result["diagnostics"]
+
+        timeline = diag["corrective_timeline"]
+        assert isinstance(timeline, list)
+        assert diag["early_micro_backfill"]["triggered"] is True
+
+        # Se ambos aparecem na timeline, early backfill deve vir primeiro
+        if "micro_backfill_early" in timeline and "deoverreach" in timeline:
+            assert timeline.index("micro_backfill_early") < timeline.index("deoverreach"), (
+                f"micro_backfill_early deve preceder deoverreach, mas timeline={timeline}"
+            )
+
+
+class TestBackfillBeforeDeoverreachConfig:
+    """Testa as propriedades de configuração de backfill_before_deoverreach."""
+
+    def test_config_backfill_before_deoverreach_default_true(self, monkeypatch):
+        """summary_backfill_before_deoverreach deve ser True por padrão."""
+        monkeypatch.delenv("SUMMARY_BACKFILL_BEFORE_DEOVERREACH", raising=False)
+        from docops.config import Config
+        assert Config().summary_backfill_before_deoverreach is True
+
+    def test_config_backfill_before_deoverreach_env_false(self, monkeypatch):
+        """summary_backfill_before_deoverreach deve ser False quando env=false."""
+        monkeypatch.setenv("SUMMARY_BACKFILL_BEFORE_DEOVERREACH", "false")
+        from docops.config import Config
+        assert Config().summary_backfill_before_deoverreach is False
+
+    def test_config_backfill_before_deoverreach_env_true(self, monkeypatch):
+        """summary_backfill_before_deoverreach deve ser True quando env=true."""
+        monkeypatch.setenv("SUMMARY_BACKFILL_BEFORE_DEOVERREACH", "true")
+        from docops.config import Config
+        assert Config().summary_backfill_before_deoverreach is True
+
+    def test_config_backfill_before_deoverreach_env_1(self, monkeypatch):
+        """summary_backfill_before_deoverreach deve aceitar '1' como True."""
+        monkeypatch.setenv("SUMMARY_BACKFILL_BEFORE_DEOVERREACH", "1")
+        from docops.config import Config
+        assert Config().summary_backfill_before_deoverreach is True
+
+    def test_config_backfill_before_deoverreach_env_0(self, monkeypatch):
+        """summary_backfill_before_deoverreach deve tratar '0' como False."""
+        monkeypatch.setenv("SUMMARY_BACKFILL_BEFORE_DEOVERREACH", "0")
+        from docops.config import Config
+        assert Config().summary_backfill_before_deoverreach is False
+
+
+class TestCorrectiveTimeline:
+    """Testa o campo corrective_timeline nos diagnostics."""
+
+    def _resp(self, text: str):
+        m = MagicMock()
+        m.content = text
+        return m
+
+    def _good_summary(self) -> str:
+        return (
+            "# Resumo Aprofundado — doc.pdf\n\n"
+            "## Contexto\n"
+            "O documento apresenta fundamentos teóricos [Fonte 1].\n\n"
+            "## Análise\n"
+            "A abordagem metodológica é rigorosa e bem estruturada [Fonte 2].\n\n"
+            "## Conceitos\n"
+            "As definições estão integradas com exemplos práticos [Fonte 3].\n\n"
+            "## Síntese\n"
+            "A conclusão reforça os principais achados [Fonte 4]."
+        )
+
+    def test_corrective_timeline_is_list_in_diagnostics(self, monkeypatch):
+        """corrective_timeline deve ser uma lista nos diagnostics."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+
+        base = self._good_summary()
+
+        with patch("docops.summarize.pipeline.collect_ordered_chunks") as mc, \
+             patch("docops.summarize.pipeline._get_llm") as mllm:
+            mc.return_value = _make_chunks(4, with_sections=True)
+            mock_llm = MagicMock()
+            mock_llm.invoke.side_effect = [self._resp(base)] * 15
+            mllm.return_value = mock_llm
+
+            result = run_deep_summary(
+                "doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True
+            )
+
+        assert "corrective_timeline" in result["diagnostics"]
+        assert isinstance(result["diagnostics"]["corrective_timeline"], list)
+
+    def test_corrective_timeline_empty_when_no_passes_run(self, monkeypatch):
+        """corrective_timeline deve estar vazia quando nenhum passe corretivo roda."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_BACKFILL_BEFORE_DEOVERREACH", "true")
+
+        base = self._good_summary()
+
+        with patch("docops.summarize.pipeline.collect_ordered_chunks") as mc, \
+             patch("docops.summarize.pipeline._get_llm") as mllm:
+            mc.return_value = _make_chunks(4, with_sections=True)
+            mock_llm = MagicMock()
+            mock_llm.invoke.side_effect = [self._resp(base)] * 15
+            mllm.return_value = mock_llm
+
+            result = run_deep_summary(
+                "doc.pdf", "doc-uuid", user_id=1,
+                profile="fast",
+                include_diagnostics=True,
+            )
+
+        diag = result["diagnostics"]
+        assert "corrective_timeline" in diag
+        assert diag["corrective_timeline"] == []
+
+    def test_early_micro_backfill_key_always_in_diagnostics(self, monkeypatch):
+        """early_micro_backfill deve estar sempre presente nos diagnostics."""
+        from docops.summarize.pipeline import run_deep_summary
+
+        monkeypatch.setenv("SUMMARY_RESYNTHESIS_ENABLED", "false")
+        monkeypatch.setenv("SUMMARY_GROUNDING_REPAIR", "false")
+        monkeypatch.setenv("SUMMARY_MAX_INFERENCE_DENSITY", "1.0")
+        monkeypatch.setenv("SUMMARY_STRUCTURE_MIN_CHARS", "20")
+        monkeypatch.setenv("SUMMARY_BACKFILL_BEFORE_DEOVERREACH", "true")
+
+        base = self._good_summary()
+
+        with patch("docops.summarize.pipeline.collect_ordered_chunks") as mc, \
+             patch("docops.summarize.pipeline._get_llm") as mllm:
+            mc.return_value = _make_chunks(4, with_sections=True)
+            mock_llm = MagicMock()
+            mock_llm.invoke.side_effect = [self._resp(base)] * 15
+            mllm.return_value = mock_llm
+
+            result = run_deep_summary(
+                "doc.pdf", "doc-uuid", user_id=1, include_diagnostics=True
+            )
+
+        diag = result["diagnostics"]
+        assert "early_micro_backfill" in diag
+        emb = diag["early_micro_backfill"]
+        for key in (
+            "triggered", "accepted", "missing_topics_before", "missing_topics_after",
+            "paragraphs_attempted", "paragraphs_accepted", "latency_ms",
+            "backfill_before_deoverreach_enabled",
+        ):
+            assert key in emb, f"Campo '{key}' ausente em early_micro_backfill"

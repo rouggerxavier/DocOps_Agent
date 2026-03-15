@@ -1,4 +1,4 @@
-"""Configuration management — reads all settings from environment variables.
+"""Configuration management â€” reads all settings from environment variables.
 
 Paths like CHROMA_DIR, DOCS_DIR, and ARTIFACTS_DIR are resolved relative to
 the project root (the directory containing this package), not the current
@@ -118,7 +118,7 @@ class Config:
     def min_citations(self) -> int:
         return int(os.getenv("MIN_CITATIONS", "2"))
 
-    # ── RAG retrieval tuning ──────────────────────────────────────────────────
+    # â”€â”€ RAG retrieval tuning â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @property
     def min_relevance_score(self) -> float:
@@ -141,7 +141,7 @@ class Config:
     def context_max_chars(self) -> int:
         return int(os.getenv("CONTEXT_MAX_CHARS", "1500"))
 
-    # ── Phase 2: Query rewriting ───────────────────────────────────────────────
+    # â”€â”€ Phase 2: Query rewriting â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @property
     def multi_query(self) -> bool:
@@ -155,7 +155,7 @@ class Config:
     def multi_query_per_query_k(self) -> int:
         return int(os.getenv("MULTI_QUERY_PER_QUERY_K", str(self.top_k)))
 
-    # ── Phase 2: Reranking ─────────────────────────────────────────────────────
+    # â”€â”€ Phase 2: Reranking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @property
     def reranker(self) -> str:
@@ -166,7 +166,7 @@ class Config:
     def rerank_top_n(self) -> int:
         return int(os.getenv("RERANK_TOP_N", str(self.top_k)))
 
-    # ── Phase 2: Hybrid search ─────────────────────────────────────────────────
+    # â”€â”€ Phase 2: Hybrid search â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @property
     def bm25_dir(self) -> Path:
@@ -180,26 +180,26 @@ class Config:
     def hybrid_alpha(self) -> float:
         return float(os.getenv("HYBRID_ALPHA", "0.5"))
 
-    # ── Phase 2: Incremental ingest ────────────────────────────────────────────
+    # â”€â”€ Phase 2: Incremental ingest â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @property
     def ingest_incremental(self) -> bool:
         return os.getenv("INGEST_INCREMENTAL", "false").lower() in ("true", "1", "yes")
 
-    # ── Phase 3: Structured chunking ──────────────────────────────────────────
+    # â”€â”€ Phase 3: Structured chunking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @property
     def structured_chunking(self) -> bool:
         """When True, MD/TXT files are split by section headings (default: True)."""
         return os.getenv("STRUCTURED_CHUNKING", "true").lower() in ("true", "1", "yes")
 
-    # ── Phase 3: Semantic grounding verifier ──────────────────────────────────
+    # â”€â”€ Phase 3: Semantic grounding verifier â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @property
     def grounded_verifier_mode(self) -> str:
         """Verifier mode: 'heuristic' (fast), 'llm' (LLM judge), or 'hybrid'.
 
-        Default: 'heuristic' — safe to use without extra API calls.
+        Default: 'heuristic' â€” safe to use without extra API calls.
         """
         return os.getenv("GROUNDED_VERIFIER_MODE", "heuristic").lower()
 
@@ -241,26 +241,26 @@ class Config:
         """Master switch for the semantic grounding verifier (default: True)."""
         return os.getenv("SEMANTIC_GROUNDING_ENABLED", "true").lower() in ("true", "1", "yes")
 
-    # ── Deep summary pipeline tuning ─────────────────────────────────────────
+    # â”€â”€ Deep summary pipeline tuning â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @property
     def summary_group_size(self) -> int:
-        """Target number of chunks per partial-summary group (default: 6).
+        """Target number of chunks per partial-summary group (default: 8).
 
         Larger values reduce LLM calls but produce coarser partial summaries.
         Smaller values give finer granularity but increase latency.
         Override with SUMMARY_GROUP_SIZE env var.
         """
-        return int(os.getenv("SUMMARY_GROUP_SIZE", "6"))
+        return int(os.getenv("SUMMARY_GROUP_SIZE", "8"))
 
     @property
     def summary_max_groups(self) -> int:
-        """Hard cap on the number of groups in the deep summary pipeline (default: 8).
+        """Hard cap on the number of groups in the deep summary pipeline (default: 6).
 
         Controls max partial-summary LLM calls, keeping latency predictable for
         very large documents. Override with SUMMARY_MAX_GROUPS env var.
         """
-        return int(os.getenv("SUMMARY_MAX_GROUPS", "8"))
+        return int(os.getenv("SUMMARY_MAX_GROUPS", "6"))
 
     @property
     def summary_section_threshold(self) -> float:
@@ -276,7 +276,7 @@ class Config:
     def summary_max_sources(self) -> int:
         """Hard cap on source entries in the summary 'Fontes:' section (default: 12).
 
-        Sources are grouped by (file, section) — this caps the total entries shown.
+        Sources are grouped by (file, section) â€” this caps the total entries shown.
         Override with SUMMARY_MAX_SOURCES env var.
         """
         return int(os.getenv("SUMMARY_MAX_SOURCES", "12"))
@@ -293,16 +293,38 @@ class Config:
 
     @property
     def summary_grounding_repair(self) -> bool:
-        """Enable LLM repair pass for weakly grounded blocks (default: True).
+        """Enable LLM repair pass for weakly grounded blocks (default: False).
 
         When True, blocks below SUMMARY_GROUNDING_THRESHOLD receive an LLM
         rewrite restricted to the cited anchor texts. Adds 1 LLM call per
         weakly grounded block.
         Override with SUMMARY_GROUNDING_REPAIR env var.
         """
-        return os.getenv("SUMMARY_GROUNDING_REPAIR", "true").lower() in (
+        return os.getenv("SUMMARY_GROUNDING_REPAIR", "false").lower() in (
             "true", "1", "yes"
         )
+
+    @property
+    def summary_grounding_max_repairs_per_pass(self) -> int:
+        """Max weak-block grounding repairs per validation pass (default: 1).
+
+        Limits how many weakly grounded blocks can trigger LLM rewrites in a
+        single validate_summary_grounding() call, reducing tail latency on
+        long summaries with many weak blocks.
+        Override with SUMMARY_GROUNDING_MAX_REPAIRS_PER_PASS env var.
+        """
+        return int(os.getenv("SUMMARY_GROUNDING_MAX_REPAIRS_PER_PASS", "1"))
+
+    @property
+    def summary_grounding_repair_min_overlap(self) -> float:
+        """Minimum overlap required to attempt grounding repair (default: 0.15).
+
+        Repairs are expensive and can over-edit strong model outputs. With modern
+        models, near-threshold blocks are usually acceptable paraphrases, so we
+        only attempt repairs on clearly weak blocks below this overlap.
+        Override with SUMMARY_GROUNDING_REPAIR_MIN_OVERLAP env var.
+        """
+        return float(os.getenv("SUMMARY_GROUNDING_REPAIR_MIN_OVERLAP", "0.15"))
 
     @property
     def summary_structure_min_chars(self) -> int:
@@ -316,8 +338,8 @@ class Config:
 
     @property
     def summary_resynthesis_enabled(self) -> bool:
-        """Enable one global re-synthesis pass when quality gates fail (default: True)."""
-        return os.getenv("SUMMARY_RESYNTHESIS_ENABLED", "true").lower() in (
+        """Enable one global re-synthesis pass when quality gates fail (default: False)."""
+        return os.getenv("SUMMARY_RESYNTHESIS_ENABLED", "false").lower() in (
             "true", "1", "yes"
         )
 
@@ -335,6 +357,16 @@ class Config:
             candidate_weak_ratio <= current_weak_ratio + this_threshold
         """
         return float(os.getenv("SUMMARY_RESYNTHESIS_MAX_WEAK_RATIO_DEGRADATION", "0.05"))
+
+    @property
+    def summary_resynthesis_max_accepted_weak_ratio(self) -> float:
+        """Absolute ceiling for weak_ratio on re-synthesis candidates (default: 0.35).
+
+        A candidate is rejected regardless of quality/diversity gains when its
+        weak_ratio exceeds this value. This prevents accepting summaries with
+        objectively poor grounding even if they improve on other dimensions.
+        """
+        return float(os.getenv("SUMMARY_RESYNTHESIS_MAX_ACCEPTED_WEAK_RATIO", "0.35"))
 
     @property
     def summary_grounding_threshold_noisy(self) -> float:
@@ -382,7 +414,16 @@ class Config:
         """Maximum number of structure-fix LLM calls per re-synthesis attempt (default: 2)."""
         return int(os.getenv("SUMMARY_STRUCTURE_FIX_MAX_CALLS", "2"))
 
-    # ── Phase 3: Coverage gate ────────────────────────────────────────────────
+    @property
+    def summary_outline_min_score(self) -> float:
+        """Minimum outline topic coverage score for deep summary (default: 0.60).
+
+        When the topic outline coverage score is below this threshold, a
+        re-synthesis pass is triggered with explicit topic gap feedback.
+        """
+        return float(os.getenv("SUMMARY_OUTLINE_MIN_SCORE", "0.60"))
+
+    # â”€â”€ Phase 3: Coverage gate â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @property
     def summary_coverage_gate_enabled(self) -> bool:
@@ -543,7 +584,51 @@ class Config:
             "true", "1", "yes"
         )
 
-    # ── Phase 3: Eval harness ─────────────────────────────────────────────────
+    @property
+    def summary_max_inference_density(self) -> float:
+        """Maximum fraction of sentences with unsupported high-risk claims (default: 0.25).
+
+        Inference density = (unsupported_high_risk_count + formula_downgraded_count)
+                            / sentences_total.
+        Values above this threshold trigger the de-overreach rewrite pass and,
+        if not resolved, cause final.accepted=False.
+        Override with SUMMARY_MAX_INFERENCE_DENSITY env var.
+        """
+        return float(os.getenv("SUMMARY_MAX_INFERENCE_DENSITY", "0.25"))
+
+    @property
+    def summary_formula_mode(self) -> str:
+        """Formula-claim verification mode: 'conservative' (default) or 'permissive'.
+
+        In 'conservative' mode, formula/mathematical claims in the summary must be
+        backed by at least one cited anchor that contains actual math content
+        (Greek letters, operators, algebraic notation). Claims without such backing
+        are downgraded to a conceptual description and counted toward inference density.
+        Override with SUMMARY_FORMULA_MODE env var.
+        """
+        return os.getenv("SUMMARY_FORMULA_MODE", "conservative").strip().lower()
+
+    @property
+    def summary_deoverreach_max_context_sources(self) -> int:
+        """Max citation anchors injected into de-overreach prompt context (default: 6)."""
+        return int(os.getenv("SUMMARY_DEOVERREACH_MAX_CONTEXT_SOURCES", "6"))
+
+    @property
+    def summary_deoverreach_context_chars(self) -> int:
+        """Max chars per anchor snippet in de-overreach context (default: 700)."""
+        return int(os.getenv("SUMMARY_DEOVERREACH_CONTEXT_CHARS", "700"))
+
+    @property
+    def summary_deoverreach_max_prompt_chars(self) -> int:
+        """Skip de-overreach pass when prompt exceeds this size (default: 18000)."""
+        return int(os.getenv("SUMMARY_DEOVERREACH_MAX_PROMPT_CHARS", "18000"))
+
+    @property
+    def summary_latency_budget_seconds(self) -> float:
+        """Soft latency budget for optional deep-summary passes (default: 300s)."""
+        return float(os.getenv("SUMMARY_LATENCY_BUDGET_SECONDS", "300"))
+
+    # â”€â”€ Phase 3: Eval harness â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @property
     def eval_suites_dir(self) -> Path:
@@ -553,7 +638,7 @@ class Config:
     def eval_output_dir(self) -> Path:
         return _path_env("EVAL_OUTPUT_DIR", "./artifacts")
 
-    # ── Auth / banco de dados ──────────────────────────────────────────────────
+    # â”€â”€ Auth / banco de dados â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @property
     def database_url(self) -> str:
@@ -565,7 +650,7 @@ class Config:
         key = os.getenv("JWT_SECRET_KEY", "")
         if not key:
             raise EnvironmentError(
-                "JWT_SECRET_KEY não configurado. Defina no .env antes de iniciar o servidor."
+                "JWT_SECRET_KEY nÃ£o configurado. Defina no .env antes de iniciar o servidor."
             )
         return key
 
@@ -579,12 +664,149 @@ class Config:
 
     @property
     def ingest_allowed_dirs(self) -> list[Path]:
-        """Diretórios permitidos para ingest por path (evita leitura arbitrária de disco)."""
+        """DiretÃ³rios permitidos para ingest por path (evita leitura arbitrÃ¡ria de disco)."""
         raw = os.getenv("INGEST_ALLOWED_DIRS", "")
         if raw:
             return [Path(d.strip()).resolve() for d in raw.split(",") if d.strip()]
         return [self.docs_dir.resolve()]
 
+    # â”€â”€ Deep summary execution profiles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    @property
+    def summary_deep_profile(self) -> str:
+        """Execution profile for the deep summary pipeline.
+
+        Values:
+          - ``fast``      â€” caminho crÃ­tico sem passes caros (sem deoverreach,
+                            resynthesis ou backfill extra). Apenas validaÃ§Ãµes
+                            essenciais. Menor latÃªncia.
+          - ``model_first`` â€” caminho ultrassimples para modelos modernos:
+                            evita passes corretivos em cascata e prioriza
+                            sÃ­ntese direta com validaÃ§Ãµes bÃ¡sicas.
+          - ``strict``    â€” 1 passe corretivo mÃ¡ximo + fail-closed real: se
+                            diagnostics.final.accepted=False, retorna erro HTTP 422.
+
+        Override with SUMMARY_DEEP_PROFILE env var.
+        """
+        val = os.getenv("SUMMARY_DEEP_PROFILE", "model_first").strip().lower()
+        if val not in ("fast", "model_first", "strict"):
+            return "model_first"
+        return val
+
+    @property
+    def summary_max_corrective_passes(self) -> int:
+        """OrÃ§amento global de passes corretivos por run de deep summary (default: 1).
+
+        Conta deoverreach, resynthesis e backfill como passes distintos.
+        Quando o orÃ§amento for atingido, nenhum passe corretivo adicional Ã© iniciado.
+        Override with SUMMARY_MAX_CORRECTIVE_PASSES env var.
+        """
+        return max(0, int(os.getenv("SUMMARY_MAX_CORRECTIVE_PASSES", "1")))
+
+    @property
+    def summary_style_polish_enabled(self) -> bool:
+        """Habilita passo de polish de estilo (polish_deep_summary_style) (default: False).
+
+        Quando False, o passo de polish Ã© ignorado.
+        Em perfil ``fast``, sempre desabilitado independentemente deste valor.
+        Override with SUMMARY_STYLE_POLISH_ENABLED env var.
+        """
+        return os.getenv("SUMMARY_STYLE_POLISH_ENABLED", "false").lower() in (
+            "true", "1", "yes"
+        )
+
+    @property
+    def summary_fail_closed_strict(self) -> bool:
+        """Em perfil ``strict``, retorna HTTP 422 quando accepted=False (default: True).
+
+        Quando True e perfil=strict: se diagnostics.final.accepted=False, a API
+        retorna HTTP 422 com detalhe dos blocking_reasons em vez de entregar o resumo.
+        Override with SUMMARY_FAIL_CLOSED_STRICT env var.
+        """
+        return os.getenv("SUMMARY_FAIL_CLOSED_STRICT", "true").lower() in (
+            "true", "1", "yes"
+        )
+
+    # â”€â”€ Micro-backfill (tÃ³pico direcionado) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    @property
+    def summary_micro_backfill_enabled(self) -> bool:
+        """Habilita micro-backfill direcionado por tÃ³pico (default: True).
+
+        Quando True, substitui o backfill global por chamadas LLM por tÃ³pico,
+        gerando apenas 1 parÃ¡grafo curto por tÃ³pico faltante em vez de reescrever
+        o resumo inteiro.
+        Override with SUMMARY_MICRO_BACKFILL_ENABLED env var.
+        """
+        return os.getenv("SUMMARY_MICRO_BACKFILL_ENABLED", "true").lower() in (
+            "true", "1", "yes"
+        )
+
+    @property
+    def summary_micro_backfill_max_topics(self) -> int:
+        """MÃ¡ximo de tÃ³picos processados por chamada de micro-backfill (default: 3).
+
+        Limita o nÃºmero de tÃ³picos que recebem um parÃ¡grafo de complemento.
+        TÃ³picos excedentes sÃ£o registrados nos diagnÃ³sticos mas nÃ£o processados.
+        Override with SUMMARY_MICRO_BACKFILL_MAX_TOPICS env var.
+        """
+        return max(1, int(os.getenv("SUMMARY_MICRO_BACKFILL_MAX_TOPICS", "3")))
+
+    @property
+    def summary_micro_backfill_paragraph_max_chars(self) -> int:
+        """Limite mÃ¡ximo de caracteres por parÃ¡grafo gerado pelo micro-backfill (default: 900).
+
+        O parÃ¡grafo gerado pelo LLM Ã© truncado se exceder este limite antes da
+        validaÃ§Ã£o. Deve equivaler a ~60-120 palavras em PT-BR.
+        Override with SUMMARY_MICRO_BACKFILL_PARAGRAPH_MAX_CHARS env var.
+        """
+        return max(200, int(os.getenv("SUMMARY_MICRO_BACKFILL_PARAGRAPH_MAX_CHARS", "900")))
+
+    @property
+    def summary_require_non_low_info_for_high_risk(self) -> bool:
+        """Exige ao menos 1 fonte nÃ£o-low-info para claims high-risk (default: True).
+
+        Quando True, claims tÃ©cnicos (formula, quantitative, taxonomy_comparison,
+        technical_assertion) sÃ£o marcados como unsupported quando TODAS as fontes
+        citadas sÃ£o low-info (sumÃ¡rio, Ã­ndice, conteÃºdo, etc.).
+        Override with SUMMARY_REQUIRE_NON_LOW_INFO_FOR_HIGH_RISK env var.
+        """
+        return os.getenv("SUMMARY_REQUIRE_NON_LOW_INFO_FOR_HIGH_RISK", "true").lower() in (
+            "true", "1", "yes"
+        )
+
+    @property
+    def summary_strict_reserve_pass_for_must_cover(self) -> bool:
+        """Reserva 1 passe corretivo para cobertura obrigatÃ³ria no perfil strict (default: True).
+
+        Quando True e profile=strict, se houver `must_cover_topics` ainda faltando
+        e restar apenas 1 passe corretivo, o scheduler prioriza cobertura de tÃ³picos
+        (micro-backfill) e impede que de-overreach/resynthesis consumam esse Ãºltimo passe.
+        Override with SUMMARY_STRICT_RESERVE_PASS_FOR_MUST_COVER env var.
+        """
+        return os.getenv(
+            "SUMMARY_STRICT_RESERVE_PASS_FOR_MUST_COVER",
+            "true",
+        ).lower() in ("true", "1", "yes")
+
+    @property
+    def summary_backfill_before_deoverreach(self) -> bool:
+        """Executa micro-backfill antes de de-overreach/resynthesis (default: True).
+
+        Quando True e hÃ¡ missing must-cover topics, o micro-backfill Ã© executado
+        ANTES de de-overreach e resynthesis no perfil strict.
+        Isso reduz casos de final_accepted=False por missing_topics quando
+        max_corrective_passes=1, pois o Ãºnico passe disponÃ­vel vai para cobertura.
+
+        Quando False, mantÃ©m a ordem legada: deoverreach â†’ resynthesis â†’ micro-backfill.
+        NÃ£o tem efeito no perfil fast (passes corretivos sempre desabilitados).
+        Override with SUMMARY_BACKFILL_BEFORE_DEOVERREACH env var.
+        """
+        return os.getenv("SUMMARY_BACKFILL_BEFORE_DEOVERREACH", "true").lower() in (
+            "true", "1", "yes"
+        )
+
 
 # Singleton instance used throughout the package
 config = Config()
+

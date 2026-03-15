@@ -27,6 +27,7 @@ def _run_summarize(
     summary_mode: str,
     user_id: int,
     debug_summary: bool = False,
+    deep_profile: str | None = None,
 ) -> dict:
     from docops.tools.doc_tools import tool_write_artifact
 
@@ -40,6 +41,7 @@ def _run_summarize(
             doc_id,
             user_id,
             include_diagnostics=debug_summary,
+            profile=deep_profile,
         )
         answer = result_dict.get("answer", "")
         diagnostics = result_dict.get("diagnostics")
@@ -103,12 +105,30 @@ async def summarize(
             body.summary_mode,
             current_user.id,
             body.debug_summary,
+            body.deep_profile,
         )
     except EnvironmentError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
         logger.error("Summarize error: %s", exc)
         raise HTTPException(status_code=500, detail="Agent error")
+
+    # Strict fail-closed: em perfil strict, se accepted=False retorna 422
+    if body.summary_mode == "deep" and result.get("diagnostics"):
+        diag = result["diagnostics"]
+        if not diag.get("final", {}).get("accepted", True) and diag.get("profile_used") == "strict":
+            blocking = diag.get("final", {}).get("blocking_reasons", [])
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error": "deep_summary_quality_gate_failed",
+                    "blocking_reasons": blocking,
+                    "message": (
+                        "O resumo aprofundado foi bloqueado pelo gate estrito de qualidade. "
+                        "Revise os limiares ou utilize o perfil 'model_first'."
+                    ),
+                },
+            )
 
     if body.save and result.get("artifact_path") and result.get("artifact_filename"):
         mode_suffix = "breve" if body.summary_mode == "brief" else "aprofundado"

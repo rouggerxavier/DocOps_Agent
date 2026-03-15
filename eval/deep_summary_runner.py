@@ -12,8 +12,15 @@ from typing import Any
 from langchain_core.documents import Document
 
 from docops.config import config
+from docops.summarize.outline import (
+    extract_document_topics,
+    score_topic_outline_coverage,
+)
 from docops.summarize.coverage_profiles import resolve_coverage_profile
 from docops.summarize.pipeline import (
+    check_formula_mode,
+    classify_claim_risks,
+    compute_inference_density,
     detect_coverage_signals,
     score_coverage,
     validate_summary_grounding,
@@ -48,10 +55,14 @@ class DeepSummaryCaseResult:
     passed: bool
     structure_valid: bool
     coverage_score: float
+    outline_coverage_score: float
     weak_grounding_ratio: float
     unique_sources_used: int
     profile_name: str
     thresholds: dict[str, Any]
+    unsupported_high_risk_count: int = 0
+    formula_claims_downgraded_to_concept: int = 0
+    inference_density: float = 0.0
     failure_reasons: list[str] = field(default_factory=list)
     error: str | None = None
 
@@ -126,6 +137,16 @@ class DeepSummaryRegressionRunner:
             "max_weak_grounding_ratio": 0.50,
             "min_unique_sources": 2,
             "structure_min_chars": 40,
+            # Optional by default; enforced only when provided by suite/case.
+            "min_outline_coverage_score": None,
+            "max_outline_coverage_score": None,
+            "min_unsupported_high_risk_count": None,
+            "max_unsupported_high_risk_count": None,
+            "min_formula_claims_downgraded": None,
+            "max_formula_claims_downgraded": None,
+            "min_inference_density": None,
+            "max_inference_density": None,
+            "formula_mode": None,
         }
         base.update(self.suite.thresholds or {})
         base.update(case.thresholds or {})
@@ -154,6 +175,24 @@ class DeepSummaryRegressionRunner:
                 signals,
                 coverage_profile=profile,
             )
+            topic_info = extract_document_topics(chunks, major_topic_min_hits=2)
+            outline_cov = score_topic_outline_coverage(case.summary_text, topic_info)
+            outline_score = float(outline_cov.get("overall_score", 1.0))
+            formula_mode = str(
+                thresholds.get("formula_mode")
+                or getattr(config, "summary_formula_mode", "conservative")
+            ).strip().lower()
+
+            claim_risk = classify_claim_risks(case.summary_text, chunks)
+            claim_risk = check_formula_mode(claim_risk, chunks, formula_mode)
+            inference = compute_inference_density(claim_risk)
+            unsupported_high_risk_count = int(
+                claim_risk.get("unsupported_high_risk_count", 0)
+            )
+            formula_claims_downgraded = int(
+                claim_risk.get("formula_claims_downgraded_to_concept", 0)
+            )
+            inference_density = float(inference.get("inference_density", 0.0))
 
             structure = validate_summary_structure(
                 case.summary_text,
@@ -180,6 +219,42 @@ class DeepSummaryRegressionRunner:
                 failures.append("weak_grounding_ratio_above_max")
             if unique_sources < int(thresholds.get("min_unique_sources", 2)):
                 failures.append("unique_sources_below_min")
+            min_outline = thresholds.get("min_outline_coverage_score")
+            if min_outline is not None and outline_score < float(min_outline):
+                failures.append("outline_coverage_below_min")
+            max_outline = thresholds.get("max_outline_coverage_score")
+            if max_outline is not None and outline_score > float(max_outline):
+                failures.append("outline_coverage_above_max")
+            min_unsupported = thresholds.get("min_unsupported_high_risk_count")
+            if (
+                min_unsupported is not None
+                and unsupported_high_risk_count < int(min_unsupported)
+            ):
+                failures.append("unsupported_high_risk_below_min")
+            max_unsupported = thresholds.get("max_unsupported_high_risk_count")
+            if (
+                max_unsupported is not None
+                and unsupported_high_risk_count > int(max_unsupported)
+            ):
+                failures.append("unsupported_high_risk_above_max")
+            min_formula_down = thresholds.get("min_formula_claims_downgraded")
+            if (
+                min_formula_down is not None
+                and formula_claims_downgraded < int(min_formula_down)
+            ):
+                failures.append("formula_claims_downgraded_below_min")
+            max_formula_down = thresholds.get("max_formula_claims_downgraded")
+            if (
+                max_formula_down is not None
+                and formula_claims_downgraded > int(max_formula_down)
+            ):
+                failures.append("formula_claims_downgraded_above_max")
+            min_inference = thresholds.get("min_inference_density")
+            if min_inference is not None and inference_density < float(min_inference):
+                failures.append("inference_density_below_min")
+            max_inference = thresholds.get("max_inference_density")
+            if max_inference is not None and inference_density > float(max_inference):
+                failures.append("inference_density_above_max")
 
             return DeepSummaryCaseResult(
                 case_id=case.id,
@@ -187,8 +262,12 @@ class DeepSummaryRegressionRunner:
                 passed=not failures,
                 structure_valid=bool(structure.get("valid", False)),
                 coverage_score=float(coverage.get("overall_coverage_score", 1.0)),
+                outline_coverage_score=round(outline_score, 4),
                 weak_grounding_ratio=round(weak_ratio, 4),
                 unique_sources_used=unique_sources,
+                unsupported_high_risk_count=unsupported_high_risk_count,
+                formula_claims_downgraded_to_concept=formula_claims_downgraded,
+                inference_density=round(inference_density, 4),
                 profile_name=str(profile.get("name", "balanced")),
                 thresholds=thresholds,
                 failure_reasons=failures,
@@ -201,8 +280,12 @@ class DeepSummaryRegressionRunner:
                 passed=False,
                 structure_valid=False,
                 coverage_score=0.0,
+                outline_coverage_score=0.0,
                 weak_grounding_ratio=1.0,
                 unique_sources_used=0,
+                unsupported_high_risk_count=0,
+                formula_claims_downgraded_to_concept=0,
+                inference_density=0.0,
                 profile_name="error",
                 thresholds=thresholds,
                 failure_reasons=["runner_exception"],
@@ -222,8 +305,14 @@ class DeepSummaryRegressionRunner:
             "avg_coverage_score": round(
                 sum(r.coverage_score for r in results) / total, 3
             ) if total else 1.0,
+            "avg_outline_coverage_score": round(
+                sum(r.outline_coverage_score for r in results) / total, 3
+            ) if total else 1.0,
             "avg_weak_grounding_ratio": round(
                 sum(r.weak_grounding_ratio for r in results) / total, 3
+            ) if total else 0.0,
+            "avg_inference_density": round(
+                sum(r.inference_density for r in results) / total, 3
             ) if total else 0.0,
         }
         return DeepSummaryEvalReport(

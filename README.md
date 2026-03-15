@@ -84,8 +84,7 @@ Impacto em produção:
 
 ---
 
-## InstalaÃ§Ã£o
-
+## InstalaÃ§Ã£oFFJYFHHHFHFGGDJSGSD
 ```bash
 # 1. Entre na pasta do projeto
 cd DocOps_Agent
@@ -127,7 +126,7 @@ O arquivo `.env` fica na raiz `DocOps_Agent/`. Todas as configuraÃ§Ãµes sÃ�
 | `CHROMA_DIR` | `./data/chroma` | DiretÃ³rio de persistÃªncia do ChromaDB |
 | `DOCS_DIR` | `./docs` | Base de ingest por path local permitido (`INGEST_ALLOWED_DIRS`) |
 | `UPLOADS_DIR` | `./uploads` | Uploads recebidos pela API, segregados em `uploads/user_<id>/` |
-| `ARTIFACTS_DIR` | `./artifacts` | Base de artifacts; API grava em `artifacts/user_<id>/` |
+| `ARTIFACTS_DIR` | `./artifacts` | Base de artifacts; API grava emC `artifacts/user_<id>/` |
 | `BM25_DIR` | `./data/bm25` | Base dos índices BM25 por usuário (`data/bm25/user_<id>/`) |
 
 ### Chunking
@@ -208,7 +207,7 @@ O arquivo `.env` fica na raiz `DocOps_Agent/`. Todas as configuraÃ§Ãµes sÃ�
 
 ---
 
-## Como rodart6ttrdiokgvdcgdsujdgzxujdgvasisdgbhhduiodgdogfsisdvgcdshusgddjhsdgvdbdbsghsd dfhfiohegsdkhdgysusisgstyskwebwejdjmvcoigfxddhj  xdfy
+## Como rodar
 
 ### Backend (FastAPI + Uvicorn)
 
@@ -237,6 +236,41 @@ npm run dev
 
 - Frontend: `http://localhost:5173` (ou prÃ³xima porta disponÃ­vel, ex: `5174`)
 - Se a porta for diferente de `5173`, adicione ao `.env`: `CORS_ORIGINS=http://localhost:5174`
+
+### Docker (backend + frontend)
+
+Arquivos adicionados:
+- `Dockerfile.backend`
+- `Dockerfile.frontend`
+- `docker-compose.yml`
+- `docker/nginx.conf`
+
+Passo a passo:
+
+```bash
+# Na raiz DocOps_Agent/
+copy .env.example .env
+# Edite .env e preencha GEMINI_API_KEY e JWT_SECRET_KEY
+
+docker compose up --build
+```
+
+Endpoints:
+- Frontend: `http://localhost:5173`
+- Backend API: `http://localhost:8000`
+- Swagger UI: `http://localhost:8000/api/docs-ui`
+
+PersistÃªncia em volume bind local:
+- `./data` -> banco SQLite, Chroma e BM25
+- `./docs` -> documentos para ingest por path
+- `./uploads` -> uploads via API
+- `./artifacts` -> artefatos gerados
+
+ObservaÃ§Ãµes:
+- O frontend em `http://localhost:5173` faz proxy de `/api/*` para o container `backend`.
+- Para ingest por path dentro do container, use `POST /api/ingest` com caminhos em `/app/docs/...`.
+- Para encerrar os containers: `docker compose down`
+- Para rebuild apÃ³s alterar dependÃªncias: `docker compose up --build`
 
 ---
 
@@ -1109,6 +1143,54 @@ python -m docops eval --suite demo --strict          # falha se strict_pass_rate
 python -m docops serve
 python -m docops serve --host 0.0.0.0 --port 8080 --reload
 ```
+
+---
+
+## Benchmark de Deep Summary
+
+Script reproduzível para medir latência e qualidade por perfil de execução (`fast`, `model_first`, `strict`).
+
+### Como rodar
+
+```bash
+# Com o servidor rodando em http://127.0.0.1:8000
+python eval/benchmark_deep_summary.py \
+  --doc "meu_documento.pdf" \
+  --email usuario@exemplo.com \
+  --password minha_senha \
+  --profiles fast,model_first,strict \
+  --runs 10 \
+  --warmup 1
+```
+
+### Parâmetros principais
+
+| Parâmetro | Default | Descrição |
+|---|---|---|
+| `--doc` | obrigatório | Nome do documento no sistema (`file_name`) |
+| `--profiles` | `fast,model_first,strict` | Perfis separados por vírgula |
+| `--runs` | `10` | Rodadas medidas por perfil |
+| `--warmup` | `1` | Rodadas de aquecimento (não contabilizadas) |
+| `--base-url` | `http://127.0.0.1:8000` | URL base da API |
+| `--email` / `--password` | obrigatórios | Credenciais para login |
+| `--out-json` | `artifacts/benchmarks/benchmark_<ts>.json` | Relatório JSON completo |
+| `--out-md` | `artifacts/benchmarks/benchmark_<ts>.md` | Relatório Markdown executivo |
+| `--accepted-threshold` | `0.8` | Taxa mínima de `accepted` para qualificar perfil |
+
+### Onde achar os relatórios
+
+```
+artifacts/
+└── benchmarks/
+    ├── benchmark_20260312_103045.json   # amostras brutas + agregados
+    └── benchmark_20260312_103045.md     # tabela comparativa + recomendação
+```
+
+### Regra de recomendação automática
+
+1. Filtra perfis com `accepted_rate >= threshold` (default 0.8).
+2. Entre os qualificados, escolhe o de menor `p95_ms`.
+3. Se nenhum atingir o threshold, escolhe o de maior `accepted_rate` e emite flag de risco.
 
 ---
 

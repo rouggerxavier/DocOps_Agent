@@ -75,3 +75,162 @@ cases:
 
       ## Síntese Final
       Síntese final encerra procedimento com avaliação estruturada, documentação de métricas, registro de decisões técnicas e plano de melhoria contínua para novas execuções [Fonte 4].
+
+  # ── Regression case: fluent but incomplete summary should fail outline gate ──
+  - id: ds_false_positive_01
+    doc_name: aprendizado_maquina_arvores.pdf
+    description: >
+      Document with many distinct topics (classification taxonomy, construction,
+      split criteria, regularization, generalization, ensembles, regression).
+      A fluent but incomplete summary that only covers 2 of 7 topics should fail
+      the outline coverage gate.
+    chunk_texts:
+      - "Introdução ao aprendizado supervisionado. Taxonomia classifica algoritmos em supervisionados e não supervisionados."
+      - "O algoritmo constrói uma árvore de decisão recursivamente usando heurística gulosa para particionamento."
+      - "O critério de seleção usa entropia: H(S) = -sum p_i * log2(p_i) para maximizar ganho de informação."
+      - "Poda por cost-complexity usa alpha_eff para controlar overfitting e regularizar o modelo."
+      - "A dimensão VC de Vapnik-Chervonenkis limita o erro de generalização do modelo."
+      - "Random forest combina múltiplas árvores via bagging como variante ensemble."
+      - "Árvores de regressão minimizam redução de variância usando MSE como função de perda."
+      - "Cross-validation com k-fold avalia performance e seleciona hiperparâmetros de poda."
+      - "Por exemplo, dataset de classificação de clientes demonstra aplicação prática do modelo."
+    summary_text: |
+      ## Visão Geral
+      Este documento apresenta uma visão abrangente sobre árvores de decisão [Fonte 1].
+
+      ## Encadeamento e Principais Tópicos
+      O documento discute vários aspectos do modelo [Fonte 2].
+
+      ## Conceitos Fundamentais
+      A construção utiliza um algoritmo recursivo que particiona os dados em cada nó [Fonte 3].
+
+      ## Aplicações e Variações
+      O modelo é versátil e amplamente utilizado [Fonte 4].
+
+      ## Síntese Final
+      Em resumo, árvores de decisão são modelos interpretáveis e eficientes.
+    thresholds:
+      # This summary should FAIL — it only covers 1-2 of 7+ detected topics.
+      # The outline coverage score must be below 0.60.
+      max_outline_coverage_score: 0.60
+
+  - id: ds_complete_multi_topic_01
+    doc_name: aprendizado_maquina_arvores.pdf
+    description: >
+      Same multi-topic document, but with a complete summary that covers all
+      major topics. Should pass all quality gates.
+    chunk_texts:
+      - "Introdução ao aprendizado supervisionado. Taxonomia classifica algoritmos em supervisionados e não supervisionados."
+      - "O algoritmo constrói uma árvore de decisão recursivamente usando heurística gulosa para particionamento."
+      - "O critério de seleção usa entropia: H(S) = -sum p_i * log2(p_i) para maximizar ganho de informação."
+      - "Poda por cost-complexity usa alpha_eff para controlar overfitting e regularizar o modelo."
+      - "A dimensão VC de Vapnik-Chervonenkis limita o erro de generalização do modelo."
+      - "Random forest combina múltiplas árvores via bagging como variante ensemble."
+      - "Árvores de regressão minimizam redução de variância usando MSE como função de perda."
+      - "Cross-validation com k-fold avalia performance e seleciona hiperparâmetros de poda."
+      - "Por exemplo, dataset de classificação de clientes demonstra aplicação prática do modelo."
+    summary_text: |
+      ## Visão Geral
+      Este documento apresenta árvores de decisão no contexto de aprendizado supervisionado. A taxonomia distingue entre métodos supervisionados e não supervisionados [Fonte 1].
+
+      ## Construção e Critérios
+      O algoritmo constrói a árvore recursivamente via heurística gulosa, particionando os dados a cada nó usando o critério de seleção que maximiza ganho de informação, calculado pela redução de entropia H(S) = -sum p_i log2(p_i). O índice de Gini é uma alternativa [Fonte 2] [Fonte 3].
+
+      ## Regularização e Generalização
+      Para controlar overfitting, poda por cost-complexity usa alpha_eff para balancear tamanho e acurácia. A dimensão VC de Vapnik-Chervonenkis fundamenta limites teóricos de generalização [Fonte 4] [Fonte 5].
+
+      ## Variantes e Extensões
+      Random forest combina múltiplas árvores via bagging como método ensemble. Árvores de regressão predizem valores contínuos minimizando redução de variância com MSE como função de perda [Fonte 6] [Fonte 7].
+
+      ## Avaliação e Aplicações
+      Cross-validation com k-fold avalia performance e seleciona hiperparâmetros. Um dataset de classificação de clientes demonstra a aplicação prática do modelo [Fonte 8] [Fonte 9].
+    thresholds:
+      min_outline_coverage_score: 0.70
+
+  # ── Regression case: fluent but extrapolated summary fails inference gate ────
+  - id: ds_inference_overreach_01
+    doc_name: redes_neurais_intro.pdf
+    description: >
+      A fluent but extrapolated summary that contains quantitative/comparative claims
+      not backed by the source chunks. At inference_density threshold=0.25, the
+      uncited quantitative claims should be flagged as unsupported_high_risk_count > 0.
+      This case validates that a polished-sounding summary is not accepted when it
+      contains extrapolations.
+    chunk_texts:
+      - "Redes neurais são modelos inspirados no funcionamento do cérebro humano."
+      - "O gradiente descendente é o algoritmo de otimização mais comum."
+      - "A função de ativação ReLU é usada em camadas ocultas."
+      - "O número de camadas determina a profundidade da rede."
+    # Summary has extrapolated quantitative claims not in the source chunks.
+    summary_text: |
+      ## Visão Geral
+      O documento oferece uma introdução abrangente às redes neurais, com foco em arquitetura, otimização e funções de ativação modernas [Fonte 1].
+
+      ## Encadeamento e Principais Tópicos
+      Os tópicos progridem da motivação biológica até a implementação técnica [Fonte 2].
+
+      ## Conceitos e Métodos Fundamentais
+      O gradiente descendente converge 40% mais rápido que métodos alternativos em benchmarks padrão.
+      A função ReLU elimina o problema de vanishing gradient em 98% dos casos práticos.
+
+      ## Síntese Final
+      O documento é considerado um dos melhores guias introdutórios disponíveis, superior às alternativas do mercado [Fonte 4].
+    thresholds:
+      # This summary should have unsupported_high_risk_count > 0 because of the
+      # uncited quantitative claims ("40% mais rápido", "98% dos casos").
+      min_unsupported_high_risk_count: 1
+
+  # ── Regression case: technically faithful summary should pass all gates ──────
+  - id: ds_faithful_technical_01
+    doc_name: redes_neurais_intro.pdf
+    description: >
+      A technically faithful summary with no extrapolations. All claims are backed
+      by sources or use cautious language ("o material não especifica...").
+      Should pass inference_density gate.
+    chunk_texts:
+      - "Redes neurais são modelos inspirados no funcionamento do cérebro humano."
+      - "O gradiente descendente é o algoritmo de otimização mais comum."
+      - "A função de ativação ReLU é usada em camadas ocultas."
+      - "O número de camadas determina a profundidade da rede."
+    summary_text: |
+      ## Visão Geral
+      O documento explica redes neurais como modelos computacionais inspirados na biologia do cérebro humano [Fonte 1].
+
+      ## Encadeamento e Principais Tópicos
+      O material progride da motivação conceitual até os componentes técnicos: otimização, funções de ativação e profundidade [Fonte 2].
+
+      ## Conceitos e Métodos Fundamentais
+      O gradiente descendente é o método de otimização central, conforme descrito no material [Fonte 2].
+      A função de ativação ReLU é utilizada em camadas ocultas; o material não especifica comparações de desempenho [Fonte 3].
+
+      ## Síntese Final
+      O documento fornece fundamentos teóricos sobre arquitetura e treinamento de redes neurais profundas [Fonte 4].
+    thresholds:
+      # Faithful summary should pass inference gate (no unsupported high-risk claims
+      # from uncited or low-info sources only).
+      max_unsupported_high_risk_count: 0
+
+  # ── Regression case: formula unsupported in conservative mode downgraded ─────
+  - id: ds_formula_conservative_01
+    doc_name: estatistica_bayesiana.pdf
+    description: >
+      A summary that reproduces a formula citing a chunk from a "Sumário" section
+      (low-info source). In conservative formula_mode, the formula claim should be
+      downgraded (formula_claims_downgraded_to_concept >= 1).
+    chunk_texts:
+      - "Sumário: capítulo 1 - probabilidade; capítulo 2 - inferência; capítulo 3 - aplicações."
+    # The formula claim below cites [Fonte 1] which is the sumário chunk (low-info).
+    summary_text: |
+      ## Visão Geral
+      O documento aborda probabilidade condicional e inferência bayesiana [Fonte 1].
+
+      ## Conceitos e Métodos
+      O teorema de Bayes é dado por P(A|B) = P(B|A) * P(A) / P(B) [Fonte 1].
+
+      ## Síntese Final
+      O material é útil para estudantes de estatística [Fonte 1].
+    thresholds:
+      # With formula_mode=conservative, the formula citing only a sumário anchor
+      # should be downgraded → formula_claims_downgraded_to_concept >= 1.
+      min_formula_claims_downgraded: 1
+      formula_mode: conservative

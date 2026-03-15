@@ -317,6 +317,9 @@ INSTRUÇÕES OBRIGATÓRIAS:
   sustentado no material.
 - Não infira público-alvo, intenção pedagógica, completude ou qualidade do documento sem
   evidência explícita. Se não houver evidência clara, escreva "não explicitado no material".
+- Evite sínteses interpretativas amplas (ex.: "tratado", "visão robusta", "superioridade de abordagem",
+  "otimizado para cenários reais") quando isso não estiver literal e explicitamente sustentado
+  pelos trechos citados. Prefira formulação factual e local.
 - EVITE verbos mecânicos repetitivos: "apresenta", "aborda", "introduz", "discute", "trata de".
   Prefira: "explica", "demonstra", "define", "conclui", "relaciona", "contrasta", "fundamenta".
 - Prefira PARÁGRAFOS EXPLICATIVOS; use listas somente na seção de tópicos, quando ajudar a leitura.
@@ -337,6 +340,17 @@ INSTRUÇÕES OBRIGATÓRIAS:
   de fonte dentro do corpo.
 - A conclusão deve ser substantiva: 4–7 frases integrando os principais blocos do documento.
 - O resultado final deve ser COESO: um texto que flui, não uma lista de tópicos soltos.
+- FIDELIDADE TÉCNICA OBRIGATÓRIA — não extrapole além do material citado:
+  Para afirmações QUANTITATIVAS (percentuais, magnitudes, razões, contagens), COMPARATIVAS
+  ("X é melhor que Y", "A diferencia-se de B por...", "em contraste com", "ao contrário de")
+  e MATEMÁTICAS (equações, variáveis, notação formal, fórmulas): cite [Fonte N]
+  OBRIGATORIAMENTE e use APENAS os valores/relações EXATOS que aparecem literalmente
+  na fonte citada. Não interpole, não generalize, não derive valores por inferência.
+  Quando a fonte não detalhar um valor ou relação, afirme a limitação: "o material não
+  especifica este ponto nos trechos disponíveis" — nunca complete por dedução própria.
+- NÃO use fontes de baixo teor (Sumário, Índice, Conteúdo, Table of Contents) para
+  sustentar detalhes técnicos, quantitativos, comparativos ou matemáticos.
+  Essas fontes só podem sustentar escopo/roteiro do documento.
 
 FORMATO DE SAÍDA:
 # Resumo Aprofundado — {doc_name}
@@ -425,6 +439,13 @@ REGRAS OBRIGATORIAS:
 - Distribua citacoes ao longo de TODAS as secoes do texto. Use pelo menos {min_unique_sources}
   fontes distintas quando houver suporte. Evite concentrar em 2-3 fontes — cite fontes variadas
   ([Fonte 1], [Fonte 3], [Fonte 5], etc.) para cobrir partes diferentes do documento.
+- FIDELIDADE TECNICA: Para afirmacoes quantitativas (percentuais, magnitudes, razoes),
+  comparativas ("X e melhor que Y", "A diferencia-se de B") e matematicas (equacoes,
+  notacao formal): use APENAS valores e relacoes literalmente presentes nos trechos de
+  referencia. Nao derive valores por inferencia, nao interpole, nao extrapole.
+  Quando a fonte nao detalhar, registre a limitacao em vez de completar por deducao.
+- Nao use fontes de baixo teor (sumario, indice, conteudo, table of contents)
+  para sustentar detalhes tecnicos. Essas fontes servem apenas para escopo/roteiro.
 - Estrutura-alvo: 5 secoes com titulo "##" (aceitavel: 4 a 6).
 - Use este scaffold de titulos (ou variacao semantica equivalente):
   1) Visao Geral
@@ -442,6 +463,8 @@ REGRAS OBRIGATORIAS:
 - Evite linguagem mecanica repetitiva.
 - Prefira explicacao integrada em paragrafos.
 - Se nao houver evidencia para algo, remova em vez de especular.
+- Evite frases conclusivas amplas e interpretativas quando os trechos só suportam descrição local.
+  Prefira formulação factual, curta e ancorada na fonte.
 
 RETORNE APENAS O RESUMO FINAL.
 """
@@ -510,6 +533,65 @@ REGRAS OBRIGATÓRIAS:
 RETORNE APENAS O RESUMO REORGANIZADO.
 """
 
+DEEP_SUMMARY_MICRO_BACKFILL_PROMPT = """\
+Voce esta complementando um resumo aprofundado do documento "{doc_name}".
+Um topico especifico ficou ausente e precisa de cobertura factual minima.
+
+TOPICO FALTANTE:
+{topic_label}
+
+TRECHO DE REFERENCIA (fonte canonica disponivel):
+{source_label}: {source_snippet}
+
+TAREFA:
+Escreva APENAS 1 paragrafo curto (60-120 palavras) que:
+1. Cobre o topico "{topic_label}" com informacao factual retirada do trecho acima.
+2. Inclui a citacao canonica {source_label} no proprio paragrafo.
+3. Usa linguagem analitica e fluida, compativel com o estilo do resumo existente.
+
+REGRAS OBRIGATORIAS:
+- Escreva SOMENTE o paragrafo, sem titulo, sem introducao, sem metacomentario.
+- Use APENAS fatos suportados pelo trecho de referencia acima.
+- Inclua {source_label} como citacao inline no paragrafo.
+- Nao reescreva o resumo nem adicione outro conteudo.
+- Nao use citacoes nao-canonicas (ex.: [Contexto adicional], [p. N], etc.).
+- Nao inclua secao "Fontes:" nem lista de fontes.
+- Se o trecho nao fornecer informacao suficiente para o topico, retorne exatamente:
+  INSUFICIENTE
+
+RETORNE APENAS O PARAGRAFO (ou a palavra INSUFICIENTE).
+"""
+
+DEEP_SUMMARY_TOPIC_BACKFILL_PROMPT = """\
+Voce esta ajustando um resumo aprofundado do documento "{doc_name}" para cobrir
+topicos que ficaram ausentes na versao atual.
+
+RESUMO ATUAL:
+{draft}
+
+TOPICOS FALTANTES (devem ser cobertos nesta reescrita):
+{missing_topics_description}
+
+TRECHOS DE REFERENCIA DOS TOPICOS FALTANTES (para citacoes [Fonte N]):
+{backfill_context}
+
+TAREFA:
+Reescreva o resumo integrando cobertura factual dos topicos faltantes listados acima.
+
+REGRAS OBRIGATORIAS:
+- Preserve a estrutura existente de 4-6 secoes `##`. Nao crie novas secoes `##`.
+- Preserve TODAS as citacoes inline [Fonte N] existentes no rascunho.
+- Adicione cobertura dos topicos faltantes com [Fonte N] adequadas dos trechos fornecidos.
+- Insira o conteudo novo nas secoes mais tematicamnte adequadas — nao force secoes novas.
+- Nao remova conteudo existente valido; apenas amplie.
+- Nao inclua secao "Fontes:" no corpo do texto.
+- Nao escreva metacomentarios sobre o processo.
+- Mantenha linguagem analitica e fluida.
+- Se nao houver evidencia suficiente nos trechos para cobrir um topico, omita-o em vez de inventar.
+
+RETORNE APENAS O RESUMO FINAL REESCRITO.
+"""
+
 GROUNDING_REPAIR_PROMPT = """\
 Reescreva a resposta abaixo usando SOMENTE informacoes suportadas pelos trechos.
 
@@ -532,4 +614,49 @@ REGRAS:
 - Se nada puder ser afirmado com seguranca, responda:
   "Nao encontrei informacao suficiente nos documentos para responder com seguranca."
 - Inclua ao final a secao "**Fontes:**".
+"""
+
+# ──────────────────────────────────────────────────────────────────────────────
+# De-overreach rewrite prompt — removes extrapolations from deep summary.
+# Triggered when inference_density gate fails, unsupported high-risk claims are
+# detected, or formula claims lack math support in conservative mode.
+# ──────────────────────────────────────────────────────────────────────────────
+DEEP_SUMMARY_DEOVERREACH_PROMPT = """\
+Voce esta revisando um resumo aprofundado do documento "{doc_name}" para remover
+afirmacoes que extrapolam o que esta explicitamente sustentado nas fontes citadas.
+
+RASCUNHO ATUAL:
+{draft}
+
+TRECHOS DE REFERENCIA (fontes [Fonte N] disponiveis):
+{context_sample}
+
+TAREFA:
+Reescreva o resumo removendo ou reformulando afirmacoes de alto risco nao sustentadas.
+
+REGRAS OBRIGATORIAS:
+1. PRESERVE a estrutura do resumo: secoes ##, titulos, ordem das secoes.
+2. PRESERVE todas as citacoes inline [Fonte N] que sao validas (nao invente novas).
+3. REMOVA ou REFORMULE:
+   - Afirmacoes QUANTITATIVAS (numeros, percentuais, razoes, magnitudes) que nao aparecem
+     literalmente em nenhuma das fontes citadas no mesmo paragrafo.
+   - Afirmacoes COMPARATIVAS ("X e melhor que Y", "A supera B", "em contraste com C",
+     "A diferencia-se de B por...") que nao estao explicitamente no material citado.
+   - Afirmacoes MATEMATICAS (equacoes, variaveis, notacao formal) cujas fontes citadas
+     nao contenham matematica real (expressoes, simbolos, formulas).
+   - Afirmacoes TECNICAS assertivas (ex.: "mitiga variancia", "aumenta robustez",
+     "melhora capacidade preditiva", "integra validacao") quando sustentadas apenas
+     por fontes de baixo teor como sumario/indice/conteudo.
+4. Para afirmacoes que nao podem ser verificadas: substitua por formulacao conceitual.
+   Exemplo: "O material formaliza esta relacao matematicamente [Fonte N]" em vez de
+   reproduzir uma equacao sem suporte.
+5. Quando a fonte nao detalhar um ponto tecnico, registre a limitacao:
+   "o documento nao especifica este detalhe nos trechos disponíveis."
+6. Nao remova afirmacoes DESCRITIVAS ou PROCEDURAIS bem sustentadas.
+7. Nao adicione conteudo novo — apenas remova ou reformule extrapolacoes.
+8. Nao inclua secao "Fontes:" no corpo — ela sera anexada separadamente.
+9. Nao escreva metacomentarios sobre o processo de revisao.
+10. Mantenha linguagem analitica e fluida; nao reduza a qualidade do texto.
+
+RETORNE APENAS O RESUMO REVISADO.
 """

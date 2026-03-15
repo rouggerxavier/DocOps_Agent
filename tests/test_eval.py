@@ -330,3 +330,118 @@ class TestDeepSummaryRegressionRunner:
         data = json.loads(saved.read_text(encoding="utf-8"))
         assert data["suite_name"] == "deep_summary_regression_test"
         assert "summary" in data
+
+    def test_outline_thresholds_are_enforced(self, tmp_path):
+        from eval.deep_summary_runner import DeepSummaryRegressionRunner
+
+        suite_yaml = """\
+suite_name: deep_summary_outline_thresholds
+description: outline threshold enforcement
+thresholds:
+  require_structure_valid: false
+  min_coverage_score: 0.0
+  max_weak_grounding_ratio: 1.0
+  min_unique_sources: 0
+cases:
+  - id: outline_fail_low
+    doc_name: doc_outline.pdf
+    chunk_texts:
+      - "The algorithm construction follows a recursive procedure."
+      - "The method uses a greedy algorithm to partition data."
+      - "Pruning regularization controls overfitting."
+      - "Regularization through pruning reduces model complexity."
+    summary_text: "Resumo curto que só menciona o tema geral."
+    thresholds:
+      min_outline_coverage_score: 0.70
+"""
+        suite_path = _write_suite(tmp_path, suite_yaml)
+        runner = DeepSummaryRegressionRunner(suite_path=suite_path)
+        report = runner.run()
+        assert len(report.cases) == 1
+        case = report.cases[0]
+        assert case.passed is False
+        assert "outline_coverage_below_min" in case.failure_reasons
+
+    def test_unsupported_high_risk_thresholds_are_enforced(self, tmp_path):
+        from eval.deep_summary_runner import DeepSummaryRegressionRunner
+
+        suite_yaml = """\
+suite_name: deep_summary_unsupported_hr_thresholds
+description: unsupported high-risk threshold enforcement
+thresholds:
+  require_structure_valid: false
+  min_coverage_score: 0.0
+  max_weak_grounding_ratio: 1.0
+  min_unique_sources: 0
+cases:
+  - id: unsupported_hr_pass
+    doc_name: doc_hr.pdf
+    chunk_texts:
+      - "Introdução geral ao tema."
+    summary_text: |
+      ## Visão Geral
+      O documento apresenta fundamentos [Fonte 1].
+
+      ## Síntese Final
+      O método melhora 40% em benchmark padrão.
+    thresholds:
+      min_unsupported_high_risk_count: 1
+  - id: unsupported_hr_fail
+    doc_name: doc_hr.pdf
+    chunk_texts:
+      - "Introdução geral ao tema."
+    summary_text: |
+      ## Visão Geral
+      O documento apresenta fundamentos [Fonte 1].
+
+      ## Síntese Final
+      O método melhora 40% em benchmark padrão.
+    thresholds:
+      max_unsupported_high_risk_count: 0
+"""
+        suite_path = _write_suite(tmp_path, suite_yaml)
+        runner = DeepSummaryRegressionRunner(suite_path=suite_path)
+        report = runner.run()
+
+        assert len(report.cases) == 2
+        c_pass = next(c for c in report.cases if c.case_id == "unsupported_hr_pass")
+        c_fail = next(c for c in report.cases if c.case_id == "unsupported_hr_fail")
+        assert c_pass.passed is True
+        assert c_pass.unsupported_high_risk_count >= 1
+        assert c_fail.passed is False
+        assert "unsupported_high_risk_above_max" in c_fail.failure_reasons
+
+    def test_formula_downgrade_threshold_is_enforced(self, tmp_path):
+        from eval.deep_summary_runner import DeepSummaryRegressionRunner
+
+        suite_yaml = """\
+suite_name: deep_summary_formula_thresholds
+description: formula conservative downgrade threshold enforcement
+thresholds:
+  require_structure_valid: false
+  min_coverage_score: 0.0
+  max_weak_grounding_ratio: 1.0
+  min_unique_sources: 0
+cases:
+  - id: formula_downgraded_pass
+    doc_name: doc_formula_threshold.pdf
+    chunk_texts:
+      - "Sumário do documento com capítulos e tópicos."
+    summary_text: |
+      ## Visão Geral
+      O documento apresenta fundamentos [Fonte 1].
+
+      ## Conceitos
+      A relação matemática central é x = y no modelo [Fonte 1].
+    thresholds:
+      formula_mode: conservative
+      min_formula_claims_downgraded: 1
+"""
+        suite_path = _write_suite(tmp_path, suite_yaml)
+        runner = DeepSummaryRegressionRunner(suite_path=suite_path)
+        report = runner.run()
+
+        assert len(report.cases) == 1
+        case = report.cases[0]
+        assert case.passed is True
+        assert case.formula_claims_downgraded_to_concept >= 1

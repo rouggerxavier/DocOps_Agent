@@ -104,6 +104,13 @@ class SummarizeRequest(BaseModel):
         default=False,
         description="When true and summary_mode='deep', include summary diagnostics in response.",
     )
+    deep_profile: Optional[str] = Field(
+        default=None,
+        description=(
+            "Execution profile for deep summary: 'fast' | 'model_first' | 'strict'. "
+            "When None, uses SUMMARY_DEEP_PROFILE (default: 'model_first')."
+        ),
+    )
 
 
 class SummarizeResponse(BaseModel):

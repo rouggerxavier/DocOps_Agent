@@ -23,8 +23,9 @@ Flow:
     6e. validate_summary_grounding — split final text into paragraph blocks; for
                                   each block with citations, compute token overlap
                                   with the cited anchor texts; flag (and optionally
-                                  LLM-repair) blocks below threshold. Repair is on
-                                  by default (SUMMARY_GROUNDING_REPAIR=true).
+                                  LLM-repair) blocks below threshold. Repair is off
+                                  by default (SUMMARY_GROUNDING_REPAIR=false) and
+                                  only runs for clearly weak overlaps.
     7. clean_output            — light normalization of the LLM output.
     8. build_anchor_sources_section — append Fontes: built from the SAME
                                   citation_anchors, with richer location display
@@ -40,6 +41,7 @@ from __future__ import annotations
 
 from typing import Any
 import unicodedata
+import time
 
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -50,32 +52,41 @@ from docops.llm.router import build_chat_model
 from docops.logging import get_logger
 import re
 
+from docops.ingestion.pdf_structure import infer_pdf_structure, extract_pdf_outline
 from docops.rag.citations import build_context_block, build_anchor_sources_section
 from docops.rag.prompts import (
+    DEEP_SUMMARY_DEOVERREACH_PROMPT,
+    DEEP_SUMMARY_MICRO_BACKFILL_PROMPT,
     DEEP_SUMMARY_PARTIAL_PROMPT,
     DEEP_SUMMARY_CONSOLIDATE_PROMPT,
     DEEP_SUMMARY_FINAL_PROMPT,
     DEEP_SUMMARY_RESYNTHESIS_PROMPT,
     DEEP_SUMMARY_STRUCTURE_FIX_PROMPT,
     DEEP_SUMMARY_STYLE_POLISH_PROMPT,
+    DEEP_SUMMARY_TOPIC_BACKFILL_PROMPT,
     SUMMARY_BLOCK_REPAIR_PROMPT,
     SYSTEM_PROMPT,
 )
 from docops.summarize.coverage_profiles import resolve_coverage_profile
+from docops.summarize.outline import (
+    extract_document_topics,
+    score_topic_outline_coverage,
+    get_topic_anchors,
+)
 from docops.summarize.text_cleaner import clean_chunk_text, clean_summary_output
 
 logger = get_logger("docops.summarize.pipeline")
 
 # ── Tuning constants ──────────────────────────────────────────────────────────
 # These can be overridden via environment variables through docops.config:
-#   SUMMARY_GROUP_SIZE  (default 6)  — chunks per partial-summary group
-#   SUMMARY_MAX_GROUPS  (default 8)  — max groups = max partial LLM calls
+#   SUMMARY_GROUP_SIZE  (default 8)  — chunks per partial-summary group
+#   SUMMARY_MAX_GROUPS  (default 6)  — max groups = max partial LLM calls
 #   SUMMARY_SECTION_THRESHOLD (default 0.7) — min fraction of chunks with
 #     section metadata required to use section-based grouping
 
 # Module-level defaults used when config values are not available.
-SUMMARY_GROUP_SIZE: int = 6
-SUMMARY_MAX_GROUPS: int = 8
+SUMMARY_GROUP_SIZE: int = 8
+SUMMARY_MAX_GROUPS: int = 6
 SECTION_COVERAGE_THRESHOLD: float = 0.7
 
 
@@ -192,14 +203,21 @@ def _clean_chunks(chunks: list[Document]) -> list[Document]:
 
 # ── Step 3: group chunks into logical blocks ──────────────────────────────────
 
-def group_chunks(chunks: list[Document]) -> list[list[Document]]:
+def group_chunks(
+    chunks: list[Document],
+    infer_pdf: bool = True,
+) -> list[list[Document]]:
     """Cluster chunks into logical groups for partial summarization.
 
     Grouping rule:
+    - **PDF structure inference**: when chunks are PDFs without section metadata,
+      try to infer structure first, then use section-based grouping.
     - **Section-based**: used when ≥ SUMMARY_SECTION_THRESHOLD of chunks carry
       ``section_path`` or ``section_title`` metadata. Consecutive chunks that
       share the same section key form one group.
-    - **Window-based** (fallback): fixed-size windows of SUMMARY_GROUP_SIZE chunks.
+    - **Topic-transition**: for weakly structured PDFs, detect topic transitions
+      instead of blind fixed windows.
+    - **Window-based** (final fallback): fixed-size windows of SUMMARY_GROUP_SIZE chunks.
 
     The result is capped at SUMMARY_MAX_GROUPS by merging the two smallest
     adjacent groups iteratively until the cap is reached.
@@ -209,7 +227,26 @@ def group_chunks(chunks: list[Document]) -> list[list[Document]]:
 
     group_size, max_groups, section_threshold = _get_tuning()
 
-    # Count chunks with meaningful section metadata
+    # Count chunks with meaningful section metadata BEFORE inference.
+    has_section_before = sum(
+        1
+        for c in chunks
+        if c.metadata.get("section_path") or c.metadata.get("section_title")
+    )
+    coverage_before = has_section_before / len(chunks) if chunks else 0.0
+
+    # Try PDF structure inference if most chunks lack section metadata.
+    pdf_inference_applied = False
+    if infer_pdf and coverage_before < section_threshold:
+        pdf_chunks = [
+            c for c in chunks
+            if str(c.metadata.get("file_type", "")).lower() == "pdf"
+        ]
+        if pdf_chunks and len(pdf_chunks) / len(chunks) >= 0.5:
+            infer_pdf_structure(chunks)
+            pdf_inference_applied = True
+
+    # Recount after inference.
     has_section = sum(
         1
         for c in chunks
@@ -220,24 +257,51 @@ def group_chunks(chunks: list[Document]) -> list[list[Document]]:
 
     if use_sections:
         groups = _group_by_section(chunks)
+        method = "section-based"
+        if pdf_inference_applied:
+            method = "section-based (PDF structure inferred)"
         logger.info(
-            "Grouping rule: section-based (%.0f%% of chunks have section metadata) "
+            "Grouping rule: %s (%.0f%% of chunks have section metadata) "
             "→ %d section groups from %d chunks.",
+            method,
             coverage * 100,
             len(groups),
             len(chunks),
         )
-    else:
-        groups = _group_by_window(chunks, group_size)
+    elif pdf_inference_applied and coverage > 0:
+        # Partial inference succeeded — use section-based with lower threshold.
+        groups = _group_by_section(chunks)
         logger.info(
-            "Grouping rule: window-based (only %.0f%% of chunks have section metadata, "
-            "threshold=%.0f%%) → %d windows from %d chunks (window_size=%d).",
+            "Grouping rule: section-based with partial PDF inference "
+            "(%.0f%% coverage, below threshold=%.0f%% but inference enriched) "
+            "→ %d groups from %d chunks.",
             coverage * 100,
             section_threshold * 100,
             len(groups),
             len(chunks),
-            group_size,
         )
+    else:
+        # Fallback: topic-transition grouping for PDFs, else window-based.
+        groups = _group_by_topic_transition(chunks, group_size)
+        if groups and len(groups) != len(range(0, len(chunks), group_size)):
+            logger.info(
+                "Grouping rule: topic-transition (%.0f%% section coverage) "
+                "→ %d groups from %d chunks.",
+                coverage * 100,
+                len(groups),
+                len(chunks),
+            )
+        else:
+            groups = _group_by_window(chunks, group_size)
+            logger.info(
+                "Grouping rule: window-based (only %.0f%% of chunks have section metadata, "
+                "threshold=%.0f%%) → %d windows from %d chunks (window_size=%d).",
+                coverage * 100,
+                section_threshold * 100,
+                len(groups),
+                len(chunks),
+                group_size,
+            )
 
     return _normalize_groups(groups, max_groups)
 
@@ -275,6 +339,55 @@ def _group_by_window(
         chunks[i: i + group_size]
         for i in range(0, len(chunks), group_size)
     ]
+
+
+def _group_by_topic_transition(
+    chunks: list[Document],
+    max_group_size: int = SUMMARY_GROUP_SIZE,
+    transition_threshold: float = 0.70,
+) -> list[list[Document]]:
+    """Group chunks by detecting lexical topic transitions.
+
+    Starts a new group when the word overlap between consecutive chunks
+    drops below the threshold, indicating a topic shift. Groups are capped
+    at max_group_size to prevent oversized groups in monotopic documents.
+
+    Falls back to window-based if no transitions are detected.
+    """
+    if not chunks:
+        return []
+    if len(chunks) <= max_group_size:
+        return [chunks]
+
+    groups: list[list[Document]] = []
+    current_group: list[Document] = [chunks[0]]
+
+    for i in range(1, len(chunks)):
+        prev_text = (chunks[i - 1].page_content or "").strip()
+        curr_text = (chunks[i].page_content or "").strip()
+
+        # Compute word overlap.
+        prev_words = set(re.findall(r"\w{3,}", prev_text.lower()))
+        curr_words = set(re.findall(r"\w{3,}", curr_text.lower()))
+
+        if prev_words and curr_words:
+            overlap = len(prev_words & curr_words) / len(prev_words | curr_words)
+        else:
+            overlap = 0.0
+
+        is_transition = overlap < (1.0 - transition_threshold)
+        at_max_size = len(current_group) >= max_group_size
+
+        if is_transition or at_max_size:
+            groups.append(current_group)
+            current_group = [chunks[i]]
+        else:
+            current_group.append(chunks[i])
+
+    if current_group:
+        groups.append(current_group)
+
+    return groups
 
 
 def _normalize_groups(
@@ -431,6 +544,44 @@ _SOURCE_DUMP_ENTRY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Non-canonical citation pattern: bracketed text that is NOT [Fonte N].
+# Matches things like [Contexto adicional, p. 4], [meta], [Fonte extra 2],
+# but must NOT match valid citations [Fonte 1], mathematical intervals like
+# [0,1] or [a,b], or Markdown link syntax [text](url).
+# Rules:
+#   - Must start with a letter (not a digit or Fonte)
+#   - OR start with "Fonte " but not followed by a lone integer
+#   - Must NOT be followed by "(" (Markdown link) — that would be [text](url)
+_NON_CANONICAL_CITATION_RE = re.compile(
+    r"\["
+    r"(?!"                              # negative lookahead: skip valid patterns
+    r"Fonte\s+\d+\]"                   # canonical [Fonte N]
+    r"|"
+    r"\d[\d.,]*\]"                     # numeric/math: [0,1], [3.14], [42]
+    r")"
+    r"(?:[A-Za-zÀ-ÿ][^\]\n]{1,80})"   # non-empty text starting with letter
+    r"\]"
+    r"(?!\()",                          # not Markdown link [text](url)
+    re.IGNORECASE,
+)
+
+
+def _sanitize_non_canonical_citations(text: str) -> str:
+    """Remove bracketed citations that are not of the canonical form [Fonte N].
+
+    Preserves:
+    - Valid inline citations: [Fonte 1], [Fonte 12]
+    - Mathematical / numeric brackets: [0,1], [3.14], [0, 1]
+    - Markdown links: [text](url)
+
+    Removes:
+    - [Contexto adicional, p. 4], [meta], [Fonte extra 2], etc.
+    """
+    if not text:
+        return text
+    return _NON_CANONICAL_CITATION_RE.sub("", text)
+
+
 # Guardrail for repair step: broad citation fan-out blocks are usually too
 # heterogeneous to rewrite safely in a single constrained pass.
 MAX_REPAIR_CITATIONS_PER_BLOCK = 3
@@ -492,7 +643,8 @@ _SECTION_BODY_FALLBACK_PATTERNS: dict[str, re.Pattern[str]] = {
 # A signal type is considered "present" when at least one chunk matches.
 #
 # Formula/math signals: Greek letters, math operators, LaTeX macros, basic
-#   algebraic patterns (x = y, x^2), complexity notation O(n).
+#   algebraic patterns (x = y, x^2), complexity notation O(n), ASCII math,
+#   subscripts, argmin/min/sum/log notation, cardinality, Greek names as words.
 _COVERAGE_FORMULA_SIGNAL_RE = re.compile(
     r"[α-ωΑ-Ωα-ω∑∫∏√∞±×÷≤≥≠≈∂∇]"
     r"|\\(?:frac|sum|int|sigma|theta|alpha|beta|gamma|delta|mu|nu|lambda|pi|phi|psi|omega"
@@ -501,8 +653,18 @@ _COVERAGE_FORMULA_SIGNAL_RE = re.compile(
     r"|\b\d+\s*[\+\-\*\/]\s*\d"
     r"|[a-zA-Z]\s*\^\s*\d"
     r"|\bO\s*\(\s*[^\)]+\)"
-    r"|\bσ\b|\bμ\b|\bλ\b|\bθ\b|\bδ\b|\bε\b",
-    re.UNICODE,
+    r"|\bσ\b|\bμ\b|\bλ\b|\bθ\b|\bδ\b|\bε\b"
+    # ASCII math: argmin, argmax, min, max, sum, log, ln, exp, etc.
+    r"|\b(?:argmin|argmax|min|max|sum|log2?|ln|exp|sqrt|prob)\s*[({[]"
+    # Subscript notation: x_i, p_k, H(S), R(t), etc.
+    r"|[a-zA-Z]_[a-zA-Z0-9{]"
+    # Cardinality: |T|, |S|, |N|
+    r"|\|\s*[A-Za-z][A-Za-z0-9]*\s*\|"
+    # Greek names written as words (PT-BR + EN)
+    r"|\b(?:alpha|alfa|beta|gamma|gama|delta|epsilon|theta|teta|lambda|sigma|omega|phi|psi|pi)\b"
+    # Fraction-like patterns: a/b where both are short
+    r"|\b[a-zA-Z]\s*/\s*[a-zA-Z]\b",
+    re.UNICODE | re.IGNORECASE,
 )
 
 # Procedure/algorithm signals: explicit step markers, numbered-list action items,
@@ -525,13 +687,25 @@ _COVERAGE_EXAMPLE_SIGNAL_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Concept/definition signals: bold terms (markdown), definitional phrases.
+# Concept/definition signals: bold terms (markdown), definitional phrases,
+# title-like lines in PDFs/slides, colon-definitions, and list-based concepts.
 _COVERAGE_CONCEPT_SIGNAL_RE = re.compile(
     r"\*\*[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ\s\-]{2,29}\*\*"
     r"|\b(?:defini[çc][aã]o de|conceito de|denomina-se|denomina\s+se"
     r"|[eé] definid[oa] como|se define como|chama-se)\b"
-    r"|\b(?:no[çc][aã]o de|nomenclatura|terminologia|glossário)\b",
-    re.IGNORECASE,
+    r"|\b(?:no[çc][aã]o de|nomenclatura|terminologia|glossário)\b"
+    # Colon-definition patterns (common in slides): "Term: description"
+    r"|^[A-ZÁÀÂÃÉÊÍÓÔÕÚÇÑa-záàâãéêíóôõúçñ][A-Za-zÀ-ÿ\s\-]{2,40}:\s+[A-Za-zÀ-ÿ]"
+    # "is defined as", "refers to", "means" (EN)
+    r"|\b(?:is\s+defined\s+as|refers?\s+to|(?:it\s+)?means|is\s+called|known\s+as)\b"
+    # "consiste em", "refere-se a", "significa" (PT-BR)
+    r"|\b(?:consiste\s+em|refere-se\s+a|significa|corresponde\s+a)\b"
+    # Short ALL-CAPS terms (≥3 chars, common in slides as concept titles)
+    # Use (?-i:...) to locally disable IGNORECASE so only actual uppercase matches.
+    r"|(?-i:(?:^|\s)[A-ZÁÀÂÃÉÊÍÓÔÕÚÇÑ]{3,25}(?:\s|$))"
+    # Bullet/numbered list items that introduce concepts
+    r"|(?:^|\n)\s*(?:[-•]\s+|[0-9]+[.)]\s+)[A-ZÁÀÂÃÉÊÍÓÔÕÚÇÑa-záàâãéêíóôõúçñ].{5,40}:",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 # ── Coverage gate: summary coverage detection patterns ────────────────────────
@@ -543,7 +717,13 @@ _COVERAGE_FORMULA_SUMMARY_RE = re.compile(
     r"\b(?:f[oó]rmula|equa[çc][aã]o|c[áa]lculo|express[aã]o|nota[çc][aã]o"
     r"|definid[oa] por|representad[oa] por|dad[oa] por|proporcional|coeficiente)\b"
     r"|[α-ωΑ-Ωα-ω∑∫∏√∞±∂∇]"
-    r"|\b(?:matem[aá]tic|[aá]lgebr|fun[çc][aã]o|vari[aá]vel|par[aâ]metro)\b",
+    r"|\b(?:matem[aá]tic|[aá]lgebr|fun[çc][aã]o|vari[aá]vel|par[aâ]metro)\b"
+    # ASCII math notation in summaries
+    r"|\b(?:argmin|argmax|log2?|ln|exp|sqrt|somat[oó]rio|summation)\b"
+    r"|[a-zA-Z]_[a-zA-Z0-9{]"
+    r"|\|\s*[A-Za-z][A-Za-z0-9]*\s*\|"
+    # Greek names as words
+    r"|\b(?:alpha|alfa|beta|gamma|gama|delta|epsilon|theta|teta|lambda|sigma|omega)\b",
     re.IGNORECASE,
 )
 
@@ -559,7 +739,9 @@ _COVERAGE_EXAMPLE_SUMMARY_RE = re.compile(
 )
 
 _COVERAGE_CONCEPT_SUMMARY_RE = re.compile(
-    r"\b(?:conceito|defini[çc][aã]o|denominad|termo|no[çc][aã]o|nomenclatura)\b",
+    r"\b(?:conceito|defini[çc][aã]o|denominad|termo|no[çc][aã]o|nomenclatura"
+    r"|concept|definition|fundament\w+|princip\w+|propriedad\w+|caracter[ií]stic\w+"
+    r"|abordagem|approach|framework|paradigm\w+|modelo\s+(?:de|para)|model\s+(?:of|for))\b",
     re.IGNORECASE,
 )
 
@@ -1198,6 +1380,7 @@ def compute_summary_rubric(
     facet_score: float,
     claims_score: float,
     notation_score: float,
+    outline_score: float = 1.0,
 ) -> dict[str, float]:
     """Compute a compact multi-criterion quality rubric for final acceptance."""
     diversity_score = (
@@ -1209,22 +1392,29 @@ def compute_summary_rubric(
     structure_score = 1.0 if structure_valid else 0.0
 
     weights = {
-        "structure": 0.20,
-        "grounding": 0.20,
-        "diversity": 0.15,
-        "coverage": 0.15,
-        "facets": 0.15,
+        "structure": 0.15,
+        "grounding": 0.15,
+        "diversity": 0.10,
+        "coverage": 0.10,
+        "facets": 0.10,
+        "outline": 0.20,
         "claims": 0.10,
         "notation": 0.05,
+        "quality_penalty": 0.05,
     }
+    # Quality penalty: if outline shows missing topics, apply a hard penalty.
+    quality_penalty_score = 1.0 if outline_score >= 0.8 else outline_score
+
     overall = (
         structure_score * weights["structure"]
         + grounding_score * weights["grounding"]
         + diversity_score * weights["diversity"]
         + coverage_score * weights["coverage"]
         + facet_score * weights["facets"]
+        + outline_score * weights["outline"]
         + claims_score * weights["claims"]
         + notation_score * weights["notation"]
+        + quality_penalty_score * weights["quality_penalty"]
     )
 
     return {
@@ -1233,6 +1423,7 @@ def compute_summary_rubric(
         "diversity_score": round(diversity_score, 4),
         "coverage_score": round(coverage_score, 4),
         "facet_score": round(facet_score, 4),
+        "outline_score": round(outline_score, 4),
         "claims_score": round(claims_score, 4),
         "notation_score": round(notation_score, 4),
         "overall_score": round(overall, 4),
@@ -1651,6 +1842,39 @@ def validate_summary_structure(
         "closure_section_ok": closure_section_ok,
         "structure_failure_reason": structure_failure_reason,
     }
+
+
+def _is_structure_degraded(before: dict[str, Any], after: dict[str, Any]) -> bool:
+    """Return True when candidate structure is worse than baseline structure.
+
+    Backfill should not be rejected just because the baseline summary is already
+    structurally invalid. We only block backfill when it degrades structure.
+    """
+    before_valid = bool(before.get("valid", False))
+    after_valid = bool(after.get("valid", False))
+
+    # Any valid structure is acceptable.
+    if after_valid:
+        return False
+    # Regressed from valid to invalid.
+    if before_valid and not after_valid:
+        return True
+
+    before_count = int(before.get("section_count", 0) or 0)
+    after_count = int(after.get("section_count", 0) or 0)
+    before_missing = len(before.get("missing_categories", []) or [])
+    after_missing = len(after.get("missing_categories", []) or [])
+    before_weak = len(before.get("weak_section_indices", []) or [])
+    after_weak = len(after.get("weak_section_indices", []) or [])
+    before_closure = bool(before.get("closure_section_ok", False))
+    after_closure = bool(after.get("closure_section_ok", False))
+
+    return (
+        after_count < before_count
+        or after_missing > before_missing
+        or after_weak > before_weak
+        or (before_closure and not after_closure)
+    )
 
 
 def _drop_weak_sections(text: str, weak_indices: list[int]) -> str:
@@ -2380,6 +2604,18 @@ def validate_summary_grounding(
     repaired_count = 0
     block_scores: list[dict] = []
     result_blocks = list(blocks)  # mutable copy for in-place repair
+    max_repairs_per_pass = max(
+        0,
+        int(getattr(config, "summary_grounding_max_repairs_per_pass", 1)),
+    )
+    repair_min_overlap = max(
+        0.0,
+        min(
+            threshold,
+            float(getattr(config, "summary_grounding_repair_min_overlap", 0.15)),
+        ),
+    )
+    repair_budget_exhausted = False
 
     for i, block in enumerate(blocks):
         # Only consider indices that passed citation validation (≤ max_valid)
@@ -2421,6 +2657,24 @@ def validate_summary_grounding(
                 ", ".join(f"Fonte {n}" for n in valid_indices),
             )
             if llm is not None:
+                if repaired_count >= max_repairs_per_pass:
+                    if not repair_budget_exhausted:
+                        logger.info(
+                            "Deep summary grounding: repair budget exhausted "
+                            "(max_repairs_per_pass=%d). Remaining weak blocks will be logged only.",
+                            max_repairs_per_pass,
+                        )
+                        repair_budget_exhausted = True
+                    continue
+                if score >= repair_min_overlap:
+                    logger.info(
+                        "Deep summary grounding: block %d repair skipped "
+                        "(near-threshold overlap=%.2f >= min_repair_overlap=%.2f).",
+                        i + 1,
+                        score,
+                        repair_min_overlap,
+                    )
+                    continue
                 if score <= 0.0:
                     logger.info(
                         "Deep summary grounding: block %d repair skipped (overlap=0.00).",
@@ -2468,40 +2722,516 @@ def validate_summary_grounding(
     }
 
 
+# ── Claim-risk + inference-density fidelity layer ────────────────────────────
+#
+# These functions run on the final summary text to detect high-risk claims that
+# lack proper source support. The results feed the inference_density metric and
+# the de-overreach rewrite trigger.
+
+# Low-information source section labels (normalised to lower-case).
+# Chunks whose section_title or section_path matches these are "low-info" anchors
+# for the purpose of high-risk claim support verification.
+_LOW_INFO_SECTION_LABELS: frozenset[str] = frozenset({
+    "sumário", "sumario", "índice", "indice", "conteúdo", "conteudo",
+    "contents", "table of contents", "lista de figuras", "lista de tabelas",
+    "lista de abreviaturas", "lista de siglas", "prefácio", "prefacio",
+    "apresentação", "apresentacao", "agradecimentos",
+})
+
+# Regex patterns for sentence-level risk classification.
+# These complement the existing coverage-signal patterns but operate at
+# sentence level to detect over-reach (not just presence of signal).
+_RISK_QUANTITATIVE_RE = re.compile(
+    # Percentage: "30%", "95,5%" — note: % is non-word char, so no trailing \b
+    r"\b\d+(?:[,.]\d+)?\s*%"
+    # Verbal percentage: "30 por cento"
+    r"|\b\d+\s+por\s+cento\b"
+    # Comparison words followed by "que/do que"
+    r"|\b(?:maior|menor|superior|inferior|melhor|pior)\s+(?:que|do que|em)\b"
+    # Numeric multiplier: "3 vezes maior", "2x mais rápido"
+    r"|\b(?:\d+[,.]?\d*)\s*(?:vezes|x)\s+(?:mais|menos|maior|menor)\b"
+    # Range: "30 a 50%", "10-20 vezes"
+    r"|\b\d+\s*(?:a|até|–|-)\s*\d+\s*(?:vezes?\b|%)",
+    re.IGNORECASE,
+)
+
+_RISK_COMPARISON_RE = re.compile(
+    r"\b(?:em\s+compara[çc][aã]o\s+(?:a|com)|ao\s+contr[aá]rio\s+de"
+    r"|diferencia-se\s+de|se\s+difere\s+de|em\s+contraste\s+com"
+    r"|enquanto\s+(?:que\s+)?[A-ZÀ-Ú]|\bvs\.?\s+[A-ZÀ-Ú]"
+    r"|\bcomparado\s+(?:a|com)\b|\bcontrasta\s+com\b"
+    r"|\b[eé]\s+classificado\s+como\b|\bpertence\s+[aà]\s+classe\b"
+    r"|\btaxonomia\b|\bcategoriza[çc][aã]o\b"
+    r"|\bclassifica[çc][aã]o\s+de\b)\b",
+    re.IGNORECASE,
+)
+
+# Technical-assertion pattern: claims that infer performance/generalization effects
+# (e.g., "mitiga variância", "aumenta robustez") are high-risk when supported only
+# by low-information sections (sumário/índice/conteúdo).
+_RISK_TECHNICAL_ASSERTION_RE = re.compile(
+    r"\b(?:random\s*forest|randomforestregressor|modelo|m[eé]todo|abordagem)\b"
+    r".{0,80}\b(?:mitig\w+|reduz\w+|melhor\w+|aument\w+|garant\w+|assegur\w+|"
+    r"consolid\w+|otimiz\w+|valida\w+|estabiliz\w+|control\w+)\b"
+    r".{0,80}\b(?:vari[aâ]nci\w*|overfitting|sobreajust\w*|generaliza\w*|"
+    r"capacidade\s+preditiv\w*|robust\w*|estabilid\w*|desempenh\w*|"
+    r"hiperpar[aâ]metr\w*|valida[cç][aã]o)\b"
+    r"|"
+    r"\b(?:integra|incorpora|utiliza)\b.{0,40}\bprocessos?\s+de\s+valida[cç][aã]o\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _is_low_info_source(anchor: "Document") -> bool:
+    """Return True if the anchor chunk comes from a low-information section.
+
+    Low-info sections (e.g. table of contents, index, prefácio) may contain
+    references to other sections but lack the substantive evidence needed to
+    support high-risk technical claims.
+    """
+    meta = anchor.metadata
+    section_title = str(meta.get("section_title") or "").strip().lower()
+    section_path = str(meta.get("section_path") or "").strip().lower()
+
+    # Check exact match first, then "starts with" for compound paths.
+    for label in _LOW_INFO_SECTION_LABELS:
+        if section_title == label or section_path == label:
+            return True
+        # e.g. section_path = "sumário > capítulo 1"
+        if section_title.startswith(label) or section_path.startswith(label):
+            return True
+    return False
+
+
+def classify_claim_risks(
+    text: str,
+    citation_anchors: list["Document"],
+) -> dict[str, Any]:
+    """Classify sentences in the summary by risk level and check source support.
+
+    High-risk claim types (taxonomy/comparison, quantitative, formula,
+    procedural, technical-assertion) require
+    direct evidence from the cited anchors. If all cited anchors for a high-risk
+    sentence come from low-information sources (or none are cited), the claim is
+    flagged as unsupported.
+
+    Args:
+        text: Final summary text (body only, no Fontes: section).
+        citation_anchors: Ordered list of citation anchors used in this summary.
+            Index 0 → [Fonte 1], index 1 → [Fonte 2], etc.
+
+    Returns:
+        dict with keys:
+            sentences_total, sentences_classified, high_risk_count,
+            unsupported_high_risk_count, unsupported_high_risk_indices,
+            low_info_source_claims_count, low_info_source_claim_indices,
+            formula_claims_total, formula_claims_supported,
+            formula_claims_downgraded_to_concept (initialised to 0; filled by
+            check_formula_mode).
+    """
+    # Strip sources section if present so we don't analyse citation metadata.
+    body = _SOURCES_SECTION_RE.sub("", text).strip()
+
+    # Split body into paragraphs, then sentences.
+    paragraphs = re.split(r"\n{1,}", body)
+    sentences: list[str] = []
+    for para in paragraphs:
+        # Skip heading lines and blank lines.
+        stripped = para.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        # Naive sentence split on Portuguese sentence boundaries.
+        parts = re.split(r"(?<=[.!?])\s+(?=[A-ZÀ-Ú\[])", stripped)
+        sentences.extend(p.strip() for p in parts if p.strip())
+
+    classified: list[dict[str, Any]] = []
+    high_risk_count = 0
+    unsupported_high_risk_count = 0
+    unsupported_high_risk_indices: list[int] = []
+    low_info_source_claims_count = 0
+    low_info_source_claim_indices: list[int] = []
+    formula_claims_total = 0
+    formula_claims_supported = 0
+
+    for idx, sentence in enumerate(sentences):
+        # Determine risk type.
+        # Use both signal-detection pattern (for raw notation) and the summary-
+        # coverage pattern (for natural-language formula references in paraphrased text).
+        is_formula = bool(
+            _COVERAGE_FORMULA_SIGNAL_RE.search(sentence)
+            or _COVERAGE_FORMULA_SUMMARY_RE.search(sentence)
+        )
+        is_quantitative = bool(_RISK_QUANTITATIVE_RE.search(sentence))
+        is_comparison = bool(_RISK_COMPARISON_RE.search(sentence))
+        is_procedural = bool(_COVERAGE_PROCEDURE_SIGNAL_RE.search(sentence))
+        is_technical_assertion = bool(_RISK_TECHNICAL_ASSERTION_RE.search(sentence))
+
+        if is_formula:
+            risk_type = "formula"
+        elif is_quantitative:
+            risk_type = "quantitative"
+        elif is_comparison:
+            risk_type = "taxonomy_comparison"
+        elif is_technical_assertion:
+            risk_type = "technical_assertion"
+        elif is_procedural:
+            risk_type = "procedural"
+        else:
+            risk_type = "descriptive"
+
+        high_risk = risk_type in {
+            "formula",
+            "quantitative",
+            "taxonomy_comparison",
+            "procedural",
+            "technical_assertion",
+        }
+
+        if risk_type == "formula":
+            formula_claims_total += 1
+
+        # Extract cited anchor indices (1-based from text, convert to 0-based).
+        cited_indices_1based = [int(m) for m in _CITATION_RE.findall(sentence)]
+        cited_indices_0based = [
+            i - 1 for i in cited_indices_1based
+            if 1 <= i <= len(citation_anchors)
+        ]
+
+        # Check source quality for high-risk claims.
+        # The hard rule (require_non_low_info) controls whether low-info-only citations
+        # count as "unsupported". When disabled, low-info sources are still flagged in
+        # diagnostics but do not increment unsupported_high_risk_count.
+        _require_non_low_info = bool(
+            getattr(config, "summary_require_non_low_info_for_high_risk", True)
+        )
+        low_info_only = False
+        unsupported = False
+        if high_risk:
+            high_risk_count += 1
+            if not cited_indices_0based:
+                # High-risk claim with no citations at all.
+                unsupported = True
+            else:
+                # Check if ALL cited anchors are low-info.
+                low_info_anchors = [
+                    citation_anchors[i]
+                    for i in cited_indices_0based
+                    if _is_low_info_source(citation_anchors[i])
+                ]
+                if len(low_info_anchors) == len(cited_indices_0based):
+                    low_info_only = True
+                    low_info_source_claims_count += 1
+                    low_info_source_claim_indices.append(idx)
+                    # Only mark as unsupported when the hard rule is active.
+                    if _require_non_low_info:
+                        unsupported = True
+
+            if unsupported:
+                unsupported_high_risk_count += 1
+                unsupported_high_risk_indices.append(idx)
+            elif risk_type == "formula":
+                formula_claims_supported += 1
+
+        classified.append({
+            "text": sentence,
+            "risk_type": risk_type,
+            "high_risk": high_risk,
+            "cited_indices": cited_indices_0based,
+            "low_info_only": low_info_only,
+            "unsupported": unsupported,
+        })
+
+    # unsupported_high_risk_low_info_only_count counts exactly the claims where
+    # the *only* reason for being unsupported was low-info sources (not missing citation).
+    _unsupported_low_info_only_count = sum(
+        1 for c in classified
+        if c.get("high_risk") and c.get("low_info_only") and c.get("unsupported")
+    )
+
+    return {
+        "sentences_total": len(sentences),
+        "sentences_classified": classified,
+        "high_risk_count": high_risk_count,
+        "unsupported_high_risk_count": unsupported_high_risk_count,
+        "unsupported_high_risk_indices": unsupported_high_risk_indices,
+        "unsupported_high_risk_low_info_only_count": _unsupported_low_info_only_count,
+        "low_info_source_claims_count": low_info_source_claims_count,
+        "low_info_source_claim_indices": low_info_source_claim_indices,
+        "formula_claims_total": formula_claims_total,
+        "formula_claims_supported": formula_claims_supported,
+        "formula_claims_downgraded_to_concept": 0,  # filled by check_formula_mode
+    }
+
+
+def check_formula_mode(
+    claim_risk_result: dict[str, Any],
+    citation_anchors: list["Document"],
+    formula_mode: str = "conservative",
+) -> dict[str, Any]:
+    """In conservative mode, verify that formula claims have math-bearing anchors.
+
+    For each sentence classified as 'formula', checks whether at least one of its
+    cited anchors contains actual mathematical content (per _COVERAGE_FORMULA_SIGNAL_RE).
+    If not, the claim is marked as downgraded_to_concept.
+
+    Args:
+        claim_risk_result: Output of classify_claim_risks (mutated copy returned).
+        citation_anchors: Same ordered list used in classify_claim_risks.
+        formula_mode: 'conservative' (default) or 'permissive'.
+
+    Returns:
+        Updated claim_risk_result dict with formula_claims_downgraded_to_concept
+        correctly populated.
+    """
+    if formula_mode != "conservative":
+        return claim_risk_result
+
+    result = dict(claim_risk_result)
+    classified = list(result.get("sentences_classified", []))
+    downgraded = 0
+
+    for entry in classified:
+        if entry.get("risk_type") != "formula":
+            continue
+        cited_indices = entry.get("cited_indices", [])
+        if not cited_indices:
+            # Already counted as unsupported by classify_claim_risks.
+            continue
+        # Check if any cited anchor has math content.
+        has_math_anchor = any(
+            _COVERAGE_FORMULA_SIGNAL_RE.search(citation_anchors[i].page_content or "")
+            for i in cited_indices
+            if i < len(citation_anchors)
+        )
+        if not has_math_anchor:
+            downgraded += 1
+            entry["formula_downgraded"] = True
+
+    result["formula_claims_downgraded_to_concept"] = downgraded
+    result["sentences_classified"] = classified
+    return result
+
+
+def compute_inference_density(
+    claim_risk_result: dict[str, Any],
+) -> dict[str, Any]:
+    """Compute the inference-density metric from sentence-level claim-risk results.
+
+    Inference density = fraction of total sentences that are high-risk and either:
+    - unsupported (no citation or all-low-info sources), OR
+    - formula claims downgraded to concept (conservative mode).
+
+    A density above config.summary_max_inference_density triggers the de-overreach
+    rewrite pass and, if unresolved, causes final.accepted=False.
+
+    Returns:
+        dict with keys: inference_density, inference_threshold,
+                        inference_gate_passed, unsupported_claims_count.
+    """
+    try:
+        threshold = float(getattr(config, "summary_max_inference_density", 0.25))
+    except (AttributeError, TypeError, ValueError):
+        threshold = 0.25
+
+    unsupported = (
+        int(claim_risk_result.get("unsupported_high_risk_count", 0))
+        + int(claim_risk_result.get("formula_claims_downgraded_to_concept", 0))
+    )
+    total = int(claim_risk_result.get("sentences_total", 0))
+    density = unsupported / total if total > 0 else 0.0
+    gate_passed = density <= threshold
+
+    return {
+        "inference_density": round(density, 4),
+        "inference_threshold": round(threshold, 4),
+        "inference_gate_passed": gate_passed,
+        "unsupported_claims_count": unsupported,
+    }
+
+
+def _build_compact_context_block(
+    anchors: list["Document"],
+    max_sources: int,
+    max_chars_per_source: int,
+) -> str:
+    """Build a reduced context block to keep optional passes fast."""
+    if not anchors:
+        return "(Nenhum trecho encontrado nos documentos.)"
+    keep_sources = max(1, int(max_sources))
+    keep_chars = max(120, int(max_chars_per_source))
+    compact: list[Document] = []
+    for anchor in anchors[:keep_sources]:
+        text = (anchor.page_content or "").strip()
+        if len(text) > keep_chars:
+            cut = text[:keep_chars]
+            last_space = cut.rfind(" ")
+            if last_space > keep_chars * 0.7:
+                cut = cut[:last_space]
+            text = cut + "…"
+        compact.append(
+            Document(
+                page_content=text,
+                metadata=dict(anchor.metadata or {}),
+            )
+        )
+    return build_context_block(compact)
+
+
+def run_deoverreach_pass(
+    draft: str,
+    doc_name: str,
+    citation_anchors: list["Document"],
+    llm: Any,
+) -> str:
+    """Run one LLM pass to remove extrapolations from the deep summary draft.
+
+    Triggered when the inference-density gate fails, unsupported high-risk claims
+    are detected, or formula claims lack math support in conservative mode.
+
+    The pass preserves: section structure, headings, and valid [Fonte N] citations.
+    It removes or reformulates: unsupported quantitative/comparative/mathematical claims.
+
+    Args:
+        draft: Current summary text (body only, Fontes: section not included).
+        doc_name: Document name for the prompt.
+        citation_anchors: Citation anchors (used to build context_sample).
+        llm: Chat model instance.
+
+    Returns:
+        Rewritten text, or ``draft`` unchanged on LLM failure.
+    """
+    max_sources = int(getattr(config, "summary_deoverreach_max_context_sources", 6))
+    max_chars = int(getattr(config, "summary_deoverreach_context_chars", 700))
+    max_prompt_chars = int(getattr(config, "summary_deoverreach_max_prompt_chars", 18000))
+    context_sample = _build_compact_context_block(
+        citation_anchors,
+        max_sources=max_sources,
+        max_chars_per_source=max_chars,
+    )
+    prompt = DEEP_SUMMARY_DEOVERREACH_PROMPT.format(
+        doc_name=doc_name,
+        draft=draft,
+        context_sample=context_sample,
+    )
+    if len(prompt) > max_prompt_chars:
+        logger.info(
+            "De-overreach pass skipped: prompt too large (%d chars > limit=%d).",
+            len(prompt),
+            max_prompt_chars,
+        )
+        return draft
+    try:
+        response = llm.invoke(
+            [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+        )
+        rewritten = response_text(response)
+        if rewritten and rewritten.strip():
+            logger.info(
+                "De-overreach rewrite pass completed (%d → %d chars).",
+                len(draft),
+                len(rewritten),
+            )
+            return rewritten
+        logger.warning("De-overreach pass returned empty output; keeping original.")
+        return draft
+    except Exception as exc:
+        logger.warning("De-overreach pass failed (%s); keeping original draft.", exc)
+        return draft
+
+
 # ── Step 6: final polished deep summary ──────────────────────────────────────
 
 def _select_citation_anchors(
     all_chunks: list[Document],
     groups: list[list[Document]],
     max_anchors: int = 12,
+    topic_info: dict[str, Any] | None = None,
 ) -> list[Document]:
     """Select representative chunks to serve as citation anchors for the final synthesis.
 
     Strategy (in priority order):
-    1. First chunk of each group — gives one anchor per logical section/block,
-       spanning the full document breadth.
-    2. If fewer than ``max_anchors`` selected, fill with evenly-spaced chunks
-       from the remainder.
+    1. One anchor per group — pick the most content-rich chunk, not just the first.
+    2. Topic-aware fill: ensure each must-cover topic has at least one anchor.
+    3. Late-document coverage: ensure the last third of groups get representation.
+    4. Evenly-spaced fill from remaining chunks.
 
-    This is better than a naive head+tail slice because it ensures every
-    logical section of the document has at least one citable anchor.
+    This ensures every logical section AND every major topic has citable evidence.
     """
-    # One anchor per group (in order)
-    anchors: list[Document] = [g[0] for g in groups if g]
+    # Phase 1: Best chunk per group (prefer chunk with most content).
+    anchors: list[Document] = []
+    anchor_ids: set[int] = set()
+
+    for g in groups:
+        if not g:
+            continue
+        # Prefer non-low-info chunks (avoid sumário/índice as primary evidence).
+        eligible = [c for c in g if not _is_low_info_source(c)]
+        pool = eligible or g
+        # Pick the chunk with the most content, not just the first.
+        best = max(pool, key=lambda c: len(c.page_content or ""))
+        anchors.append(best)
+        anchor_ids.add(id(best))
 
     if len(anchors) >= max_anchors:
         return anchors[:max_anchors]
 
-    # Fill remaining slots with evenly-spaced chunks not already in anchors
-    anchor_set = set(id(c) for c in anchors)
-    remaining = [c for c in all_chunks if id(c) not in anchor_set]
+    # Phase 2: Topic-aware fill — ensure every must-cover topic has an anchor.
+    if topic_info:
+        topic_anchors_map = get_topic_anchors(topic_info, all_chunks, max_per_topic=2)
+        for _topic_id, chunk_indices in topic_anchors_map.items():
+            if len(anchors) >= max_anchors:
+                break
+            preferred_ci = None
+            fallback_ci = None
+            for ci in chunk_indices:
+                if ci >= len(all_chunks):
+                    continue
+                candidate = all_chunks[ci]
+                if id(candidate) in anchor_ids:
+                    continue
+                if not _is_low_info_source(candidate):
+                    preferred_ci = ci
+                    break
+                if fallback_ci is None:
+                    fallback_ci = ci
+            chosen_ci = preferred_ci if preferred_ci is not None else fallback_ci
+            if chosen_ci is not None:
+                chosen = all_chunks[chosen_ci]
+                anchors.append(chosen)
+                anchor_ids.add(id(chosen))
 
+    if len(anchors) >= max_anchors:
+        return anchors[:max_anchors]
+
+    # Phase 3: Late-document coverage — ensure last third of chunks is represented.
+    n_chunks = len(all_chunks)
+    if n_chunks >= 6:
+        late_start = n_chunks * 2 // 3
+        late_chunks = [c for c in all_chunks[late_start:] if id(c) not in anchor_ids]
+        if late_chunks and len(anchors) < max_anchors:
+            # Prefer non-low-info evidence in late coverage.
+            late_non_low_info = [c for c in late_chunks if not _is_low_info_source(c)]
+            source_late = late_non_low_info or late_chunks
+            # Add one from the middle of the late section.
+            mid_late = source_late[len(source_late) // 2] if source_late else None
+            if mid_late:
+                anchors.append(mid_late)
+                anchor_ids.add(id(mid_late))
+
+    if len(anchors) >= max_anchors:
+        return anchors[:max_anchors]
+
+    # Phase 4: Evenly-spaced fill from remainder.
+    remaining = [c for c in all_chunks if id(c) not in anchor_ids]
+    # Keep low-info chunks as last resort only.
+    remaining.sort(key=lambda c: 1 if _is_low_info_source(c) else 0)
     if remaining:
-        step = max(1, len(remaining) // (max_anchors - len(anchors)))
-        extras = remaining[::step][: max_anchors - len(anchors)]
-        anchors = anchors + extras
+        slots = max_anchors - len(anchors)
+        step = max(1, len(remaining) // max(1, slots))
+        extras = remaining[::step][:slots]
+        anchors.extend(extras)
 
-    return anchors
+    return anchors[:max_anchors]
 
 
 def finalize_deep_summary(
@@ -2578,6 +3308,268 @@ def polish_deep_summary_style(
     except Exception as exc:
         logger.warning("Deep summary style polish failed: %s", exc)
         return draft
+
+
+def _run_micro_topic_backfill(
+    final_text: str,
+    missing_topics: list[str],
+    topic_info: dict[str, Any],
+    all_chunks: list[Document],
+    citation_anchors: list[Document],
+    doc_name: str,
+    llm,
+    max_topics: int = 3,
+    paragraph_max_chars: int = 900,
+) -> dict[str, Any]:
+    """Generate one short paragraph per missing topic and append to the summary.
+
+    Unlike the global backfill (which rewrites the whole draft), this function
+    issues one small LLM call per topic and appends only the validated paragraph.
+    On validation failure the paragraph is discarded silently (fail-safe).
+
+    Args:
+        final_text:         Current summary body (no sources section).
+        missing_topics:     List of topic IDs that need coverage.
+        topic_info:         Output of extract_document_topics.
+        all_chunks:         All document chunks.
+        citation_anchors:   Ordered citation anchors (index 0 → [Fonte 1]).
+        doc_name:           Document display name.
+        llm:                Chat model instance.
+        max_topics:         Maximum number of topics to process (latency guardrail).
+        paragraph_max_chars: Hard char limit per generated paragraph.
+
+    Returns:
+        dict with keys:
+            ``text``                — Updated summary text (may equal final_text if all fail).
+            ``triggered``           — True if at least 1 topic was attempted.
+            ``paragraphs_attempted``— Number of LLM calls issued.
+            ``paragraphs_accepted`` — Number of paragraphs that passed validation.
+            ``missing_topics_before``— Topics passed in.
+            ``missing_topics_after`` — Topics still missing after accepted paragraphs.
+            ``latency_ms``          — Total wall-clock ms for all LLM calls.
+    """
+    from docops.summarize.outline import score_topic_outline_coverage
+
+    details = topic_info.get("topic_details", {})
+    topic_anchors = get_topic_anchors(topic_info, all_chunks, max_per_topic=2)
+
+    topics_to_process = missing_topics[:max_topics]
+    skipped_topics = missing_topics[max_topics:]
+
+    result_text = final_text
+    paragraphs_attempted = 0
+    paragraphs_accepted = 0
+    t0_total = time.monotonic()
+
+    for topic_id in topics_to_process:
+        # Find the best anchor chunk for this topic.
+        anchor_indices = topic_anchors.get(topic_id, [])
+        source_label: str | None = None
+        source_snippet: str | None = None
+        for aidx in anchor_indices:
+            if aidx >= len(all_chunks):
+                continue
+            chunk = all_chunks[aidx]
+            # Map to citation anchor to get canonical [Fonte N] label.
+            for ci, anchor in enumerate(citation_anchors):
+                if (chunk.page_content or "").strip() == (anchor.page_content or "").strip():
+                    source_label = f"[Fonte {ci + 1}]"
+                    source_snippet = (chunk.page_content or "")[:paragraph_max_chars]
+                    break
+            if source_label:
+                break
+
+        if not source_label or not source_snippet:
+            logger.info(
+                "Micro-backfill: topic '%s' — no valid citation anchor found; skipping.",
+                topic_id,
+            )
+            continue
+
+        td = details.get(topic_id, {})
+        topic_label = str(td.get("label", topic_id))
+
+        prompt = DEEP_SUMMARY_MICRO_BACKFILL_PROMPT.format(
+            doc_name=doc_name,
+            topic_label=topic_label,
+            source_label=source_label,
+            source_snippet=source_snippet,
+        )
+        paragraphs_attempted += 1
+        try:
+            response = llm.invoke(
+                [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+            )
+            paragraph_raw = response_text(response).strip()
+        except Exception as exc:
+            logger.warning("Micro-backfill: LLM call failed for topic '%s': %s.", topic_id, exc)
+            continue
+
+        # LLM signals insufficient evidence.
+        if not paragraph_raw or paragraph_raw.strip().upper().startswith("INSUFICIENTE"):
+            logger.info(
+                "Micro-backfill: topic '%s' — LLM returned INSUFICIENTE; discarding.",
+                topic_id,
+            )
+            continue
+
+        # Truncate to hard char limit.
+        paragraph = paragraph_raw[:paragraph_max_chars]
+
+        # Validate: must contain the canonical citation.
+        if source_label not in paragraph:
+            logger.info(
+                "Micro-backfill: topic '%s' — paragraph missing citation %s; discarding.",
+                topic_id,
+                source_label,
+            )
+            continue
+
+        # Validate: no phantom citations beyond len(citation_anchors).
+        para_clean, cit_cleanup = validate_summary_citations(paragraph, citation_anchors)
+        if cit_cleanup.get("repaired"):
+            logger.info(
+                "Micro-backfill: topic '%s' — phantom citations removed from paragraph.",
+                topic_id,
+            )
+        para_clean = _sanitize_non_canonical_citations(para_clean)
+
+        # Validate only the inserted paragraph (local check, no full-document rewrite).
+        _, local_grounding = validate_summary_grounding(
+            para_clean,
+            citation_anchors,
+            threshold=0.05,
+        )
+        # We only care that the inserted paragraph has acceptable local grounding.
+        lwr = _compute_weak_ratio(local_grounding)
+        max_ceiling = float(getattr(config, "summary_max_accepted_weak_ratio", 0.5))
+        if lwr > max_ceiling:
+            logger.info(
+                "Micro-backfill: topic '%s' — paragraph rejected (local weak_ratio=%.2f > ceiling=%.2f).",
+                topic_id,
+                lwr,
+                max_ceiling,
+            )
+            continue
+
+        # Accept: append to current summary (before sources section placeholder).
+        section_header = "\n\n## Complemento Técnico\n\n" if paragraphs_accepted == 0 and "## Complemento Técnico" not in result_text else "\n\n"
+        result_text = result_text + section_header + para_clean
+        paragraphs_accepted += 1
+        logger.info(
+            "Micro-backfill: topic '%s' — paragraph accepted (%d chars).",
+            topic_id,
+            len(para_clean),
+        )
+
+    if skipped_topics:
+        logger.info(
+            "Micro-backfill: %d topic(s) skipped due to max_topics=%d limit: %s.",
+            len(skipped_topics),
+            max_topics,
+            skipped_topics,
+        )
+
+    # Determine remaining missing topics.
+    post_coverage = score_topic_outline_coverage(result_text, topic_info)
+    missing_after = list(post_coverage.get("missing_topics", []))
+
+    total_ms = round((time.monotonic() - t0_total) * 1000, 1)
+    return {
+        "text": result_text,
+        "triggered": paragraphs_attempted > 0,
+        "paragraphs_attempted": paragraphs_attempted,
+        "paragraphs_accepted": paragraphs_accepted,
+        "missing_topics_before": list(missing_topics),
+        "missing_topics_after": missing_after,
+        "skipped_topics": skipped_topics,
+        "latency_ms": total_ms,
+    }
+
+
+def _run_topic_backfill(
+    draft: str,
+    topic_info: dict[str, Any],
+    all_chunks: list[Document],
+    citation_anchors: list[Document],
+    doc_name: str,
+    llm,
+    max_per_topic: int = 2,
+) -> str:
+    """Attempt to backfill missing topics into the summary via one LLM call.
+
+    Gathers context chunks for missing topics and asks the LLM to integrate
+    coverage into the existing draft without breaking structure or citations.
+    """
+    # Filter to only topics actually missing from the draft.
+    from docops.summarize.outline import score_topic_outline_coverage
+    current_coverage = score_topic_outline_coverage(draft, topic_info)
+    actually_missing = list(current_coverage.get("missing_topics", []))
+    if not actually_missing:
+        return draft
+
+    # Gather anchor chunks for missing topics.
+    topic_anchors = get_topic_anchors(topic_info, all_chunks, max_per_topic=max_per_topic)
+    backfill_chunks: list[Document] = []
+    seen_indices: set[int] = set()
+    for tid in actually_missing:
+        for idx in topic_anchors.get(tid, []):
+            if idx not in seen_indices and idx < len(all_chunks):
+                backfill_chunks.append(all_chunks[idx])
+                seen_indices.add(idx)
+
+    if not backfill_chunks:
+        logger.info("Topic backfill: no anchor chunks found for missing topics.")
+        return draft
+
+    # Build context block using same numbering as citation_anchors.
+    # Only include chunks that map to a valid [Fonte N] anchor; discard the rest
+    # so the LLM never sees a non-canonical label in the backfill context.
+    context_lines: list[str] = []
+    discarded_no_anchor: int = 0
+    for chunk in backfill_chunks:
+        # Try to find matching anchor index.
+        anchor_idx = None
+        for ai, anchor in enumerate(citation_anchors):
+            if (chunk.page_content or "").strip() == (anchor.page_content or "").strip():
+                anchor_idx = ai + 1
+                break
+        if anchor_idx is None:
+            discarded_no_anchor += 1
+            continue
+        snippet = (chunk.page_content or "")[:800]
+        context_lines.append(f"[Fonte {anchor_idx}]\n{snippet}")
+
+    if discarded_no_anchor:
+        logger.info(
+            "Topic backfill: %d chunk(s) discarded — no matching citation anchor.",
+            discarded_no_anchor,
+        )
+
+    if not context_lines:
+        logger.info("Topic backfill: all backfill chunks discarded (no anchor match); skipping LLM call.")
+        return draft
+
+    backfill_context = "\n\n---\n\n".join(context_lines)
+
+    # Build missing topics description.
+    details = topic_info.get("topic_details", {})
+    topic_descs: list[str] = []
+    for tid in actually_missing:
+        td = details.get(tid, {})
+        topic_descs.append(f"- {td.get('label', tid)} (evidência: {td.get('hits', 0)} chunks)")
+    missing_description = "\n".join(topic_descs)
+
+    prompt = DEEP_SUMMARY_TOPIC_BACKFILL_PROMPT.format(
+        doc_name=doc_name,
+        draft=draft,
+        missing_topics_description=missing_description,
+        backfill_context=backfill_context,
+    )
+    response = llm.invoke(
+        [SystemMessage(content=SYSTEM_PROMPT), HumanMessage(content=prompt)]
+    )
+    return response_text(response)
 
 
 def _build_resynthesis_feedback(
@@ -2720,33 +3712,114 @@ def _apply_structure_fix(draft: str, doc_name: str, llm) -> str:
         return draft
 
 
+def _resolve_profile(profile_arg: str | None) -> str:
+    """Resolve the effective execution profile.
+
+    Priority: explicit argument > SUMMARY_DEEP_PROFILE env var > 'model_first'.
+    Validates against known values; invalid values fall back to 'model_first'.
+    """
+    if profile_arg:
+        resolved = profile_arg.strip().lower()
+        if resolved in ("fast", "model_first", "strict"):
+            return resolved
+        # Explicit invalid value should not silently inherit env/config.
+        return "model_first"
+    cfg_val = str(getattr(config, "summary_deep_profile", "model_first")).strip().lower()
+    if cfg_val in ("fast", "model_first", "strict"):
+        return cfg_val
+    return "model_first"
+
+
 def run_deep_summary(
     doc_name: str,
     doc_id: str,
     user_id: int,
     include_diagnostics: bool = False,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     """Execute the full multi-step deep summary pipeline.
 
     Args:
-        doc_name: Document file name (used for display and metadata filtering).
-        doc_id:   Document UUID from the database (preferred filter for Chroma).
-        user_id:  Authenticated user ID for multi-tenant isolation.
+        doc_name:            Document file name (used for display and metadata filtering).
+        doc_id:              Document UUID from the database (preferred filter for Chroma).
+        user_id:             Authenticated user ID for multi-tenant isolation.
+        include_diagnostics: When True, attach full diagnostics dict to the result.
+        profile:             Execution profile override: 'fast' | 'model_first' | 'strict'.
+                             When None, uses SUMMARY_DEEP_PROFILE env var (default: 'model_first').
 
     Returns:
         Dict with keys:
             ``answer``          — Final summary text with sources section appended.
             ``sources_section`` — Formatted "Fontes:" block (also inside ``answer``).
+            ``diagnostics``     — Full diagnostics (only when include_diagnostics=True).
     """
+    _active_profile = _resolve_profile(profile)
+    _max_corrective_passes = int(getattr(config, "summary_max_corrective_passes", 1))
+    _style_polish_enabled = (
+        _active_profile != "fast"
+        and bool(getattr(config, "summary_style_polish_enabled", False))
+    )
+    # corrective_passes_used counts: deoverreach, resynthesis, backfill, extra outline-repair
+    _corrective_passes_used: int = 0
+    # Timeline of corrective passes executed, in order (e.g. ["micro_backfill", "deoverreach"]).
+    _corrective_timeline: list[str] = []
+
     logger.info(
-        "Deep summary pipeline started: doc='%s', doc_id=%s, user=%s",
+        "Deep summary pipeline started: doc='%s', doc_id=%s, user=%s, profile=%s, "
+        "max_corrective_passes=%d, style_polish=%s",
         doc_name,
         doc_id,
         user_id,
+        _active_profile,
+        _max_corrective_passes,
+        _style_polish_enabled,
     )
+    _start_ts = time.monotonic()
+    _latency_budget_s = max(1.0, float(getattr(config, "summary_latency_budget_seconds", 300.0)))
+
+    # Per-stage timing (ms)
+    _stage_timings: dict[str, float] = {}
+
+    def _t(label: str):
+        """Context manager / helper to measure stage elapsed time in ms."""
+        class _Timer:
+            def __init__(self, lbl: str):
+                self._lbl = lbl
+                self._t0 = 0.0
+            def __enter__(self):
+                self._t0 = time.monotonic()
+                return self
+            def __exit__(self, *_):
+                _stage_timings[self._lbl] = round((time.monotonic() - self._t0) * 1000, 1)
+        return _Timer(label)
+
+    def _latency_budget_exceeded(reserve_s: float = 0.0) -> bool:
+        elapsed = time.monotonic() - _start_ts
+        return elapsed >= max(0.0, _latency_budget_s - max(0.0, reserve_s))
+
+    def _corrective_budget_available() -> bool:
+        """Return True when another corrective pass can be started."""
+        if _active_profile == "fast":
+            return False
+        return _corrective_passes_used < _max_corrective_passes
+
+    def _remaining_corrective_passes() -> int:
+        return max(0, _max_corrective_passes - _corrective_passes_used)
+
+    def _consume_corrective_pass(pass_name: str) -> None:
+        nonlocal _corrective_passes_used
+        _corrective_passes_used += 1
+        _corrective_timeline.append(pass_name)
+        logger.info(
+            "Corrective pass consumed: %s (%d/%d).",
+            pass_name,
+            _corrective_passes_used,
+            _max_corrective_passes,
+        )
 
     # ── 1. Collect ────────────────────────────────────────────────────────────
-    chunks = collect_ordered_chunks(doc_name, doc_id, user_id)
+    with _t("collect"):
+        chunks = collect_ordered_chunks(doc_name, doc_id, user_id)
     if not chunks:
         logger.warning("No chunks found for doc='%s'.", doc_name)
         result = {
@@ -2765,24 +3838,282 @@ def run_deep_summary(
     # ── 2. Clean ─────────────────────────────────────────────────────────────
     # Keep raw chunks for noisy-extraction heuristics used by adaptive grounding.
     raw_chunks = chunks
-    chunks = _clean_chunks(chunks)
+    with _t("clean"):
+        chunks = _clean_chunks(chunks)
+
+    # ── Model-first path (primary) ───────────────────────────────────────────
+    # Keep orchestration minimal (single synthesis call) while preserving
+    # source-faithful coverage via deterministic topic/outline contracts.
+    if _active_profile == "model_first":
+        _, _, section_threshold = _get_tuning()
+        section_cov_before = sum(
+            1
+            for c in chunks
+            if c.metadata.get("section_path") or c.metadata.get("section_title")
+        ) / max(1, len(chunks))
+        pdf_chunks_ratio = (
+            sum(
+                1
+                for c in chunks
+                if str(c.metadata.get("file_type", "")).lower() == "pdf"
+            )
+            / max(1, len(chunks))
+        )
+        if pdf_chunks_ratio >= 0.5 and section_cov_before < section_threshold:
+            infer_pdf_structure(chunks)
+        pdf_outline_entries = extract_pdf_outline(chunks)
+
+        facet_min_hits = int(getattr(config, "summary_facet_min_hits", 2))
+        doc_profile = build_document_profile(chunks, min_hits=facet_min_hits)
+        topic_info = extract_document_topics(chunks, major_topic_min_hits=2)
+        must_cover_topics = list(topic_info.get("must_cover_topics", []))
+        facet_contract = _format_doc_profile_contract(doc_profile)
+        topic_contract = topic_info.get("outline_text", "")
+        coverage_contract = facet_contract
+        if topic_contract:
+            coverage_contract = f"{facet_contract}\n\n{topic_contract}"
+
+        with _t("group"):
+            groups = group_chunks(chunks, infer_pdf=False)
+        logger.info("Deep summary (model_first): %d groups formed.", len(groups))
+
+        llm_complex = _get_llm(route="complex", temperature=0.2)
+        _stage_timings["partials"] = 0.0
+        _stage_timings["consolidate"] = 0.0
+        _stage_timings["style_polish"] = 0.0
+
+        max_anchors = int(getattr(config, "summary_max_sources", 12))
+        with _t("select_anchors"):
+            citation_anchors = _select_citation_anchors(
+                chunks,
+                groups,
+                max_anchors=max_anchors,
+                topic_info=topic_info,
+            )
+        if not citation_anchors:
+            citation_anchors = list(chunks[: max(1, min(max_anchors, len(chunks)))])
+        logger.info(
+            "Deep summary (model_first): %d citation anchor(s) selected (valid range: 1..%d).",
+            len(citation_anchors),
+            len(citation_anchors),
+        )
+
+        _consolidated_hint = (
+            "Síntese evidence-first, sem extrapolar além das fontes. "
+            f"Tópicos obrigatórios detectados: {', '.join(must_cover_topics) if must_cover_topics else 'nenhum'}."
+        )
+        with _t("finalize"):
+            final_text = finalize_deep_summary(
+                consolidated=_consolidated_hint,
+                partials=[],
+                doc_name=doc_name,
+                citation_anchors=citation_anchors,
+                coverage_contract=coverage_contract,
+                llm=llm_complex,
+            )
+
+        final_text = _strip_sources_section(final_text)
+        final_text = _sanitize_inline_source_noise(final_text)
+        final_text = _sanitize_non_canonical_citations(final_text)
+        final_text, citation_validation = validate_summary_citations(
+            final_text, citation_anchors
+        )
+
+        base_grounding_threshold = float(
+            getattr(config, "summary_grounding_threshold", 0.20)
+        )
+        grounding_threshold = _resolve_grounding_threshold(
+            raw_chunks,
+            chunks,
+            base_threshold=base_grounding_threshold,
+        )
+        with _t("grounding"):
+            final_text, grounding_info = validate_summary_grounding(
+                final_text,
+                citation_anchors,
+                grounding_threshold,
+                llm=None,  # model_first intentionally avoids rewrite-repairs
+            )
+
+        final_text = clean_summary_output(final_text)
+        final_text = _sanitize_non_canonical_citations(final_text)
+        final_text, _ = validate_summary_citations(final_text, citation_anchors)
+        body_text = final_text
+        used_source_indices = _extract_used_citation_indices(
+            body_text, len(citation_anchors)
+        )
+        sources_section = build_anchor_sources_section(
+            citation_anchors,
+            source_indices=used_source_indices,
+        )
+        if sources_section:
+            final_text = body_text.rstrip() + "\n\n" + sources_section
+
+        structure_min_chars = int(getattr(config, "summary_structure_min_chars", 160))
+        structure_info = validate_summary_structure(
+            body_text,
+            min_section_chars=structure_min_chars,
+        )
+        weak_ratio = _compute_weak_ratio(grounding_info)
+        outline_coverage = score_topic_outline_coverage(body_text, topic_info)
+        formula_mode = str(getattr(config, "summary_formula_mode", "conservative"))
+        claim_risk = classify_claim_risks(body_text, citation_anchors)
+        claim_risk = check_formula_mode(claim_risk, citation_anchors, formula_mode)
+        inference = compute_inference_density(claim_risk)
+
+        blocking_reasons: list[str] = []
+        if not bool(structure_info.get("valid", False)):
+            blocking_reasons.append(
+                "structure_invalid: "
+                f"{str(structure_info.get('structure_failure_reason', '')).strip() or 'unknown'}"
+            )
+        missing_topics = list(outline_coverage.get("missing_topics", []))
+        if must_cover_topics and missing_topics:
+            blocking_reasons.append(
+                f"outline_missing_topics_not_allowed: missing={missing_topics}"
+            )
+        if int(claim_risk.get("unsupported_high_risk_count", 0)) > 0:
+            blocking_reasons.append(
+                f"unsupported_high_risk_claims: count={int(claim_risk.get('unsupported_high_risk_count', 0))}"
+            )
+        if not bool(inference.get("inference_gate_passed", True)):
+            blocking_reasons.append(
+                f"inference_density_exceeded: {float(inference.get('inference_density', 0.0)):.4f}"
+            )
+
+        diagnostics = {
+            "profile_used": _active_profile,
+            "mode": "model_first",
+            "document_profile": {
+                "required_facets": list(doc_profile.get("required_facets", [])),
+                "pdf_outline_sections": len(pdf_outline_entries),
+            },
+            "outline_coverage": {
+                "score": float(outline_coverage.get("overall_score", 1.0)),
+                "must_cover_topics": list(outline_coverage.get("must_cover_topics", [])),
+                "missing_topics": missing_topics,
+                "covered_topics": list(outline_coverage.get("covered_topics", [])),
+            },
+            "citations": {
+                "anchors_total": len(citation_anchors),
+                "inline_found": int(citation_validation.get("citations_found", 0)),
+                "phantom_indices": list(citation_validation.get("phantom_indices", [])),
+                "unique_sources_used": len(used_source_indices),
+            },
+            "grounding": {
+                "threshold": grounding_threshold,
+                "blocks_with_citations": int(grounding_info.get("blocks_with_citations", 0)),
+                "weakly_grounded": int(grounding_info.get("weakly_grounded", 0)),
+                "repaired_blocks": int(grounding_info.get("repaired_blocks", 0)),
+                "weak_ratio": round(weak_ratio, 4),
+            },
+            "structure": {
+                "valid": bool(structure_info.get("valid", False)),
+                "section_count": int(structure_info.get("section_count", 0)),
+                "structure_failure_reason": str(
+                    structure_info.get("structure_failure_reason", "")
+                ),
+            },
+            "claim_risk": {
+                "unsupported_high_risk_count": int(
+                    claim_risk.get("unsupported_high_risk_count", 0)
+                ),
+                "unsupported_high_risk_low_info_only_count": int(
+                    claim_risk.get("unsupported_high_risk_low_info_only_count", 0)
+                ),
+                "formula_mode": formula_mode,
+            },
+            "inference_density": {
+                "inference_density": float(inference.get("inference_density", 0.0)),
+                "inference_threshold": float(inference.get("inference_threshold", 0.0)),
+                "inference_gate_passed": bool(inference.get("inference_gate_passed", True)),
+            },
+            "corrective_timeline": [],
+            "corrective_passes_used": 0,
+            "max_corrective_passes": 0,
+            "style_polish_enabled": False,
+            "deoverreach": {"enabled": False, "triggered": False, "accepted": False},
+            "resynthesis": {"enabled": False, "triggered": False, "accepted": False},
+            "micro_backfill": {"enabled": False, "triggered": False, "accepted": False},
+            "early_micro_backfill": {"enabled": False, "triggered": False, "accepted": False},
+            "final": {
+                "accepted": len(blocking_reasons) == 0,
+                "blocking_reasons": list(blocking_reasons),
+                "missing_topics": missing_topics,
+            },
+        }
+
+        _total_ms = round((time.monotonic() - _start_ts) * 1000, 1)
+        diagnostics["latency"] = {
+            "total_ms": _total_ms,
+            "stage_timings_ms": dict(_stage_timings),
+        }
+        logger.info(
+            "Deep summary model_first completed for doc='%s' in %.1fs.",
+            doc_name,
+            _total_ms / 1000,
+        )
+        result = {
+            "answer": final_text,
+            "sources_section": sources_section,
+        }
+        if include_diagnostics:
+            result["diagnostics"] = diagnostics
+        return result
+
+    # Enrich PDF structure BEFORE topic extraction so outline topics can use
+    # inferred section_title/section_path metadata.
+    _, _, section_threshold = _get_tuning()
+    section_cov_before = sum(
+        1 for c in chunks if c.metadata.get("section_path") or c.metadata.get("section_title")
+    ) / max(1, len(chunks))
+    pdf_chunks_ratio = (
+        sum(1 for c in chunks if str(c.metadata.get("file_type", "")).lower() == "pdf")
+        / max(1, len(chunks))
+    )
+    if pdf_chunks_ratio >= 0.5 and section_cov_before < section_threshold:
+        infer_pdf_structure(chunks)
+    pdf_outline_entries = extract_pdf_outline(chunks)
+    if pdf_outline_entries:
+        logger.info(
+            "Deep summary: %d PDF outline section(s) inferred before topic extraction.",
+            len(pdf_outline_entries),
+        )
     facet_min_hits = int(getattr(config, "summary_facet_min_hits", 2))
     doc_profile = build_document_profile(chunks, min_hits=facet_min_hits)
-    coverage_contract = _format_doc_profile_contract(doc_profile)
+
+    # ── 2b. Topic outline extraction ─────────────────────────────────────────
+    topic_info = extract_document_topics(chunks, major_topic_min_hits=2)
+    must_cover_topics = topic_info.get("must_cover_topics", [])
+    if must_cover_topics:
+        logger.info(
+            "Deep summary: %d must-cover topics detected: %s.",
+            len(must_cover_topics),
+            ", ".join(must_cover_topics),
+        )
+    # Build coverage contract combining facet profile + topic outline.
+    facet_contract = _format_doc_profile_contract(doc_profile)
+    topic_contract = topic_info.get("outline_text", "")
+    coverage_contract = facet_contract
+    if topic_contract:
+        coverage_contract = f"{facet_contract}\n\n{topic_contract}"
 
     # ── 3. Group ─────────────────────────────────────────────────────────────
-    groups = group_chunks(chunks)
+    with _t("group"):
+        groups = group_chunks(chunks, infer_pdf=False)
     logger.info("Deep summary: %d groups formed.", len(groups))
 
     llm_complex = _get_llm(route="complex", temperature=0.2)
     llm_cheap = _get_llm(route="cheap", temperature=0.2)
 
     # ── 4. Partial summaries ─────────────────────────────────────────────────
-    partials = summarize_groups(groups, doc_name, llm_cheap)
+    with _t("partials"):
+        partials = summarize_groups(groups, doc_name, llm_cheap)
     logger.info("Deep summary: %d partial summaries generated.", len(partials))
 
     # ── 5. Consolidation ─────────────────────────────────────────────────────
-    consolidated = consolidate_summaries(partials, doc_name, llm_complex)
+    with _t("consolidate"):
+        consolidated = consolidate_summaries(partials, doc_name, llm_complex)
     logger.info("Deep summary: consolidation complete.")
 
     # ── 6. Select citation anchors ────────────────────────────────────────────
@@ -2790,23 +4121,57 @@ def run_deep_summary(
     # and the final Fontes: section. Using a single list guarantees that
     # [Fonte N] in the body always corresponds to [Fonte N] in the sources.
     max_anchors = getattr(config, "summary_max_sources", 12)
-    citation_anchors = _select_citation_anchors(chunks, groups, max_anchors=max_anchors)
+    with _t("select_anchors"):
+        citation_anchors = _select_citation_anchors(
+            chunks, groups, max_anchors=max_anchors, topic_info=topic_info,
+        )
     logger.info(
         "Deep summary: %d citation anchor(s) selected (valid range: 1..%d).",
         len(citation_anchors),
         len(citation_anchors),
     )
 
+    # ── 6a. Build evidence-first context for final synthesis ──────────────────
+    # Instead of using only the citation_anchors as context (compressed),
+    # build a richer context that includes:
+    #   - one representative chunk per must-cover topic (from topic anchors)
+    #   - all citation anchors (for numbering consistency)
+    # This reduces the need for corrective passes by giving the LLM better
+    # evidence upfront. Citation anchors remain the SOLE numbering source.
+    _topic_anchors: list = []
+    if must_cover_topics:
+        try:
+            _topic_anchors = get_topic_anchors(chunks, topic_info, citation_anchors, max_extra=6)
+        except Exception as _ta_exc:
+            logger.debug("topic_anchors extraction failed (non-fatal): %s", _ta_exc)
+
+    # Merge: topic_anchors first (for prominence), then citation_anchors deduplicated.
+    # The LLM receives both, but [Fonte N] numbering is still built from citation_anchors only.
+    _extra_anchor_texts: set[str] = {
+        (c.page_content or "")[:120] for c in citation_anchors
+    }
+    _evidence_chunks: list = list(citation_anchors)
+    for _ta in _topic_anchors:
+        _ta_key = (_ta.page_content or "")[:120]
+        if _ta_key not in _extra_anchor_texts:
+            _evidence_chunks.append(_ta)
+            _extra_anchor_texts.add(_ta_key)
+
     # ── 6b. Final synthesis ───────────────────────────────────────────────────
-    final_text = finalize_deep_summary(
-        consolidated,
-        partials,
-        doc_name,
-        citation_anchors,
-        coverage_contract,
-        llm_complex,
-    )
-    final_text = polish_deep_summary_style(final_text, doc_name, llm_complex)
+    with _t("finalize"):
+        final_text = finalize_deep_summary(
+            consolidated,
+            partials,
+            doc_name,
+            citation_anchors,
+            coverage_contract,
+            llm_complex,
+        )
+    if _style_polish_enabled:
+        with _t("style_polish"):
+            final_text = polish_deep_summary_style(final_text, doc_name, llm_complex)
+    else:
+        _stage_timings["style_polish"] = 0.0
     final_text = _strip_sources_section(final_text)
     final_text = _sanitize_inline_source_noise(final_text)
 
@@ -2834,12 +4199,13 @@ def run_deep_summary(
         base_threshold=base_grounding_threshold,
     )
     repair_enabled = getattr(config, "summary_grounding_repair", False)
-    final_text, grounding_info = validate_summary_grounding(
-        final_text,
-        citation_anchors,
-        threshold=grounding_threshold,
-        llm=llm_cheap if repair_enabled else None,
-    )
+    with _t("grounding"):
+        final_text, grounding_info = validate_summary_grounding(
+            final_text,
+            citation_anchors,
+            threshold=grounding_threshold,
+            llm=llm_cheap if repair_enabled else None,
+        )
     logger.info(
         "Deep summary grounding: %d block(s) with citations checked, "
         "%d weakly grounded, %d repaired.",
@@ -2971,6 +4337,9 @@ def run_deep_summary(
     topic_min_score = float(getattr(config, "summary_facet_min_score", 0.70))
     current_topic_coverage = score_topic_coverage(final_text, doc_profile)
 
+    # Topic outline coverage (stronger than broad facet check).
+    current_outline_coverage = score_topic_outline_coverage(final_text, topic_info)
+
     notation_gate_enabled = bool(getattr(config, "summary_notation_gate_enabled", True))
     notation_gate_enabled = bool(notation_gate_enabled and coverage_gate_enabled)
     notation_min_score = float(getattr(config, "summary_notation_min_score", 0.75))
@@ -2993,6 +4362,7 @@ def run_deep_summary(
         facet_score=float(current_topic_coverage.get("overall_score", 1.0)),
         claims_score=float(current_critical_claims.get("score", 1.0)),
         notation_score=float(current_notation.get("score", 1.0)),
+        outline_score=float(current_outline_coverage.get("overall_score", 1.0)),
     )
     logger.info(
         "Deep summary profile coverage: facet_score=%.2f required=%d missing=%d; "
@@ -3053,6 +4423,7 @@ def run_deep_summary(
                 coverage_profile=coverage_profile,
             )
             current_topic_coverage = score_topic_coverage(final_text, doc_profile)
+            current_outline_coverage = score_topic_outline_coverage(final_text, topic_info)
             current_notation = assess_notation_fidelity(final_text, doc_profile)
             current_critical_claims = evaluate_critical_claim_coverage(final_text, doc_profile)
             current_rubric = compute_summary_rubric(
@@ -3064,7 +4435,317 @@ def run_deep_summary(
                 facet_score=float(current_topic_coverage.get("overall_score", 1.0)),
                 claims_score=float(current_critical_claims.get("score", 1.0)),
                 notation_score=float(current_notation.get("score", 1.0)),
+                outline_score=float(current_outline_coverage.get("overall_score", 1.0)),
             )
+
+    # ── Claim-risk + inference-density fidelity check ────────────────────────
+    # Runs before resynthesis so the de-overreach pass can clean the draft first.
+    _formula_mode = str(getattr(config, "summary_formula_mode", "conservative"))
+    current_claim_risk = classify_claim_risks(final_text, citation_anchors)
+    current_claim_risk = check_formula_mode(
+        current_claim_risk, citation_anchors, _formula_mode
+    )
+    current_inference = compute_inference_density(current_claim_risk)
+
+    _current_outline_missing = list(current_outline_coverage.get("missing_topics", []))
+    _current_outline_must_cover = list(current_outline_coverage.get("must_cover_topics", []))
+    _reserve_must_cover_pass_enabled = bool(
+        getattr(config, "summary_strict_reserve_pass_for_must_cover", True)
+    )
+    _reserve_last_pass_for_must_cover = bool(
+        _reserve_must_cover_pass_enabled
+        and _active_profile == "strict"
+        and _current_outline_must_cover
+        and _current_outline_missing
+        and _remaining_corrective_passes() <= 1
+    )
+    if _reserve_last_pass_for_must_cover:
+        logger.info(
+            "Corrective scheduler: reserving last corrective pass for must-cover topics "
+            "(missing=%s, remaining_passes=%d).",
+            _current_outline_missing,
+            _remaining_corrective_passes(),
+        )
+
+    # ── Early micro-backfill (backfill-before-deoverreach) ────────────────────
+    # When summary_backfill_before_deoverreach=True (default) and there are
+    # missing must-cover topics, run micro-backfill FIRST so that the limited
+    # corrective budget is not consumed by de-overreach/resynthesis before topic
+    # coverage is addressed. This reduces final_accepted=False cases caused by
+    # missing_topics when max_corrective_passes=1 in strict profile.
+    #
+    # max_accepted_weak_ratio is also used later in the resynthesis block; we
+    # define it here so the early backfill ceiling check can use it.
+    max_accepted_weak_ratio = float(
+        getattr(config, "summary_resynthesis_max_accepted_weak_ratio", 0.35)
+    )
+    _backfill_before_deoverreach = (
+        _active_profile != "fast"
+        and bool(getattr(config, "summary_backfill_before_deoverreach", True))
+    )
+    _early_micro_backfill_enabled = bool(getattr(config, "summary_micro_backfill_enabled", True))
+    _early_micro_backfill_max_topics = int(getattr(config, "summary_micro_backfill_max_topics", 3))
+    _early_micro_backfill_para_max = int(
+        getattr(config, "summary_micro_backfill_paragraph_max_chars", 900)
+    )
+    early_backfill_info: dict[str, Any] = {
+        "triggered": False,
+        "accepted": False,
+        "missing_before": [],
+        "missing_after": [],
+        "skipped_reason": None,
+        "paragraphs_attempted": 0,
+        "paragraphs_accepted": 0,
+        "latency_ms": 0.0,
+    }
+    _early_backfill_ran = False
+    if _backfill_before_deoverreach and _current_outline_missing and _current_outline_must_cover:
+        if not _early_micro_backfill_enabled:
+            early_backfill_info["skipped_reason"] = "micro_backfill_disabled"
+            logger.info(
+                "Early micro-backfill skipped: micro_backfill disabled "
+                "(missing must-cover topics=%s).",
+                _current_outline_missing,
+            )
+        elif not _corrective_budget_available():
+            early_backfill_info["skipped_reason"] = "corrective_budget_exhausted"
+            logger.info(
+                "Early micro-backfill skipped: corrective budget exhausted "
+                "(passes_used=%d/%d, missing=%s).",
+                _corrective_passes_used,
+                _max_corrective_passes,
+                _current_outline_missing,
+            )
+        elif _latency_budget_exceeded(reserve_s=50.0):
+            early_backfill_info["skipped_reason"] = "latency_budget_exhausted"
+            logger.info(
+                "Early micro-backfill skipped: latency budget exhausted "
+                "(elapsed=%.1fs, budget=%.1fs).",
+                time.monotonic() - _start_ts,
+                _latency_budget_s,
+            )
+        else:
+            _early_backfill_ran = True
+            early_backfill_info["triggered"] = True
+            early_backfill_info["missing_before"] = list(_current_outline_missing)
+            logger.info(
+                "Early micro-backfill triggered (backfill-before-deoverreach): "
+                "%d missing must-cover topic(s): %s (corrective_pass=%d/%d, max_topics=%d).",
+                len(_current_outline_missing),
+                _current_outline_missing,
+                _corrective_passes_used + 1,
+                _max_corrective_passes,
+                _early_micro_backfill_max_topics,
+            )
+            try:
+                with _t("early_micro_backfill"):
+                    _early_micro_result = _run_micro_topic_backfill(
+                        final_text=final_text,
+                        missing_topics=_current_outline_missing,
+                        topic_info=topic_info,
+                        all_chunks=chunks,
+                        citation_anchors=citation_anchors,
+                        doc_name=doc_name,
+                        llm=llm_cheap,
+                        max_topics=_early_micro_backfill_max_topics,
+                        paragraph_max_chars=_early_micro_backfill_para_max,
+                    )
+                early_backfill_info["paragraphs_attempted"] = _early_micro_result[
+                    "paragraphs_attempted"
+                ]
+                early_backfill_info["paragraphs_accepted"] = _early_micro_result[
+                    "paragraphs_accepted"
+                ]
+                early_backfill_info["missing_after"] = _early_micro_result["missing_topics_after"]
+                early_backfill_info["latency_ms"] = _early_micro_result["latency_ms"]
+
+                if _early_micro_result["paragraphs_accepted"] > 0:
+                    _early_new_text = _early_micro_result["text"]
+                    _early_new_text = _sanitize_non_canonical_citations(_early_new_text)
+                    _early_new_text, _ = validate_summary_citations(
+                        _early_new_text, citation_anchors
+                    )
+                    _early_new_text, _early_grounding = validate_summary_grounding(
+                        _early_new_text, citation_anchors, grounding_threshold
+                    )
+                    _early_bf_weak_ratio = _compute_weak_ratio(_early_grounding)
+                    _early_ceiling_exceeded = _early_bf_weak_ratio > max_accepted_weak_ratio
+                    if _early_ceiling_exceeded:
+                        early_backfill_info["accepted"] = False
+                        early_backfill_info["skipped_reason"] = "absolute_weak_ratio_exceeded"
+                        logger.warning(
+                            "Early micro-backfill rejected: absolute weak_ratio ceiling exceeded "
+                            "(bf_weak_ratio=%.2f > ceiling=%.2f).",
+                            _early_bf_weak_ratio,
+                            max_accepted_weak_ratio,
+                        )
+                    else:
+                        final_text = _early_new_text
+                        grounding_info = _early_grounding
+                        weak_ratio = _early_bf_weak_ratio
+                        used_source_indices = _extract_used_citation_indices(
+                            final_text, len(citation_anchors)
+                        )
+                        early_backfill_info["accepted"] = True
+                        _consume_corrective_pass("micro_backfill_early")
+                        logger.info(
+                            "Early micro-backfill accepted: %d/%d paragraph(s), "
+                            "missing topics %d → %d, weak_ratio %.2f → %.2f.",
+                            _early_micro_result["paragraphs_accepted"],
+                            _early_micro_result["paragraphs_attempted"],
+                            len(_current_outline_missing),
+                            len(_early_micro_result["missing_topics_after"]),
+                            _compute_weak_ratio(grounding_info),
+                            _early_bf_weak_ratio,
+                        )
+                        # Recalculate metrics so deoverreach/resynthesis see updated state.
+                        current_outline_coverage = score_topic_outline_coverage(
+                            final_text, topic_info
+                        )
+                        _current_outline_missing = list(
+                            current_outline_coverage.get("missing_topics", [])
+                        )
+                        _current_outline_must_cover = list(
+                            current_outline_coverage.get("must_cover_topics", [])
+                        )
+                        current_claim_risk = classify_claim_risks(final_text, citation_anchors)
+                        current_claim_risk = check_formula_mode(
+                            current_claim_risk, citation_anchors, _formula_mode
+                        )
+                        current_inference = compute_inference_density(current_claim_risk)
+                        # Re-evaluate reserve flag with updated missing topics.
+                        _reserve_last_pass_for_must_cover = bool(
+                            _reserve_must_cover_pass_enabled
+                            and _active_profile == "strict"
+                            and _current_outline_must_cover
+                            and _current_outline_missing
+                            and _remaining_corrective_passes() <= 1
+                        )
+                        logger.info(
+                            "Early micro-backfill: metrics recalculated — "
+                            "missing_topics=%s, inference_density=%.4f, "
+                            "reserve_last_pass=%s.",
+                            _current_outline_missing,
+                            current_inference["inference_density"],
+                            _reserve_last_pass_for_must_cover,
+                        )
+                else:
+                    logger.info(
+                        "Early micro-backfill: no paragraphs accepted (%d attempted). "
+                        "Corrective pass NOT consumed.",
+                        _early_micro_result["paragraphs_attempted"],
+                    )
+                    early_backfill_info["skipped_reason"] = "no_paragraphs_accepted"
+            except Exception as _e_early_bf:
+                logger.warning(
+                    "Early micro-backfill failed with exception: %s. Continuing.",
+                    _e_early_bf,
+                )
+                early_backfill_info["skipped_reason"] = f"exception: {_e_early_bf}"
+
+    # ── De-overreach rewrite pass ─────────────────────────────────────────────
+    # Triggered when inference density is too high, unsupported high-risk claims
+    # are detected, or formula claims lack math backing (conservative mode).
+    # In 'fast' profile or when corrective budget is exhausted: always skipped.
+    # Mutually exclusive with resynthesis: if deoverreach runs and is accepted,
+    # resynthesis will be skipped for this run.
+    _deoverreach_trigger = (
+        not current_inference["inference_gate_passed"]
+        or current_claim_risk["unsupported_high_risk_count"] > 0
+        or (
+            _formula_mode == "conservative"
+            and current_claim_risk["formula_claims_downgraded_to_concept"] > 0
+        )
+    )
+    deoverreach_info: dict[str, Any] = {
+        "triggered": _deoverreach_trigger,
+        "accepted": False,
+        "pass_consumed": False,
+        "inference_density_before": current_inference["inference_density"],
+        "inference_density_after": current_inference["inference_density"],
+        "unsupported_claims_before": current_inference["unsupported_claims_count"],
+        "skipped_reason": None,
+    }
+    if _deoverreach_trigger and _reserve_last_pass_for_must_cover:
+        deoverreach_info["skipped_reason"] = "reserved_for_must_cover_topics"
+        logger.info(
+            "De-overreach pass skipped: %s (missing must-cover topics=%s, profile=%s).",
+            deoverreach_info["skipped_reason"],
+            _current_outline_missing,
+            _active_profile,
+        )
+        _deoverreach_trigger = False
+    if _deoverreach_trigger and not _corrective_budget_available():
+        deoverreach_info["skipped_reason"] = (
+            "profile_fast" if _active_profile == "fast" else "corrective_budget_exhausted"
+        )
+        logger.info(
+            "De-overreach pass skipped: %s (profile=%s, passes_used=%d/%d).",
+            deoverreach_info["skipped_reason"],
+            _active_profile,
+            _corrective_passes_used,
+            _max_corrective_passes,
+        )
+        _deoverreach_trigger = False
+    if _deoverreach_trigger and _latency_budget_exceeded(reserve_s=45.0):
+        deoverreach_info["skipped_reason"] = "latency_budget_exhausted"
+        logger.info(
+            "De-overreach pass skipped: latency budget exhausted "
+            "(elapsed=%.1fs, budget=%.1fs).",
+            time.monotonic() - _start_ts,
+            _latency_budget_s,
+        )
+        _deoverreach_trigger = False
+    if _deoverreach_trigger:
+        logger.info(
+            "De-overreach rewrite pass triggered "
+            "(inference_density=%.2f, unsupported_hr=%d, formula_downgraded=%d, "
+            "remaining_passes=%d/%d).",
+            current_inference["inference_density"],
+            current_claim_risk["unsupported_high_risk_count"],
+            current_claim_risk["formula_claims_downgraded_to_concept"],
+            _remaining_corrective_passes(),
+            _max_corrective_passes,
+        )
+        with _t("corrective_pass_deoverreach"):
+            _dor_text = run_deoverreach_pass(
+                final_text, doc_name, citation_anchors, llm_cheap
+            )
+        if _dor_text and _dor_text.strip() and _dor_text != final_text:
+            _dor_text, _ = validate_summary_citations(_dor_text, citation_anchors)
+            _dor_text, _dor_grounding = validate_summary_grounding(
+                _dor_text, citation_anchors, grounding_threshold
+            )
+            _dor_claim_risk = classify_claim_risks(_dor_text, citation_anchors)
+            _dor_claim_risk = check_formula_mode(
+                _dor_claim_risk, citation_anchors, _formula_mode
+            )
+            _dor_inference = compute_inference_density(_dor_claim_risk)
+            if _dor_inference["inference_density"] < current_inference["inference_density"]:
+                final_text = _dor_text
+                grounding_info = _dor_grounding
+                weak_ratio = _compute_weak_ratio(grounding_info)
+                used_source_indices = _extract_used_citation_indices(
+                    final_text, len(citation_anchors)
+                )
+                current_claim_risk = _dor_claim_risk
+                current_inference = _dor_inference
+                deoverreach_info["accepted"] = True
+                deoverreach_info["pass_consumed"] = True
+                _consume_corrective_pass("deoverreach")
+                logger.info(
+                    "De-overreach pass accepted: inference_density %.4f → %.4f.",
+                    deoverreach_info["inference_density_before"],
+                    current_inference["inference_density"],
+                )
+            else:
+                logger.info(
+                    "De-overreach pass rejected: density did not improve "
+                    "(before=%.4f, candidate=%.4f). Corrective pass not consumed.",
+                    deoverreach_info["inference_density_before"],
+                    _dor_inference["inference_density"],
+                )
+        deoverreach_info["inference_density_after"] = current_inference["inference_density"]
 
     trigger_reasons: list[str] = []
     if (
@@ -3109,6 +4790,27 @@ def run_deep_summary(
             f"topic/facet coverage {current_topic_coverage['overall_score']:.2f}"
             f" < {topic_min_score:.2f}"
         )
+    # Outline-based topic trigger (stronger: checks explanatory coverage).
+    outline_min_score = float(getattr(config, "summary_outline_min_score", 0.60))
+    current_outline_must_cover = list(current_outline_coverage.get("must_cover_topics", []))
+    current_outline_missing = list(current_outline_coverage.get("missing_topics", []))
+    outline_trigger = (
+        coverage_gate_enabled
+        and bool(current_outline_must_cover)
+        and float(current_outline_coverage.get("overall_score", 1.0)) < outline_min_score
+        and (
+            len(current_outline_must_cover) >= 2
+            or bool(current_outline_missing)
+        )
+    )
+    if outline_trigger:
+        missing_topics = current_outline_missing
+        weakly_covered = current_outline_coverage.get("weakly_covered_topics", [])
+        trigger_reasons.append(
+            f"outline topic coverage {current_outline_coverage['overall_score']:.2f}"
+            f" < {outline_min_score:.2f}"
+            f" (missing: {len(missing_topics)}, weak: {len(weakly_covered)})"
+        )
     notation_trigger = (
         notation_gate_enabled
         and bool(current_notation.get("active"))
@@ -3138,10 +4840,57 @@ def run_deep_summary(
             f"rubric score {current_rubric['overall_score']:.2f}"
             f" < {rubric_min_score:.2f}"
         )
+    # Inference-density trigger: high-risk claims without solid source support.
+    inference_trigger = not current_inference["inference_gate_passed"]
+    if inference_trigger:
+        trigger_reasons.append(
+            f"inference_density {current_inference['inference_density']:.2f}"
+            f" > {current_inference['inference_threshold']:.2f}"
+        )
 
     final_structure_info = structure_info
     final_grounding_info = grounding_info
     resynthesis_triggered = bool(resynthesis_enabled and trigger_reasons)
+    resynthesis_skipped_reason: str | None = None
+    resynthesis_pass_consumed = False
+    # Mutual exclusion: if deoverreach was accepted, skip resynthesis for this run.
+    if resynthesis_triggered and deoverreach_info.get("accepted"):
+        resynthesis_skipped_reason = "deoverreach_accepted_mutual_exclusion"
+        logger.info(
+            "Deep summary global re-synthesis skipped: de-overreach was accepted "
+            "(mutually exclusive corrective passes)."
+        )
+        resynthesis_triggered = False
+    if resynthesis_triggered and _reserve_last_pass_for_must_cover:
+        resynthesis_skipped_reason = "reserved_for_must_cover_topics"
+        logger.info(
+            "Deep summary global re-synthesis skipped: %s (missing must-cover topics=%s, profile=%s).",
+            resynthesis_skipped_reason,
+            _current_outline_missing,
+            _active_profile,
+        )
+        resynthesis_triggered = False
+    if resynthesis_triggered and not _corrective_budget_available():
+        resynthesis_skipped_reason = (
+            "profile_fast" if _active_profile == "fast" else "corrective_budget_exhausted"
+        )
+        logger.info(
+            "Deep summary global re-synthesis skipped: %s (profile=%s, passes_used=%d/%d).",
+            resynthesis_skipped_reason,
+            _active_profile,
+            _corrective_passes_used,
+            _max_corrective_passes,
+        )
+        resynthesis_triggered = False
+    if resynthesis_triggered and _latency_budget_exceeded(reserve_s=30.0):
+        resynthesis_skipped_reason = "latency_budget_exhausted"
+        logger.info(
+            "Deep summary global re-synthesis skipped: latency budget exhausted "
+            "(elapsed=%.1fs, budget=%.1fs).",
+            time.monotonic() - _start_ts,
+            _latency_budget_s,
+        )
+        resynthesis_triggered = False
     resynthesis_accepted = False
     resynthesis_quality_before: str | None = None
     resynthesis_quality_after: str | None = None
@@ -3153,12 +4902,17 @@ def run_deep_summary(
     max_weak_ratio_degradation = float(
         getattr(config, "summary_resynthesis_max_weak_ratio_degradation", 0.05)
     )
+    # max_accepted_weak_ratio was already defined above (before early backfill)
+    # to allow the early backfill ceiling check to use it. Re-use the same value.
     diversity_grounding_guard_blocked = False
+    absolute_weak_ratio_blocked = False
 
     if resynthesis_triggered:
         logger.warning(
-            "Deep summary global re-synthesis triggered: %s.",
+            "Deep summary global re-synthesis triggered: %s (remaining_passes=%d/%d).",
             "; ".join(trigger_reasons),
+            _remaining_corrective_passes(),
+            _max_corrective_passes,
         )
         feedback = _build_resynthesis_feedback(
             structure_info=structure_info,
@@ -3174,22 +4928,50 @@ def run_deep_summary(
             critical_claims_info=current_critical_claims if claims_trigger else None,
             critical_claims_min_score=claims_min_score,
         )
+        # Add outline-specific feedback when outline trigger fired.
+        if outline_trigger:
+            outline_missing = current_outline_coverage.get("missing_topics", [])
+            outline_weak = current_outline_coverage.get("weakly_covered_topics", [])
+            topic_details = topic_info.get("topic_details", {})
+            if outline_missing or outline_weak:
+                feedback += "\n- TOPIC OUTLINE GAPS:"
+                for tid in outline_missing:
+                    label = topic_details.get(tid, {}).get("label", tid)
+                    feedback += f"\n  - MISSING: {label}"
+                for tid in outline_weak:
+                    label = topic_details.get(tid, {}).get("label", tid)
+                    feedback += f"\n  - WEAK (mentioned but not explained): {label}"
         gap_contract = _build_gap_contract(
             topic_coverage=current_topic_coverage if topic_trigger else None,
             notation_info=current_notation if notation_trigger else None,
             critical_claims=current_critical_claims if claims_trigger else None,
         )
-        candidate_draft = resynthesize_deep_summary(
-            draft=final_text,
-            consolidated=consolidated,
-            partials=partials,
-            doc_name=doc_name,
-            citation_anchors=citation_anchors,
-            quality_feedback=feedback,
-            gap_contract=gap_contract,
-            min_unique_sources=min_unique_sources,
-            llm=llm_complex,
-        )
+        # Add outline gap contract.
+        if outline_trigger:
+            outline_missing = current_outline_coverage.get("missing_topics", [])
+            outline_weak = current_outline_coverage.get("weakly_covered_topics", [])
+            topic_details = topic_info.get("topic_details", {})
+            outline_gaps: list[str] = []
+            for tid in outline_missing:
+                label = topic_details.get(tid, {}).get("label", tid)
+                outline_gaps.append(f"- Tópico NÃO coberto: {label}. Explicar em detalhe.")
+            for tid in outline_weak:
+                label = topic_details.get(tid, {}).get("label", tid)
+                outline_gaps.append(f"- Tópico mencionado mas NÃO explicado: {label}. Expandir com conteúdo real.")
+            if outline_gaps:
+                gap_contract += "\n" + "\n".join(outline_gaps)
+        with _t("corrective_pass_resynthesis"):
+            candidate_draft = resynthesize_deep_summary(
+                draft=final_text,
+                consolidated=consolidated,
+                partials=partials,
+                doc_name=doc_name,
+                citation_anchors=citation_anchors,
+                quality_feedback=feedback,
+                gap_contract=gap_contract,
+                min_unique_sources=min_unique_sources,
+                llm=llm_complex,
+            )
         candidate_text, candidate_info = _postprocess_deep_summary_text(
             candidate_draft,
             citation_anchors,
@@ -3313,6 +5095,7 @@ def run_deep_summary(
             coverage_gain = False
 
         candidate_topic_coverage = score_topic_coverage(candidate_text, doc_profile)
+        candidate_outline_coverage = score_topic_outline_coverage(candidate_text, topic_info)
         candidate_notation = assess_notation_fidelity(candidate_text, doc_profile)
         candidate_critical_claims = evaluate_critical_claim_coverage(
             candidate_text,
@@ -3327,10 +5110,15 @@ def run_deep_summary(
             facet_score=float(candidate_topic_coverage.get("overall_score", 1.0)),
             claims_score=float(candidate_critical_claims.get("score", 1.0)),
             notation_score=float(candidate_notation.get("score", 1.0)),
+            outline_score=float(candidate_outline_coverage.get("overall_score", 1.0)),
         )
         topic_gain = (
             not topic_trigger
             or float(candidate_topic_coverage.get("overall_score", 1.0)) >= topic_min_score
+        )
+        outline_gain = (
+            not outline_trigger
+            or float(candidate_outline_coverage.get("overall_score", 1.0)) >= outline_min_score
         )
         notation_gain = (
             not notation_trigger
@@ -3369,12 +5157,23 @@ def run_deep_summary(
                     max_weak_ratio_degradation,
                 )
 
+        # Absolute ceiling: reject candidate outright if weak_ratio is too high.
+        if candidate_weak_ratio > max_accepted_weak_ratio:
+            absolute_weak_ratio_blocked = True
+            logger.warning(
+                "Deep summary re-synthesis guard: candidate weak_ratio %.2f exceeds "
+                "absolute ceiling %.2f — rejecting regardless of other gains.",
+                candidate_weak_ratio,
+                max_accepted_weak_ratio,
+            )
+
         hard_gain = (
             bool(candidate_info["structure_info"].get("valid"))
             or (candidate_unique >= min_unique_sources > 0)
             or (candidate_unique > current_unique)
             or (coverage_trigger and coverage_gain)
             or (topic_trigger and topic_gain)
+            or (outline_trigger and outline_gain)
             or (notation_trigger and notation_gain)
             or (claims_trigger and claims_gain)
             or (rubric_trigger and rubric_gain)
@@ -3437,6 +5236,14 @@ def run_deep_summary(
                     candidate_unique,
                 )
                 resynthesis_quality_after = str(current_sig)
+        elif absolute_weak_ratio_blocked:
+            logger.info(
+                "Deep summary global re-synthesis discarded — candidate weak_ratio %.2f "
+                "exceeds absolute ceiling %.2f.",
+                candidate_weak_ratio,
+                max_accepted_weak_ratio,
+            )
+            resynthesis_quality_after = str(current_sig)
         elif candidate_sig > current_sig and hard_gain and diversity_grounding_guard_passed:
             logger.info(
                 "Deep summary global re-synthesis accepted (quality %s → %s, "
@@ -3452,6 +5259,8 @@ def run_deep_summary(
             final_grounding_info = candidate_info["grounding_info"]
             dropped_weak_sections = int(candidate_info.get("dropped_weak_sections", dropped_weak_sections))
             resynthesis_accepted = True
+            resynthesis_pass_consumed = True
+            _consume_corrective_pass("resynthesis")
             resynthesis_quality_after = str(candidate_sig)
         elif (
             diversity_was_trigger
@@ -3477,6 +5286,8 @@ def run_deep_summary(
             final_grounding_info = candidate_info["grounding_info"]
             dropped_weak_sections = int(candidate_info.get("dropped_weak_sections", dropped_weak_sections))
             resynthesis_accepted = True
+            resynthesis_pass_consumed = True
+            _consume_corrective_pass("resynthesis")
             resynthesis_quality_after = str(candidate_sig)
         elif diversity_grounding_guard_blocked:
             logger.info(
@@ -3498,11 +5309,18 @@ def run_deep_summary(
                 candidate_unique,
             )
             resynthesis_quality_after = str(current_sig)
+        if not resynthesis_pass_consumed:
+            logger.info(
+                "Deep summary global re-synthesis: corrective pass not consumed "
+                "(candidate not accepted)."
+            )
 
     # Hard cleanup pass right before appending authoritative sources. This is a
-    # final guardrail against leaked source dumps (e.g. "Fonte 9", "[Fonte N] ...pdf").
+    # final guardrail against leaked source dumps (e.g. "Fonte 9", "[Fonte N] ...pdf")
+    # and non-canonical brackets (e.g. "[Contexto adicional, p. 4]").
     final_text = _strip_sources_section(final_text)
     final_text = _sanitize_inline_source_noise(final_text)
+    final_text = _sanitize_non_canonical_citations(final_text)
     final_text = _sanitize_before_structure_validation(final_text)
     final_text, final_citation_cleanup = validate_summary_citations(
         final_text,
@@ -3514,6 +5332,187 @@ def run_deep_summary(
             len(final_citation_cleanup.get("phantom_indices", [])),
         )
     used_source_indices = _extract_used_citation_indices(final_text, len(citation_anchors))
+
+    # ── Topic backfill step (micro-backfill, post-resynthesis) ───────────────
+    # If outline coverage still has missing topics after resynthesis/deoverreach,
+    # attempt a micro-backfill as a second opportunity. When backfill-before-
+    # deoverreach already ran and resolved all topics, this step naturally becomes
+    # a no-op (backfill_missing will be empty). When it did not fully resolve
+    # them, this step catches the remainder (budget permitting).
+    _micro_backfill_enabled = bool(getattr(config, "summary_micro_backfill_enabled", True))
+    _micro_backfill_max_topics = int(getattr(config, "summary_micro_backfill_max_topics", 3))
+    _micro_backfill_para_max = int(getattr(config, "summary_micro_backfill_paragraph_max_chars", 900))
+    backfill_info: dict[str, Any] = {
+        "triggered": False,
+        "accepted": False,
+        "missing_before": [],
+        "missing_after": [],
+        "rollback_reason": None,
+        "absolute_weak_ratio_blocked": False,
+        "weak_ratio_before": round(_compute_weak_ratio(final_grounding_info), 4),
+        "weak_ratio_after": None,
+        # micro-backfill specific
+        "paragraphs_attempted": 0,
+        "paragraphs_accepted": 0,
+        "latency_ms": 0.0,
+        "skipped_topics": [],
+    }
+    pre_backfill_outline = score_topic_outline_coverage(final_text, topic_info)
+    backfill_missing = list(pre_backfill_outline.get("missing_topics", []))
+    if (
+        backfill_missing
+        and topic_info.get("must_cover_topics")
+        and _corrective_budget_available()
+        and not _latency_budget_exceeded(reserve_s=20.0)
+        and _micro_backfill_enabled
+    ):
+        _consume_corrective_pass("micro_backfill")
+        backfill_info["triggered"] = True
+        backfill_info["missing_before"] = list(backfill_missing)
+        logger.info(
+            "Deep summary micro-backfill triggered: %d missing topic(s): %s "
+            "(corrective_pass=%d/%d, max_topics=%d).",
+            len(backfill_missing),
+            backfill_missing,
+            _corrective_passes_used,
+            _max_corrective_passes,
+            _micro_backfill_max_topics,
+        )
+        try:
+            with _t("micro_backfill"):
+                _micro_result = _run_micro_topic_backfill(
+                    final_text=final_text,
+                    missing_topics=backfill_missing,
+                    topic_info=topic_info,
+                    all_chunks=chunks,
+                    citation_anchors=citation_anchors,
+                    doc_name=doc_name,
+                    llm=llm_cheap,
+                    max_topics=_micro_backfill_max_topics,
+                    paragraph_max_chars=_micro_backfill_para_max,
+                )
+
+            backfill_info["paragraphs_attempted"] = _micro_result["paragraphs_attempted"]
+            backfill_info["paragraphs_accepted"] = _micro_result["paragraphs_accepted"]
+            backfill_info["missing_after"] = _micro_result["missing_topics_after"]
+            backfill_info["latency_ms"] = _micro_result["latency_ms"]
+            backfill_info["skipped_topics"] = _micro_result.get("skipped_topics", [])
+
+            if _micro_result["paragraphs_accepted"] > 0:
+                new_text = _micro_result["text"]
+                # Validate the enriched text: citations + grounding.
+                new_text = _sanitize_non_canonical_citations(new_text)
+                new_text, _ = validate_summary_citations(new_text, citation_anchors)
+                new_text, bf_grounding = validate_summary_grounding(
+                    new_text, citation_anchors, grounding_threshold
+                )
+                bf_weak_ratio = _compute_weak_ratio(bf_grounding)
+                backfill_info["weak_ratio_after"] = round(bf_weak_ratio, 4)
+                absolute_ceiling_exceeded = bf_weak_ratio > max_accepted_weak_ratio
+
+                if absolute_ceiling_exceeded:
+                    backfill_info["rollback_reason"] = "absolute_weak_ratio_exceeded"
+                    backfill_info["absolute_weak_ratio_blocked"] = True
+                    logger.warning(
+                        "Deep summary micro-backfill rejected: absolute weak_ratio ceiling exceeded "
+                        "(bf_weak_ratio=%.2f > ceiling=%.2f). Discarding micro-backfill.",
+                        bf_weak_ratio,
+                        max_accepted_weak_ratio,
+                    )
+                else:
+                    final_text = new_text
+                    final_grounding_info = bf_grounding
+                    used_source_indices = _extract_used_citation_indices(final_text, len(citation_anchors))
+                    backfill_info["accepted"] = True
+                    logger.info(
+                        "Deep summary micro-backfill accepted: %d/%d paragraph(s) accepted, "
+                        "missing topics %d → %d, weak_ratio %.2f → %.2f.",
+                        _micro_result["paragraphs_accepted"],
+                        _micro_result["paragraphs_attempted"],
+                        len(backfill_missing),
+                        len(_micro_result["missing_topics_after"]),
+                        backfill_info["weak_ratio_before"],
+                        bf_weak_ratio,
+                    )
+            else:
+                backfill_info["rollback_reason"] = "no_paragraphs_accepted"
+                logger.info(
+                    "Deep summary micro-backfill: no paragraphs accepted (0/%d attempted).",
+                    _micro_result["paragraphs_attempted"],
+                )
+        except Exception as exc:
+            backfill_info["rollback_reason"] = f"error: {exc}"
+            logger.warning("Deep summary micro-backfill failed: %s.", exc)
+    elif backfill_missing and topic_info.get("must_cover_topics"):
+        if not _corrective_budget_available():
+            backfill_info["rollback_reason"] = (
+                "profile_fast" if _active_profile == "fast" else "corrective_budget_exhausted"
+            )
+            logger.info(
+                "Deep summary topic backfill skipped: %s (profile=%s, passes_used=%d/%d).",
+                backfill_info["rollback_reason"],
+                _active_profile,
+                _corrective_passes_used,
+                _max_corrective_passes,
+            )
+        elif not _micro_backfill_enabled:
+            backfill_info["rollback_reason"] = "micro_backfill_disabled"
+            logger.info("Deep summary topic backfill skipped: micro_backfill disabled.")
+        else:
+            backfill_info["rollback_reason"] = "latency_budget_exhausted"
+            logger.info(
+                "Deep summary topic backfill skipped: latency budget exhausted "
+                "(elapsed=%.1fs, budget=%.1fs).",
+                time.monotonic() - _start_ts,
+                _latency_budget_s,
+            )
+
+    # Final canonical-citation guardrail: runs unconditionally after the backfill
+    # step (whether backfill was triggered or not) to ensure the answer never
+    # contains non-canonical bracket citations such as [Contexto adicional, p. 4].
+    final_text = _sanitize_non_canonical_citations(final_text)
+    final_text, _post_backfill_cleanup = validate_summary_citations(final_text, citation_anchors)
+    used_source_indices = _extract_used_citation_indices(final_text, len(citation_anchors))
+
+    # ── Absolute weak-ratio hard gate (post-backfill) ─────────────────────────
+    # Recalculate final_weak_ratio now so the gate uses the current grounding
+    # info (which may have been updated by backfill acceptance).
+    final_weak_ratio = _compute_weak_ratio(final_grounding_info)
+    final_absolute_weak_ratio_passed: bool = True
+
+    if final_weak_ratio > max_accepted_weak_ratio:
+        logger.warning(
+            "Deep summary post-backfill: final weak_ratio=%.2f exceeds absolute ceiling=%.2f. "
+            "Attempting grounding repair.",
+            final_weak_ratio,
+            max_accepted_weak_ratio,
+        )
+        # Try one last grounding repair pass when repair is enabled.
+        if repair_enabled and not _latency_budget_exceeded(reserve_s=10.0):
+            final_text, final_grounding_info = validate_summary_grounding(
+                final_text,
+                citation_anchors,
+                grounding_threshold,
+                llm=llm_cheap,
+            )
+            final_weak_ratio = _compute_weak_ratio(final_grounding_info)
+
+        if final_weak_ratio > max_accepted_weak_ratio:
+            final_absolute_weak_ratio_passed = False
+            logger.warning(
+                "Deep summary final gate: weak_ratio=%.2f still exceeds absolute ceiling=%.2f "
+                "after repair attempt. Marking as quality warning in diagnostics.",
+                final_weak_ratio,
+                max_accepted_weak_ratio,
+            )
+        else:
+            logger.info(
+                "Deep summary final gate: grounding repair reduced weak_ratio to %.2f "
+                "(ceiling=%.2f). Gate passed.",
+                final_weak_ratio,
+                max_accepted_weak_ratio,
+            )
+
     final_structure_info = validate_summary_structure(
         final_text,
         min_section_chars=structure_min_chars,
@@ -3524,8 +5523,188 @@ def run_deep_summary(
         coverage_signals,
         coverage_profile=coverage_profile,
     )
+    # final_weak_ratio already computed by the absolute weak-ratio gate above;
+    # recalculate here to pick up any repair that happened inside that gate.
     final_weak_ratio = _compute_weak_ratio(final_grounding_info)
     final_topic_coverage = score_topic_coverage(final_text, doc_profile)
+    final_outline_coverage = score_topic_outline_coverage(final_text, topic_info)
+
+    # ── Final claim-risk / inference-density snapshot (post-resynthesis/backfill) ──
+    # Recompute on the current final_text so diagnostics reflect post-repair state.
+    final_claim_risk = classify_claim_risks(final_text, citation_anchors)
+    final_claim_risk = check_formula_mode(
+        final_claim_risk, citation_anchors, _formula_mode
+    )
+    final_inference = compute_inference_density(final_claim_risk)
+    _unsupported_high_risk_sentences: list[dict[str, Any]] = []
+    for _idx, _sent in enumerate(final_claim_risk.get("sentences_classified", [])):
+        if not (_sent.get("high_risk") and _sent.get("unsupported")):
+            continue
+        _text = str(_sent.get("text", "")).strip()
+        if len(_text) > 260:
+            _text = _text[:257] + "..."
+        _unsupported_high_risk_sentences.append(
+            {
+                "index": int(_idx),
+                "risk_type": str(_sent.get("risk_type", "unknown")),
+                "low_info_only": bool(_sent.get("low_info_only", False)),
+                "cited_sources": [
+                    f"Fonte {int(i) + 1}" for i in (_sent.get("cited_indices") or [])
+                ],
+                "text": _text,
+            }
+        )
+    _unsupported_high_risk_sentences = _unsupported_high_risk_sentences[:8]
+
+    # ── Extra outline-repair pass ─────────────────────────────────────────────
+    # If must_cover_topics are defined and some are still missing after backfill,
+    # attempt one more micro-backfill pass focused exclusively on those topics.
+    # This stays bounded (no global rewrite): we only accept if structure is OK,
+    # grounding is within guardrails, and at least one missing topic is resolved.
+    _extra_backfill_info: dict[str, Any] = {"triggered": False, "accepted": False, "missing_after": []}
+    _final_missing = list(final_outline_coverage.get("missing_topics", []))
+    _must_cover = list(final_outline_coverage.get("must_cover_topics", []))
+    if (
+        _final_missing
+        and _must_cover
+        and _corrective_budget_available()
+        and not _latency_budget_exceeded(reserve_s=5.0)
+    ):
+        _consume_corrective_pass("micro_backfill_extra_outline")
+        logger.info(
+            "Deep summary extra outline-repair micro-pass: %d missing must-cover topic(s): %s "
+            "(corrective_pass=%d/%d).",
+            len(_final_missing),
+            _final_missing,
+            _corrective_passes_used,
+            _max_corrective_passes,
+        )
+        _extra_backfill_info["triggered"] = True
+        try:
+            with _t("micro_backfill_extra_outline"):
+                _extra_micro = _run_micro_topic_backfill(
+                    final_text=final_text,
+                    missing_topics=_final_missing,
+                    topic_info=topic_info,
+                    all_chunks=chunks,
+                    citation_anchors=citation_anchors,
+                    doc_name=doc_name,
+                    llm=llm_cheap,
+                    max_topics=_micro_backfill_max_topics,
+                    paragraph_max_chars=_micro_backfill_para_max,
+                )
+            _extra_backfill_info["paragraphs_attempted"] = int(
+                _extra_micro.get("paragraphs_attempted", 0)
+            )
+            _extra_backfill_info["paragraphs_accepted"] = int(
+                _extra_micro.get("paragraphs_accepted", 0)
+            )
+            _extra_backfill_info["latency_ms"] = float(_extra_micro.get("latency_ms", 0.0))
+            _extra_backfill_info["missing_before"] = list(_final_missing)
+
+            _extra_bf_text_raw = str(_extra_micro.get("text") or "").strip()
+            if _extra_bf_text_raw:
+                _ebf = _strip_sources_section(_extra_bf_text_raw)
+                _ebf = _sanitize_inline_source_noise(_ebf)
+                _ebf = _sanitize_non_canonical_citations(_ebf)
+                _ebf = _sanitize_before_structure_validation(_ebf)
+                _ebf, _ = validate_summary_citations(_ebf, citation_anchors)
+                _ebf_structure = validate_summary_structure(_ebf, min_section_chars=structure_min_chars)
+                _ebf, _ebf_grounding = validate_summary_grounding(
+                    _ebf,
+                    citation_anchors,
+                    grounding_threshold,
+                    llm=llm_cheap if repair_enabled else None,
+                )
+                _ebf_weak_ratio = _compute_weak_ratio(_ebf_grounding)
+                _ebf_outline = score_topic_outline_coverage(_ebf, topic_info)
+                _ebf_missing = list(_ebf_outline.get("missing_topics", []))
+                _extra_backfill_info["missing_after"] = list(_ebf_missing)
+
+                _ebf_structure_ok = not _is_structure_degraded(
+                    validate_summary_structure(final_text, min_section_chars=structure_min_chars),
+                    _ebf_structure,
+                )
+                _ebf_grounding_ok = _ebf_weak_ratio <= (
+                    _compute_weak_ratio(final_grounding_info) + max_weak_ratio_degradation
+                ) and _ebf_weak_ratio <= max_accepted_weak_ratio
+                _ebf_improved = len(_ebf_missing) < len(_final_missing)
+
+                if _ebf_structure_ok and _ebf_grounding_ok and _ebf_improved:
+                    final_text = _ebf
+                    final_grounding_info = _ebf_grounding
+                    final_weak_ratio = _ebf_weak_ratio
+                    used_source_indices = _extract_used_citation_indices(final_text, len(citation_anchors))
+                    _extra_backfill_info["accepted"] = True
+                    # Recompute outline coverage with the repaired text.
+                    final_outline_coverage = _ebf_outline
+                    logger.info(
+                        "Deep summary extra outline-repair accepted: missing topics %d → %d "
+                        "(paragraphs=%d/%d).",
+                        len(_final_missing),
+                        len(_ebf_missing),
+                        _extra_backfill_info["paragraphs_accepted"],
+                        _extra_backfill_info["paragraphs_attempted"],
+                    )
+                else:
+                    logger.info(
+                        "Deep summary extra outline-repair rolled back "
+                        "(structure_ok=%s, grounding_ok=%s, improved=%s).",
+                        _ebf_structure_ok,
+                        _ebf_grounding_ok,
+                        _ebf_improved,
+                    )
+            else:
+                logger.info(
+                    "Deep summary extra outline-repair micro-pass: no candidate text generated "
+                    "(paragraphs=%d/%d).",
+                    _extra_backfill_info["paragraphs_accepted"],
+                    _extra_backfill_info["paragraphs_attempted"],
+                )
+        except Exception as _ebf_exc:
+            logger.warning("Deep summary extra outline-repair failed: %s.", _ebf_exc)
+    elif _final_missing and _must_cover:
+        if not _corrective_budget_available():
+            _skip_reason = (
+                "profile_fast" if _active_profile == "fast" else "corrective_budget_exhausted"
+            )
+            logger.info(
+                "Deep summary extra outline-repair skipped: %s "
+                "(profile=%s, passes_used=%d/%d).",
+                _skip_reason,
+                _active_profile,
+                _corrective_passes_used,
+                _max_corrective_passes,
+            )
+        else:
+            logger.info(
+                "Deep summary extra outline-repair skipped: latency budget exhausted "
+                "(elapsed=%.1fs, budget=%.1fs).",
+                time.monotonic() - _start_ts,
+                _latency_budget_s,
+            )
+
+    # If extra outline-repair changed final_text, refresh all downstream metrics.
+    # Without this refresh, diagnostics/final gates could reflect stale state.
+    if _extra_backfill_info.get("accepted"):
+        final_structure_info = validate_summary_structure(
+            final_text,
+            min_section_chars=structure_min_chars,
+        )
+        final_coverage = score_coverage(
+            final_text,
+            coverage_signals,
+            coverage_profile=coverage_profile,
+        )
+        final_weak_ratio = _compute_weak_ratio(final_grounding_info)
+        final_topic_coverage = score_topic_coverage(final_text, doc_profile)
+        final_outline_coverage = score_topic_outline_coverage(final_text, topic_info)
+        final_claim_risk = classify_claim_risks(final_text, citation_anchors)
+        final_claim_risk = check_formula_mode(
+            final_claim_risk, citation_anchors, _formula_mode
+        )
+        final_inference = compute_inference_density(final_claim_risk)
+
     final_notation = assess_notation_fidelity(final_text, doc_profile)
     final_critical_claims = evaluate_critical_claim_coverage(final_text, doc_profile)
     final_rubric = compute_summary_rubric(
@@ -3537,6 +5716,7 @@ def run_deep_summary(
         facet_score=float(final_topic_coverage.get("overall_score", 1.0)),
         claims_score=float(final_critical_claims.get("score", 1.0)),
         notation_score=float(final_notation.get("score", 1.0)),
+        outline_score=float(final_outline_coverage.get("overall_score", 1.0)),
     )
     logger.info(
         "Deep summary sources: %d/%d anchor(s) cited in final text.",
@@ -3555,6 +5735,8 @@ def run_deep_summary(
     )
     if sources_section:
         final_text = final_text.rstrip() + "\n\n" + sources_section
+
+    final_absolute_weak_ratio_passed = final_weak_ratio <= max_accepted_weak_ratio
 
     diagnostics = {
         "coverage": {
@@ -3580,6 +5762,7 @@ def run_deep_summary(
         "document_profile": {
             "required_facets": list(doc_profile.get("required_facets", [])),
             "critical_required_facets": list(doc_profile.get("critical_required_facets", [])),
+            "pdf_outline_sections": len(pdf_outline_entries),
             "facet_hits": {
                 facet: int((doc_profile.get("facets", {}).get(facet, {}) or {}).get("hits", 0))
                 for facet in _FACET_ORDER
@@ -3597,6 +5780,17 @@ def run_deep_summary(
             "missing_facets": list(final_topic_coverage.get("missing_facets", [])),
             "gate_enabled": topic_gate_enabled,
             "min_score": topic_min_score,
+        },
+        "outline_coverage": {
+            "score": float(final_outline_coverage.get("overall_score", 1.0)),
+            "detected_topics": list(final_outline_coverage.get("detected_topics", [])),
+            "must_cover_topics": list(final_outline_coverage.get("must_cover_topics", [])),
+            "covered_topics": list(final_outline_coverage.get("covered_topics", [])),
+            "missing_topics": list(final_outline_coverage.get("missing_topics", [])),
+            "weakly_covered_topics": list(final_outline_coverage.get("weakly_covered_topics", [])),
+            "topic_scores": dict(final_outline_coverage.get("topic_scores", {})),
+            "gate_enabled": coverage_gate_enabled,
+            "min_score": outline_min_score,
         },
         "notation_fidelity": {
             "score": float(final_notation.get("score", 1.0)),
@@ -3661,11 +5855,15 @@ def run_deep_summary(
         "resynthesis": {
             "enabled": resynthesis_enabled,
             "triggered": resynthesis_triggered,
+            "pass_consumed": bool(resynthesis_pass_consumed),
+            "skipped_reason": resynthesis_skipped_reason,
             "trigger_reasons": list(trigger_reasons),
             "topic_triggered": bool(topic_trigger),
+            "outline_triggered": bool(outline_trigger),
             "notation_triggered": bool(notation_trigger),
             "critical_claims_triggered": bool(claims_trigger),
             "rubric_triggered": bool(rubric_trigger),
+            "inference_triggered": bool(inference_trigger),
             "diversity_was_primary_trigger": any(
                 "citation diversity" in r for r in trigger_reasons
             ),
@@ -3678,11 +5876,205 @@ def run_deep_summary(
             "grounding_weak_ratio_candidate": resynthesis_weak_ratio_candidate,
             "grounding_weak_ratio_delta": resynthesis_weak_ratio_delta,
             "max_allowed_weak_ratio_degradation": round(max_weak_ratio_degradation, 4),
+            "max_accepted_weak_ratio": round(max_accepted_weak_ratio, 4),
+            "absolute_weak_ratio_blocked": absolute_weak_ratio_blocked,
             "diversity_grounding_guard_blocked": diversity_grounding_guard_blocked,
         },
+        "backfill": backfill_info,
+        "extra_outline_repair": _extra_backfill_info,
+        "claim_risk": {
+            "sentences_total": int(final_claim_risk.get("sentences_total", 0)),
+            "high_risk_count": int(final_claim_risk.get("high_risk_count", 0)),
+            "unsupported_high_risk_count": int(
+                final_claim_risk.get("unsupported_high_risk_count", 0)
+            ),
+            "low_info_source_claims_count": int(
+                final_claim_risk.get("low_info_source_claims_count", 0)
+            ),
+            "low_info_source_claim_indices": list(
+                final_claim_risk.get("low_info_source_claim_indices", [])
+            ),
+            "unsupported_high_risk_sentences": list(_unsupported_high_risk_sentences),
+            "unsupported_high_risk_low_info_only_count": int(
+                final_claim_risk.get("unsupported_high_risk_low_info_only_count", 0)
+            ),
+            "require_non_low_info_for_high_risk": bool(
+                getattr(config, "summary_require_non_low_info_for_high_risk", True)
+            ),
+            "formula_claims_total": int(final_claim_risk.get("formula_claims_total", 0)),
+            "formula_claims_supported": int(
+                final_claim_risk.get("formula_claims_supported", 0)
+            ),
+            "formula_claims_downgraded_to_concept": int(
+                final_claim_risk.get("formula_claims_downgraded_to_concept", 0)
+            ),
+            "formula_mode": _formula_mode,
+        },
+        "micro_backfill": {
+            "triggered": bool(backfill_info.get("triggered", False)),
+            "accepted": bool(backfill_info.get("accepted", False)),
+            "missing_topics_before": list(backfill_info.get("missing_before", [])),
+            "missing_topics_after": list(backfill_info.get("missing_after", [])),
+            "paragraphs_attempted": int(backfill_info.get("paragraphs_attempted", 0)),
+            "paragraphs_accepted": int(backfill_info.get("paragraphs_accepted", 0)),
+            "latency_ms": float(backfill_info.get("latency_ms", 0.0)),
+            "rollback_reason": backfill_info.get("rollback_reason"),
+            "skipped_topics": list(backfill_info.get("skipped_topics", [])),
+            "max_topics_limit": int(getattr(config, "summary_micro_backfill_max_topics", 3)),
+        },
+        "early_micro_backfill": {
+            "triggered": bool(early_backfill_info.get("triggered", False)),
+            "accepted": bool(early_backfill_info.get("accepted", False)),
+            "missing_topics_before": list(early_backfill_info.get("missing_before", [])),
+            "missing_topics_after": list(early_backfill_info.get("missing_after", [])),
+            "paragraphs_attempted": int(early_backfill_info.get("paragraphs_attempted", 0)),
+            "paragraphs_accepted": int(early_backfill_info.get("paragraphs_accepted", 0)),
+            "latency_ms": float(early_backfill_info.get("latency_ms", 0.0)),
+            "skipped_reason": early_backfill_info.get("skipped_reason"),
+            "backfill_before_deoverreach_enabled": _backfill_before_deoverreach,
+        },
+        "inference_density": {
+            "inference_density": final_inference["inference_density"],
+            "inference_threshold": final_inference["inference_threshold"],
+            "inference_gate_passed": final_inference["inference_gate_passed"],
+            "unsupported_claims_count": final_inference["unsupported_claims_count"],
+        },
+        "deoverreach": deoverreach_info,
+        "corrective_scheduler": {
+            "reserve_must_cover_pass_enabled": bool(_reserve_must_cover_pass_enabled),
+            "reserve_last_pass_for_must_cover": bool(_reserve_last_pass_for_must_cover),
+            "must_cover_missing_at_scheduler": list(_current_outline_missing),
+            "backfill_before_deoverreach": _backfill_before_deoverreach,
+        },
+        "corrective_timeline": list(_corrective_timeline),
+        "final": {
+            "absolute_weak_ratio_ceiling": round(max_accepted_weak_ratio, 4),
+            "absolute_weak_ratio_passed": final_absolute_weak_ratio_passed,
+            "final_weak_ratio": round(final_weak_ratio, 4),
+            "inference_density": final_inference["inference_density"],
+            "missing_topics": list(final_outline_coverage.get("missing_topics", [])),
+            # Populated below after evaluating all blocking conditions.
+            "accepted": True,
+            "blocking_reasons": [],
+        },
+        # ── Execution metadata ──────────────────────────────────────────────
+        "profile_used": _active_profile,
+        "corrective_passes_used": _corrective_passes_used,
+        "max_corrective_passes": _max_corrective_passes,
+        "style_polish_enabled": _style_polish_enabled,
     }
     final_gate_enabled = bool(getattr(config, "summary_final_gate_enabled", False))
     final_gate_reasons: list[str] = []
+
+    # ── Unconditional blocking-reason collection ──────────────────────────────
+    # These conditions are always evaluated regardless of final_gate_enabled.
+    # They populate diagnostics["final"]["blocking_reasons"] so that callers can
+    # detect non-conformance even when the strict gate is disabled.
+    _final_blocking_reasons: list[str] = []
+
+    # 1. Absolute weak-ratio ceiling — already evaluated above.
+    if not bool(final_structure_info.get("valid", False)):
+        _structure_reason = (
+            "structure_invalid: "
+            f"{str(final_structure_info.get('structure_failure_reason', '')).strip() or 'unknown'}"
+        )
+        _final_blocking_reasons.append(_structure_reason)
+        if final_gate_enabled:
+            final_gate_reasons.append("structure_invalid")
+        else:
+            logger.warning(
+                "Deep summary quality warning: %s (final gate disabled, output delivered).",
+                _structure_reason,
+            )
+
+    if not final_absolute_weak_ratio_passed:
+        ceiling_reason = (
+            f"final_weak_ratio_exceeded_absolute_ceiling="
+            f"{final_weak_ratio:.2f}>{max_accepted_weak_ratio:.2f}"
+        )
+        _final_blocking_reasons.append(ceiling_reason)
+        if final_gate_enabled:
+            final_gate_reasons.append(ceiling_reason)
+        else:
+            logger.warning(
+                "Deep summary quality warning: %s (final gate disabled, output delivered).",
+                ceiling_reason,
+            )
+
+    # 2. Missing must-cover topics — hard gate unconditional on final_gate_enabled.
+    #    outline_coverage.missing_topics is the source of truth; a non-empty list
+    #    means the pipeline failed to cover at least one mandatory topic.
+    _outline_missing_final = list(final_outline_coverage.get("missing_topics", []))
+    _outline_must_cover_final = list(final_outline_coverage.get("must_cover_topics", []))
+    if _outline_must_cover_final and _outline_missing_final:
+        _missing_reason = (
+            f"outline_missing_topics_not_allowed: missing={_outline_missing_final}"
+        )
+        _final_blocking_reasons.append(_missing_reason)
+        if final_gate_enabled:
+            final_gate_reasons.append(_missing_reason)
+        else:
+            logger.warning(
+                "Deep summary quality warning: %s (final gate disabled, output delivered).",
+                _missing_reason,
+            )
+
+    # 3. Inference-density gate — high-risk claims without solid source support.
+    if not final_inference["inference_gate_passed"]:
+        _inference_reason = (
+            f"inference_density_exceeded: "
+            f"{final_inference['inference_density']:.4f}"
+            f" > {final_inference['inference_threshold']:.4f}"
+        )
+        _final_blocking_reasons.append(_inference_reason)
+        if final_gate_enabled:
+            final_gate_reasons.append(_inference_reason)
+        else:
+            logger.warning(
+                "Deep summary quality warning: %s (final gate disabled, output delivered).",
+                _inference_reason,
+            )
+
+    # 4. Unsupported high-risk claims (quantitative/comparative/formula with only
+    #    low-info sources or no citation at all).
+    _unsupported_hr = int(final_claim_risk.get("unsupported_high_risk_count", 0))
+    if _unsupported_hr > 0:
+        _hr_reason = (
+            f"unsupported_high_risk_claims: count={_unsupported_hr}"
+        )
+        _final_blocking_reasons.append(_hr_reason)
+        if final_gate_enabled:
+            final_gate_reasons.append(_hr_reason)
+        else:
+            logger.warning(
+                "Deep summary quality warning: %s (final gate disabled, output delivered).",
+                _hr_reason,
+            )
+
+    # 4b. High-risk claims supported exclusively by low-info sources.
+    #     Reported as a separate blocking reason for auditability. Only fires when
+    #     summary_require_non_low_info_for_high_risk=True (already reflected in
+    #     unsupported_high_risk_count, but we emit the explicit reason here).
+    _unsupported_li_only = int(
+        final_claim_risk.get("unsupported_high_risk_low_info_only_count", 0)
+    )
+    _require_non_low = bool(getattr(config, "summary_require_non_low_info_for_high_risk", True))
+    if _require_non_low and _unsupported_li_only > 0:
+        _li_reason = (
+            f"unsupported_high_risk_low_info_only: count={_unsupported_li_only}"
+        )
+        # Only add if not already covered by reason 4 (avoids duplicate).
+        if _li_reason not in _final_blocking_reasons:
+            _final_blocking_reasons.append(_li_reason)
+        logger.warning(
+            "Deep summary: %d high-risk claim(s) backed only by low-info sources.",
+            _unsupported_li_only,
+        )
+
+    # Update diagnostics["final"] with conformance result.
+    diagnostics["final"]["accepted"] = len(_final_blocking_reasons) == 0
+    diagnostics["final"]["blocking_reasons"] = list(_final_blocking_reasons)
+
     if final_gate_enabled:
         if not bool(final_structure_info.get("valid", False)):
             final_gate_reasons.append("structure_invalid")
@@ -3708,6 +6100,15 @@ def run_deep_summary(
         ):
             final_gate_reasons.append(
                 f"facet_coverage={float(final_topic_coverage.get('overall_score', 1.0)):.2f}<{topic_min_score:.2f}"
+            )
+        if (
+            coverage_gate_enabled
+            and bool(final_outline_coverage.get("must_cover_topics"))
+            and float(final_outline_coverage.get("overall_score", 1.0)) < outline_min_score
+        ):
+            final_gate_reasons.append(
+                f"outline_coverage={float(final_outline_coverage.get('overall_score', 1.0)):.2f}<{outline_min_score:.2f}"
+                f" missing={final_outline_coverage.get('missing_topics', [])}"
             )
         if (
             notation_gate_enabled
@@ -3749,12 +6150,15 @@ def run_deep_summary(
         )
         sources_section = ""
     logger.info(
-        "Deep summary diagnostics: profile=%s coverage=%.2f facet=%.2f claims=%.2f "
-        "notation=%.2f rubric=%.2f structure=%s weak_ratio=%.2f sources=%d/%d "
-        "resynthesis=%s.",
+        "Deep summary diagnostics: profile=%s coverage=%.2f facet=%.2f outline=%.2f "
+        "claims=%.2f notation=%.2f rubric=%.2f structure=%s weak_ratio=%.2f "
+        "sources=%d/%d resynthesis=%s missing_topics=%s "
+        "inference_density=%.4f unsupported_hr=%d deoverreach=%s "
+        "final_accepted=%s blocking=%s.",
         diagnostics["coverage_profile"]["name"],
         diagnostics["coverage"]["overall_coverage_score"],
         diagnostics["topic_coverage"]["score"],
+        diagnostics["outline_coverage"]["score"],
         diagnostics["critical_claims"]["score"],
         diagnostics["notation_fidelity"]["score"],
         diagnostics["rubric"]["overall_score"],
@@ -3763,13 +6167,37 @@ def run_deep_summary(
         diagnostics["citations"]["unique_sources_used"],
         diagnostics["citations"]["anchors_total"],
         "accepted" if diagnostics["resynthesis"]["accepted"] else "not_accepted",
+        diagnostics["outline_coverage"]["missing_topics"] or "none",
+        diagnostics["inference_density"]["inference_density"],
+        diagnostics["claim_risk"]["unsupported_high_risk_count"],
+        "accepted" if diagnostics["deoverreach"]["accepted"] else "not_triggered"
+        if not diagnostics["deoverreach"]["triggered"] else "rejected",
+        diagnostics["final"]["accepted"],
+        diagnostics["final"]["blocking_reasons"] or "none",
     )
 
-    logger.info("Deep summary pipeline completed for doc='%s'.", doc_name)
+    # ── Latency / timing ─────────────────────────────────────────────────────
+    _total_ms = round((time.monotonic() - _start_ts) * 1000, 1)
+    diagnostics["latency"] = {
+        "total_ms": _total_ms,
+        "stage_timings_ms": dict(_stage_timings),
+    }
+
+    logger.info(
+        "Deep summary pipeline completed for doc='%s' in %.1fs "
+        "(profile=%s, corrective_passes=%d/%d).",
+        doc_name,
+        _total_ms / 1000,
+        _active_profile,
+        _corrective_passes_used,
+        _max_corrective_passes,
+    )
     result = {
         "answer": final_text,
         "sources_section": sources_section,
     }
-    if include_diagnostics:
+    # Always attach diagnostics in strict profile so the route/caller can
+    # evaluate the fail-closed gate even when include_diagnostics=False.
+    if include_diagnostics or _active_profile == "strict":
         result["diagnostics"] = diagnostics
     return result
