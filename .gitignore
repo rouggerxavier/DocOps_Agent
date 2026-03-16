@@ -20,7 +20,10 @@ env/
 
 # Data and artifacts (persisted locally, not committed)
 data/chroma/
+data/bm25/
+data/app.db
 artifacts/
+uploads/
 
 # IDE
 .vscode/
