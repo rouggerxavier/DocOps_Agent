@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
-import { FileText, Layers, BookOpen, Zap } from 'lucide-react'
+import { CalendarClock, FileText, Layers, BookOpen, Zap } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { apiClient, type DocItem } from '@/api/client'
+import { apiClient, type CalendarOverview, type DocItem } from '@/api/client'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 
@@ -43,6 +43,11 @@ export function Dashboard() {
     queryFn: apiClient.listDocs,
     retry: 1,
   })
+  const { data: calendarOverview, isLoading: isCalendarLoading } = useQuery<CalendarOverview>({
+    queryKey: ['calendar-overview', 'today'],
+    queryFn: () => apiClient.getCalendarOverview(),
+    retry: 1,
+  })
 
   const totalChunks = docs?.reduce((sum, d) => sum + d.chunk_count, 0) ?? 0
 
@@ -64,7 +69,7 @@ export function Dashboard() {
       )}
 
       {/* Stats */}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           title="Documentos Indexados"
           value={docs?.length ?? 0}
@@ -86,6 +91,64 @@ export function Dashboard() {
           description="FastAPI + Chroma"
           loading={isLoading}
         />
+        <StatCard
+          title="Lembretes Hoje"
+          value={calendarOverview?.today_reminders.length ?? 0}
+          icon={CalendarClock}
+          description="Agenda do dia"
+          loading={isCalendarLoading}
+        />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-zinc-400">Agora no Cronograma</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {isCalendarLoading ? (
+              <Skeleton className="h-8 w-3/4" />
+            ) : calendarOverview?.current_schedule_item ? (
+              <>
+                <p className="text-lg font-semibold text-emerald-300">
+                  {calendarOverview.current_schedule_item.title}
+                </p>
+                <p className="text-xs text-zinc-500">
+                  {calendarOverview.current_schedule_item.start_time} às {calendarOverview.current_schedule_item.end_time}
+                </p>
+              </>
+            ) : (
+              <p className="text-sm text-zinc-500">Sem atividade fixa neste horário.</p>
+            )}
+            {!isCalendarLoading && calendarOverview?.next_schedule_item && (
+              <p className="mt-2 text-xs text-zinc-400">
+                Próximo: {calendarOverview.next_schedule_item.title} às {calendarOverview.next_schedule_item.start_time}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium text-zinc-400">Lembretes de Hoje</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {isCalendarLoading && [1, 2].map(i => <Skeleton key={i} className="h-6 w-full" />)}
+            {!isCalendarLoading && (!calendarOverview || calendarOverview.today_reminders.length === 0) && (
+              <p className="text-sm text-zinc-500">Nenhum lembrete para hoje.</p>
+            )}
+            {!isCalendarLoading && calendarOverview?.today_reminders.slice(0, 3).map(rem => (
+              <div key={rem.id} className="rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2">
+                <p className="text-sm text-zinc-200">{rem.title}</p>
+                <p className="text-xs text-zinc-500">
+                  {rem.all_day
+                    ? 'Dia inteiro'
+                    : new Date(rem.starts_at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}
+                  {rem.note ? ` • ${rem.note}` : ''}
+                </p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
       </div>
 
       {/* Document list preview */}
@@ -147,7 +210,7 @@ export function Dashboard() {
       {/* Quick actions */}
       <div>
         <h2 className="mb-4 text-lg font-semibold text-zinc-100">Ações Rápidas</h2>
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-4">
           <Button variant="outline" className="h-auto flex-col gap-2 py-4" asChild>
             <Link to="/ingest">
               <FileText className="h-5 w-5" />
@@ -164,6 +227,12 @@ export function Dashboard() {
             <Link to="/artifacts">
               <Layers className="h-5 w-5" />
               <span>Ver Artefatos</span>
+            </Link>
+          </Button>
+          <Button variant="outline" className="h-auto flex-col gap-2 py-4" asChild>
+            <Link to="/schedule">
+              <CalendarClock className="h-5 w-5" />
+              <span>Calendário</span>
             </Link>
           </Button>
         </div>

@@ -11,9 +11,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from docops.api.schemas import ChatRequest, ChatResponse, SourceItem
 from docops.auth.dependencies import get_current_user
 from docops.config import config
+from docops.db.database import get_db
 from docops.db.models import User
 from docops.logging import get_logger
 from docops.rag.citations import _strip_embedding_header
+from docops.services.calendar_assistant import maybe_answer_calendar_query
+from sqlalchemy.orm import Session
 
 logger = get_logger("docops.api.chat")
 router = APIRouter()
@@ -79,16 +82,19 @@ def _run_chat(
     top_k: int | None,
     user_id: int = 0,
     doc_names: list[str] | None = None,
+    strict_grounding: bool = False,
 ) -> dict:
     from docops.graph.graph import run
 
-    extra = None
+    extra = {}
     if doc_names:
         clean_doc_names = [str(name).strip() for name in doc_names if str(name).strip()]
         if clean_doc_names:
-            extra = {"doc_names": clean_doc_names}
+            extra["doc_names"] = clean_doc_names
+    if strict_grounding:
+        extra["strict_grounding"] = True
 
-    return dict(run(query=message, top_k=top_k, user_id=user_id, extra=extra))
+    return dict(run(query=message, top_k=top_k, user_id=user_id, extra=extra or None))
 
 
 async def _invoke_chat_runner(
@@ -96,24 +102,47 @@ async def _invoke_chat_runner(
     top_k: int | None,
     user_id: int,
     doc_names: list[str] | None = None,
+    strict_grounding: bool = False,
 ) -> dict:
     """Call _run_chat with compatibility for legacy monkeypatch signatures."""
     try:
-        return await asyncio.to_thread(_run_chat, message, top_k, user_id, doc_names)
+        return await asyncio.to_thread(
+            _run_chat,
+            message,
+            top_k,
+            user_id,
+            doc_names,
+            strict_grounding,
+        )
     except TypeError:
         try:
-            return await asyncio.to_thread(_run_chat, message, top_k, user_id)
+            return await asyncio.to_thread(_run_chat, message, top_k, user_id, doc_names)
         except TypeError:
-            return await asyncio.to_thread(_run_chat, message, top_k)
+            try:
+                return await asyncio.to_thread(_run_chat, message, top_k, user_id)
+            except TypeError:
+                return await asyncio.to_thread(_run_chat, message, top_k)
 
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     body: ChatRequest,
     current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> ChatResponse:
     """Run chat pipeline with retrieval scoped to current_user."""
     logger.info("Chat request from user %s: '%s'", current_user.id, body.message[:80])
+
+    calendar_answer = maybe_answer_calendar_query(body.message, current_user.id, db)
+    if calendar_answer:
+        return ChatResponse(
+            answer=calendar_answer["answer"],
+            sources=[],
+            intent=calendar_answer.get("intent", "calendar"),
+            session_id=body.session_id,
+            grounding=None,
+            calendar_action=calendar_answer.get("calendar_action"),
+        )
 
     try:
         state = await _invoke_chat_runner(
@@ -121,6 +150,7 @@ async def chat(
             body.top_k,
             current_user.id,
             body.doc_names,
+            body.strict_grounding,
         )
     except EnvironmentError as exc:
         raise HTTPException(status_code=503, detail=str(exc))

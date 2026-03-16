@@ -83,6 +83,7 @@ class ChatRequest(BaseModel):
     top_k: Optional[int] = Field(default=None, ge=1, le=50)
     doc_names: List[str] = Field(default_factory=list)
     debug_grounding: bool = False
+    strict_grounding: bool = False
 
 
 class ChatResponse(BaseModel):
@@ -91,6 +92,7 @@ class ChatResponse(BaseModel):
     intent: str
     session_id: Optional[str] = None
     grounding: Optional[dict[str, Any]] = None
+    calendar_action: Optional[dict[str, Any]] = None
 
 
 # ── /api/summarize ────────────────────────────────────────────────────────────
@@ -168,3 +170,87 @@ class ArtifactItem(BaseModel):
 class HealthResponse(BaseModel):
     status: str = "ok"
     version: str = "0.1.0"
+
+
+# -- /api/jobs ----------------------------------------------------------------
+
+class JobCreateResponse(BaseModel):
+    job_id: str
+    status: str
+    progress: int
+    stage: str
+
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    progress: int
+    stage: str
+    result: Optional[dict[str, Any]] = None
+    error: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+# -- /api/calendar ------------------------------------------------------------
+
+class ReminderCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    starts_at: datetime
+    ends_at: Optional[datetime] = None
+    note: Optional[str] = Field(default=None, max_length=2048)
+    all_day: bool = False
+
+
+class ReminderUpdateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    starts_at: datetime
+    ends_at: Optional[datetime] = None
+    note: Optional[str] = Field(default=None, max_length=2048)
+    all_day: bool = False
+
+
+class ReminderItem(BaseModel):
+    id: int
+    title: str
+    starts_at: datetime
+    ends_at: Optional[datetime] = None
+    note: Optional[str] = None
+    all_day: bool = False
+
+
+class ScheduleCreateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    day_of_week: int = Field(ge=0, le=6)
+    start_time: str = Field(pattern=r"^\d{2}:\d{2}$")
+    end_time: str = Field(pattern=r"^\d{2}:\d{2}$")
+    note: Optional[str] = Field(default=None, max_length=1024)
+    active: bool = True
+
+
+class ScheduleUpdateRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=255)
+    day_of_week: int = Field(ge=0, le=6)
+    start_time: str = Field(pattern=r"^\d{2}:\d{2}$")
+    end_time: str = Field(pattern=r"^\d{2}:\d{2}$")
+    note: Optional[str] = Field(default=None, max_length=1024)
+    active: bool = True
+
+
+class ScheduleItem(BaseModel):
+    id: int
+    title: str
+    day_of_week: int
+    start_time: str
+    end_time: str
+    note: Optional[str] = None
+    active: bool
+
+
+class CalendarOverviewResponse(BaseModel):
+    date: str
+    now_iso: str
+    today_reminders: List[ReminderItem]
+    today_schedule: List[ScheduleItem]
+    current_schedule_item: Optional[ScheduleItem] = None
+    next_schedule_item: Optional[ScheduleItem] = None

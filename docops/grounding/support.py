@@ -144,13 +144,26 @@ def _heuristic_support(claim: str, evidence: str) -> SupportResult:
     return SupportResult(label=label, score=score, rationale=rationale)
 
 
-_LLM_PROMPT = (
-    "You are a strict grounding judge.\n"
-    "Given CLAIM and EVIDENCE, decide if evidence supports claim.\n"
-    "Return JSON only: "
-    "{\"label\":\"SUPPORTED|NOT_SUPPORTED|UNCLEAR\",\"score\":0.0,\"rationale\":\"...\"}\n\n"
-    "CLAIM: {claim}\n\nEVIDENCE: {evidence}"
-)
+_LLM_PROMPT = """\
+Você é um juiz de grounding semântico. Avalie se a EVIDÊNCIA suporta a AFIRMAÇÃO.
+
+DEFINIÇÕES:
+- SUPPORTED: a evidência confirma ou contém informação que sustenta a afirmação, mesmo que parafraseada.
+- NOT_SUPPORTED: a evidência contradiz a afirmação, ou não contém nenhuma informação relevante.
+- UNCLEAR: a evidência é parcialmente relevante mas insuficiente para confirmar ou negar.
+
+REGRAS:
+- Julgue pelo SIGNIFICADO semântico, não por correspondência de palavras-chave.
+- Uma paráfrase válida conta como SUPPORTED.
+- Se a evidência for vaga ou incompleta, use UNCLEAR.
+- score: 0.0 a 1.0, onde 1.0 = completamente suportado.
+- Responda APENAS com JSON válido, sem texto antes ou depois.
+
+FORMATO: {{"label": "SUPPORTED|NOT_SUPPORTED|UNCLEAR", "score": 0.0, "rationale": "..."}}
+
+AFIRMAÇÃO: {claim}
+
+EVIDÊNCIA: {evidence}"""
 
 
 def _llm_support(claim: str, evidence: str) -> SupportResult:

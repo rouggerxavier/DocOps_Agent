@@ -1,12 +1,85 @@
-import { useState, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Upload, FolderOpen, CheckCircle, X, FileText } from 'lucide-react'
+import { Upload, FolderOpen, CheckCircle, X, FileText, Loader2, Layers } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { apiClient, type IngestResponse } from '@/api/client'
 import { cn } from '@/lib/utils'
+import * as XLSX from 'xlsx'
+
+type TabularPreview = {
+  fileName: string
+  headers: string[]
+  rows: string[][]
+}
+
+async function buildPreview(file: File): Promise<TabularPreview | null> {
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+  if (!['csv', 'xlsx', 'xls', 'ods'].includes(ext)) return null
+
+  if (ext === 'csv') {
+    const text = await file.text()
+    const lines = text.split(/\r?\n/).filter(Boolean).slice(0, 21)
+    const rows = lines.map(line => line.split(',').map(cell => cell.trim()))
+    const headers = rows[0] ?? []
+    return { fileName: file.name, headers, rows: rows.slice(1, 11) }
+  }
+
+  const buffer = await file.arrayBuffer()
+  const workbook = XLSX.read(buffer, { type: 'array' })
+  const firstSheetName = workbook.SheetNames[0]
+  const sheet = workbook.Sheets[firstSheetName]
+  const matrix: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false })
+  const normalized = matrix
+    .map(row => row.map(cell => (cell == null ? '' : String(cell))))
+    .filter(row => row.some(cell => String(cell).trim() !== ''))
+  const headers = normalized[0] ?? []
+  return {
+    fileName: `${file.name} (${firstSheetName})`,
+    headers,
+    rows: normalized.slice(1, 11),
+  }
+}
+
+// Fake progress stages for visual feedback during ingestion
+const INGEST_STAGES = [
+  { label: 'Carregando arquivos...', pct: 15 },
+  { label: 'Dividindo em chunks...', pct: 40 },
+  { label: 'Vetorizando chunks...', pct: 65 },
+  { label: 'Indexando no Chroma...', pct: 85 },
+  { label: 'Salvando metadados...', pct: 95 },
+]
+
+function useIngestProgress(isLoading: boolean) {
+  const [stageIdx, setStageIdx] = useState(0)
+  const [pct, setPct] = useState(0)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    if (!isLoading) {
+      if (timerRef.current) clearInterval(timerRef.current)
+      setStageIdx(0)
+      setPct(0)
+      return
+    }
+    setStageIdx(0)
+    setPct(5)
+    let idx = 0
+    timerRef.current = setInterval(() => {
+      idx = Math.min(idx + 1, INGEST_STAGES.length - 1)
+      setStageIdx(idx)
+      setPct(INGEST_STAGES[idx].pct)
+      if (idx >= INGEST_STAGES.length - 1) {
+        if (timerRef.current) clearInterval(timerRef.current)
+      }
+    }, 900)
+    return () => { if (timerRef.current) clearInterval(timerRef.current) }
+  }, [isLoading])
+
+  return { stageLabel: INGEST_STAGES[stageIdx]?.label ?? '', pct }
+}
 
 export function Ingest() {
   const qc = useQueryClient()
@@ -14,6 +87,8 @@ export function Ingest() {
   // Upload tab state
   const [dragOver, setDragOver] = useState(false)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null)
+  const [preview, setPreview] = useState<TabularPreview | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Path tab state
@@ -65,12 +140,13 @@ export function Ingest() {
   })
 
   const isLoading = uploadMutation.isPending || pathMutation.isPending
+  const { stageLabel, pct } = useIngestProgress(isLoading)
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault()
     setDragOver(false)
     const files = Array.from(e.dataTransfer.files).filter(f =>
-      /\.(pdf|txt|md|markdown|csv|xlsx)$/i.test(f.name)
+      /\.(pdf|txt|md|markdown|csv|xlsx|xls|ods)$/i.test(f.name)
     )
     setSelectedFiles(prev => [...prev, ...files])
   }
@@ -81,12 +157,45 @@ export function Ingest() {
     }
   }
 
+  useEffect(() => {
+    if (selectedFiles.length === 0) {
+      setPreviewIndex(null)
+      setPreview(null)
+      return
+    }
+    if (previewIndex === null || previewIndex >= selectedFiles.length) {
+      const firstTabularIdx = selectedFiles.findIndex(f => /\.(csv|xlsx|xls|ods)$/i.test(f.name))
+      setPreviewIndex(firstTabularIdx >= 0 ? firstTabularIdx : null)
+    }
+  }, [selectedFiles, previewIndex])
+
+  useEffect(() => {
+    const selected = previewIndex !== null ? selectedFiles[previewIndex] : null
+    if (!selected) {
+      setPreview(null)
+      return
+    }
+    let cancelled = false
+    buildPreview(selected)
+      .then(data => {
+        if (cancelled) return
+        setPreview(data)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setPreview(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [previewIndex, selectedFiles])
+
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-zinc-100">IngestÃ£o de Documentos</h1>
+        <h1 className="text-2xl font-bold text-zinc-100">Ingestão de Documentos</h1>
         <p className="mt-1 text-sm text-zinc-400">
-          Indexe PDFs, Markdown, texto e planilhas (CSV/XLSX) no Chroma
+          Indexe PDFs, Markdown, texto e planilhas (CSV/XLSX/XLS/ODS) no Chroma
         </p>
       </div>
 
@@ -117,7 +226,7 @@ export function Ingest() {
               Upload de Arquivos
             </CardTitle>
             <CardDescription>
-              Arraste arquivos ou clique para selecionar. Suporta PDF, TXT, MD, CSV e XLSX
+              Arraste arquivos ou clique para selecionar. Suporta PDF, TXT, MD, CSV, XLSX, XLS e ODS
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -139,11 +248,12 @@ export function Ingest() {
                 Arraste arquivos aqui ou clique para selecionar
               </p>
               <p className="mt-1 text-xs text-zinc-500">PDF, TXT, MD, MARKDOWN, CSV, XLSX</p>
+              <p className="mt-1 text-xs text-zinc-500">XLS, ODS</p>
               <input
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".pdf,.txt,.md,.markdown,.csv,.xlsx"
+                accept=".pdf,.txt,.md,.markdown,.csv,.xlsx,.xls,.ods"
                 className="hidden"
                 onChange={handleFileInput}
               />
@@ -166,6 +276,22 @@ export function Ingest() {
                       <span className="text-xs text-zinc-500">
                         ({(f.size / 1024).toFixed(1)} KB)
                       </span>
+                      {/\.(csv|xlsx|xls|ods)$/i.test(f.name) && (
+                        <button
+                          onClick={e => {
+                            e.stopPropagation()
+                            setPreviewIndex(i)
+                          }}
+                          className={cn(
+                            'rounded border px-2 py-0.5 text-[10px] transition-colors',
+                            previewIndex === i
+                              ? 'border-blue-500 bg-blue-500/10 text-blue-300'
+                              : 'border-zinc-600 text-zinc-400 hover:border-zinc-500'
+                          )}
+                        >
+                          Preview
+                        </button>
+                      )}
                     </div>
                     <button
                       onClick={e => {
@@ -181,12 +307,66 @@ export function Ingest() {
               </div>
             )}
 
+            {preview && (
+              <div className="rounded-xl border border-zinc-700 bg-zinc-950 p-3">
+                <p className="mb-2 text-sm font-medium text-zinc-200">
+                  Pré-visualização tabular: {preview.fileName}
+                </p>
+                <div className="overflow-auto">
+                  <table className="min-w-full border-collapse text-xs">
+                    <thead>
+                      <tr>
+                        {preview.headers.map((header, idx) => (
+                          <th key={`${header}-${idx}`} className="border border-zinc-700 bg-zinc-900 px-2 py-1 text-left text-zinc-300">
+                            {header || `col_${idx + 1}`}
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.rows.map((row, rowIdx) => (
+                        <tr key={rowIdx}>
+                          {preview.headers.map((_, colIdx) => (
+                            <td key={`${rowIdx}-${colIdx}`} className="border border-zinc-800 px-2 py-1 text-zinc-400">
+                              {row[colIdx] ?? ''}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {isLoading && (
+              <div className="rounded-xl border border-zinc-700 bg-zinc-900/60 p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+                  <span className="text-sm text-zinc-300">{stageLabel}</span>
+                  <span className="ml-auto text-xs font-mono text-zinc-500">{pct}%</span>
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-blue-600 transition-all duration-700"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                <p className="text-xs text-zinc-600">
+                  Isso pode levar alguns segundos dependendo do tamanho dos arquivos.
+                </p>
+              </div>
+            )}
             <Button
               onClick={() => uploadMutation.mutate()}
               disabled={selectedFiles.length === 0 || isLoading}
               className="w-full"
             >
-              {isLoading ? 'Indexando...' : 'Indexar Arquivos'}
+              {isLoading ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Indexando...</>
+              ) : (
+                <><Layers className="mr-2 h-4 w-4" />Indexar Arquivos</>
+              )}
             </Button>
           </CardContent>
         </Card>
@@ -215,12 +395,31 @@ export function Ingest() {
                 onChange={e => setServerPath(e.target.value)}
               />
             </div>
+            {isLoading && (
+              <div className="rounded-xl border border-zinc-700 bg-zinc-900/60 p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
+                  <span className="text-sm text-zinc-300">{stageLabel}</span>
+                  <span className="ml-auto text-xs font-mono text-zinc-500">{pct}%</span>
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-blue-600 transition-all duration-700"
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+              </div>
+            )}
             <Button
               onClick={() => pathMutation.mutate()}
               disabled={!serverPath.trim() || isLoading}
               className="w-full"
             >
-              {isLoading ? 'Indexando...' : 'Indexar Caminho'}
+              {isLoading ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Indexando...</>
+              ) : (
+                <><Layers className="mr-2 h-4 w-4" />Indexar Caminho</>
+              )}
             </Button>
           </CardContent>
         </Card>
@@ -229,12 +428,12 @@ export function Ingest() {
       {/* Advanced settings */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm text-zinc-400">ConfiguraÃ§Ãµes AvanÃ§adas</CardTitle>
+          <CardTitle className="text-sm text-zinc-400">Configurações Avançadas</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <div>
             <label className="mb-1.5 block text-xs font-medium text-zinc-400">
-              Chunk Size (padrÃ£o: 900)
+              Chunk Size (padrão: 900)
             </label>
             <Input
               type="number"
@@ -245,7 +444,7 @@ export function Ingest() {
           </div>
           <div>
             <label className="mb-1.5 block text-xs font-medium text-zinc-400">
-              Chunk Overlap (padrÃ£o: 150)
+              Chunk Overlap (padrão: 150)
             </label>
             <Input
               type="number"
@@ -264,7 +463,7 @@ export function Ingest() {
             <div className="flex items-start gap-3">
               <CheckCircle className="mt-0.5 h-5 w-5 shrink-0 text-green-400" />
               <div>
-                <p className="font-medium text-green-300">IngestÃ£o concluÃ­da!</p>
+                <p className="font-medium text-green-300">Ingestão concluída!</p>
                 <p className="mt-1 text-sm text-green-500">
                   {result.files_loaded} documento(s) carregado(s),{' '}
                   {result.chunks_indexed} chunks indexados.

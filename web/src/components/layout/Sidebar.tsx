@@ -5,6 +5,7 @@ import {
   MessageSquare,
   FileText,
   Archive,
+  CalendarDays,
   BookOpen,
   LogOut,
 } from 'lucide-react'
@@ -15,6 +16,7 @@ const links = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/ingest', label: 'Ingestão', icon: Upload, end: false },
   { to: '/chat', label: 'Chat', icon: MessageSquare, end: false },
+  { to: '/schedule', label: 'Cronogramas', icon: CalendarDays, end: false },
   { to: '/docs', label: 'Documentos', icon: FileText, end: false },
   { to: '/artifacts', label: 'Artefatos', icon: Archive, end: false },
 ]

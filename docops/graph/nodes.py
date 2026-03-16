@@ -58,7 +58,10 @@ def classify_intent(state: AgentState) -> dict[str, Any]:
         response = llm.invoke([HumanMessage(content=prompt)])
         intent = response_text(response).lower().split()[0]
         # Validate against known intents
-        valid = {"qa", "summary", "comparison", "checklist", "study_plan", "artifact", "other"}
+        valid = {
+            "qa", "summary", "comparison", "checklist", "study_plan",
+            "artifact", "clarification_needed", "other",
+        }
         if intent not in valid:
             intent = "qa"
     except Exception as exc:
@@ -142,6 +145,27 @@ def synthesize(state: AgentState) -> dict[str, Any]:
         temperature=0.2,
     )
     logger.info(f"Synthesizing answer (intent={intent}, summary_mode={summary_mode})")
+
+    # If the intent signals ambiguity, ask the user to clarify instead of guessing
+    if intent == "clarification_needed":
+        clarification_prompt = (
+            f"O usuário enviou a seguinte mensagem:\n\n\"{query}\"\n\n"
+            "A mensagem é ambígua ou incompleta. Formule UMA pergunta de clarificação "
+            "curta e direta para entender o que o usuário precisa. Apresente opções concretas "
+            "quando possível. Não faça múltiplas perguntas. Não assuma nem responda a pedido."
+        )
+        try:
+            response = llm.invoke([
+                SystemMessage(content=SYSTEM_PROMPT),
+                HumanMessage(content=clarification_prompt),
+            ])
+            return {"raw_answer": response_text(response), "answer": response_text(response)}
+        except Exception as exc:
+            logger.warning(f"Clarification synthesis failed ({exc})")
+            return {
+                "raw_answer": "Não entendi completamente o que você quer. Pode reformular ou dar mais detalhes?",
+                "answer": "Não entendi completamente o que você quer. Pode reformular ou dar mais detalhes?",
+            }
 
     # Pick the right prompt based on intent
     if intent == "summary":
@@ -228,6 +252,28 @@ def verify_grounding_node(state: AgentState) -> dict[str, Any]:
     SEMANTIC_GROUNDING_ENABLED=true, and triggers a repair pass if the
     CitationSupportRate falls below MIN_SUPPORT_RATE.
     """
+    strict_mode = bool((state.get("extra", {}) or {}).get("strict_grounding"))
+
+    def _maybe_force_strict(payload: dict[str, Any]) -> dict[str, Any]:
+        if not strict_mode:
+            return payload
+        semantic = payload.get("grounding_info") or payload.get("grounding") or {}
+        support_rate = float(semantic.get("support_rate", 1.0)) if semantic else 1.0
+        threshold = max(float(config.min_support_rate), 0.8)
+        ok = bool(payload.get("grounding_ok", False)) and support_rate >= threshold
+        if ok:
+            return payload
+        fallback = (
+            "Nao encontrei evidencia suficiente nos documentos para responder isso com seguranca "
+            "no modo strict grounding. Tente reformular sua pergunta ou ampliar as fontes."
+        )
+        payload["raw_answer"] = fallback
+        payload["answer"] = fallback
+        payload["retry"] = False
+        payload["grounding_ok"] = False
+        payload["disclaimer"] = ""
+        return payload
+
     result = verify_grounding(state)
     update: dict[str, Any] = {**result}
     logger.info(
@@ -236,19 +282,19 @@ def verify_grounding_node(state: AgentState) -> dict[str, Any]:
     )
 
     if not config.semantic_grounding_enabled:
-        return update
+        return _maybe_force_strict(update)
 
     # Semantic claim verification is only meaningful for open QA.
     # For summary/comparison, the LLM synthesizes directly from the full doc context,
     # so claim-level scoring produces systematic false negatives.
     intent = state.get("intent", "qa")
     if intent in ("summary", "comparison"):
-        return update
+        return _maybe_force_strict(update)
 
     answer = state.get("answer", "")
     chunks = state.get("retrieved_chunks", [])
     if not answer or not chunks:
-        return update
+        return _maybe_force_strict(update)
 
     try:
         grounding_info = _semantic_grounding_payload(answer, chunks)
@@ -262,10 +308,10 @@ def verify_grounding_node(state: AgentState) -> dict[str, Any]:
         )
     except Exception as exc:
         logger.warning(f"Semantic grounding check failed: {exc}")
-        return update
+        return _maybe_force_strict(update)
 
     if support_rate >= config.min_support_rate:
-        return update
+        return _maybe_force_strict(update)
 
     # Try one repair pass first.
     repair_count = int(state.get("repair_count", 0))
@@ -294,7 +340,7 @@ def verify_grounding_node(state: AgentState) -> dict[str, Any]:
                 if repaired_rate >= config.min_support_rate:
                     update["grounding_ok"] = True
                     update["retry"] = False
-                    return update
+                    return _maybe_force_strict(update)
         except Exception as exc:
             logger.warning(f"Repair pass failed: {exc}")
 
@@ -309,7 +355,7 @@ def verify_grounding_node(state: AgentState) -> dict[str, Any]:
         )
         update["retry"] = True
         update["grounding_ok"] = False
-        return update
+        return _maybe_force_strict(update)
 
     # No retry left: return with disclaimer.
     disclaimer = str(update.get("disclaimer", ""))
@@ -322,7 +368,7 @@ def verify_grounding_node(state: AgentState) -> dict[str, Any]:
     update["disclaimer"] = disclaimer
     update["grounding_ok"] = False
     update["retry"] = False
-    return update
+    return _maybe_force_strict(update)
 
 
 # ── Node 5: retry_retrieve ──────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { FileText, BookOpen, GitCompare, Loader2, Search, Download } from 'lucide-react'
 import { toast } from 'sonner'
@@ -32,21 +32,44 @@ function SummarizeDialog({
   const [mode, setMode] = useState<'brief' | 'deep'>('brief')
   const [saveSummary, setSaveSummary] = useState(true)
   const [artifactFilename, setArtifactFilename] = useState<string | null>(null)
+  const [jobId, setJobId] = useState<string | null>(null)
   const [downloading, setDownloading] = useState<'md' | 'pdf' | null>(null)
 
-  const mutation = useMutation({
-    mutationFn: () => apiClient.summarize(doc, saveSummary, mode),
+  const startJob = useMutation({
+    mutationFn: () => apiClient.summarizeAsync(doc, saveSummary, mode),
     onSuccess: data => {
-      setResult(data.answer)
-      setArtifactFilename(data.artifact_filename ?? null)
-      if (saveSummary && data.artifact_filename) {
-        toast.success(`Resumo salvo: ${data.artifact_filename}`)
-      }
+      setJobId(data.job_id)
     },
-    onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao resumir'),
+    onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao iniciar resumo'),
+  })
+  const jobQuery = useQuery({
+    queryKey: ['job', jobId],
+    queryFn: () => apiClient.getJobStatus(jobId!),
+    enabled: !!jobId,
+    refetchInterval: query =>
+      query.state.data?.status === 'succeeded' || query.state.data?.status === 'failed'
+        ? false
+        : 1200,
   })
 
+  useEffect(() => {
+    if (!jobId || !jobQuery.data) return
+    if (jobQuery.data.status === 'succeeded') {
+      const payload = jobQuery.data.result ?? {}
+      setResult(String(payload.answer ?? ''))
+      setArtifactFilename(payload.artifact_filename ?? null)
+      if (saveSummary && payload.artifact_filename) {
+        toast.success(`Resumo salvo: ${payload.artifact_filename}`)
+      }
+      setJobId(null)
+    } else if (jobQuery.data.status === 'failed') {
+      toast.error(jobQuery.data.error ?? 'Erro ao gerar resumo')
+      setJobId(null)
+    }
+  }, [jobId, jobQuery.data, saveSummary])
+
   const modeLabel = mode === 'brief' ? 'Resumo Breve' : 'Resumo Aprofundado'
+  const isProcessing = startJob.isPending || !!jobId
 
   async function handleDownloadMd() {
     if (!artifactFilename) return
@@ -83,7 +106,7 @@ function SummarizeDialog({
           <Button variant="ghost" size="sm" onClick={onClose}>✕</Button>
         </div>
         <div className="p-6 space-y-4">
-          {!result && !mutation.isPending && (
+          {!result && !isProcessing && (
             <>
               {/* Mode selector */}
               <div>
@@ -125,13 +148,13 @@ function SummarizeDialog({
                 />
                 Salvar resumo em artefatos (habilita exportação .md e PDF)
               </label>
-              <Button onClick={() => mutation.mutate()} className="w-full">
+              <Button onClick={() => startJob.mutate()} className="w-full">
                 <BookOpen className="mr-2 h-4 w-4" />
                 Gerar {modeLabel}
               </Button>
             </>
           )}
-          {mutation.isPending && (
+          {isProcessing && (
             <div className="flex flex-col items-center justify-center gap-3 py-8">
               <Loader2 className="h-6 w-6 animate-spin text-blue-400" />
               <span className="text-sm text-zinc-400">
@@ -139,6 +162,18 @@ function SummarizeDialog({
                   ? 'Analisando documento em profundidade...'
                   : 'Gerando resumo breve...'}
               </span>
+              <div className="w-full max-w-md rounded-md border border-zinc-700 bg-zinc-800 p-2">
+                <div className="mb-1 flex items-center justify-between text-[11px] text-zinc-400">
+                  <span>{jobQuery.data?.stage ?? 'iniciando'}</span>
+                  <span>{jobQuery.data?.progress ?? 5}%</span>
+                </div>
+                <div className="h-2 rounded bg-zinc-700">
+                  <div
+                    className="h-2 rounded bg-blue-500 transition-all"
+                    style={{ width: `${jobQuery.data?.progress ?? 5}%` }}
+                  />
+                </div>
+              </div>
             </div>
           )}
           {result && (
@@ -158,7 +193,7 @@ function SummarizeDialog({
                   onClick={() => {
                     setResult('')
                     setArtifactFilename(null)
-                    mutation.reset()
+                    startJob.reset()
                   }}
                 >
                   Gerar outro

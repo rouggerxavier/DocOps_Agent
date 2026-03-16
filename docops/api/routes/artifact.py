@@ -12,13 +12,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from docops.api.schemas import ArtifactItem, ArtifactRequest, ArtifactResponse
+from docops.api.schemas import ArtifactItem, ArtifactRequest, ArtifactResponse, JobCreateResponse
 from docops.auth.dependencies import get_current_user
 from docops.config import config  # kept for backward-compatible test patching
 from docops.db.crud import create_artifact_record, list_artifacts_for_user
-from docops.db.database import get_db
+from docops.db.database import SessionLocal, get_db
 from docops.db.models import User
 from docops.logging import get_logger
+from docops.services.jobs import create_job, run_thread_with_progress, schedule_job, update_job
 from docops.services.ownership import require_user_artifact, require_user_document
 from docops.storage.paths import get_user_artifacts_dir
 
@@ -110,6 +111,71 @@ async def create_artifact(
     )
 
     return ArtifactResponse(**result)
+
+
+@router.post("/artifact/async", response_model=JobCreateResponse)
+async def create_artifact_async(
+    body: ArtifactRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> JobCreateResponse:
+    """Create an async artifact generation job and return a pollable id."""
+    selected_docs = []
+    for doc_name in body.doc_names:
+        selected_docs.append(require_user_document(db, current_user.id, doc_name))
+
+    doc_names = [doc.file_name for doc in selected_docs]
+    doc_ids = [doc.doc_id for doc in selected_docs]
+    job = create_job(user_id=current_user.id, job_type="artifact", stage="queued")
+
+    async def _runner(job_id: str) -> dict:
+        update_job(job_id, progress=10, stage="collecting context")
+        result = await run_thread_with_progress(
+            job_id=job_id,
+            fn=_run_artifact,
+            args=(
+                body.type,
+                body.topic,
+                body.output,
+                current_user.id,
+                doc_names,
+                doc_ids,
+            ),
+            stage="generating artifact",
+            start_progress=28,
+            max_progress=82,
+            step=4,
+            interval_seconds=1.8,
+        )
+        update_job(job_id, progress=85, stage="saving artifact")
+
+        def _persist() -> None:
+            db_local = SessionLocal()
+            try:
+                create_artifact_record(
+                    db_local,
+                    user_id=current_user.id,
+                    artifact_type=body.type,
+                    title=body.topic[:512],
+                    filename=result["filename"],
+                    path=result["path"],
+                    source_doc_id=doc_ids[0] if len(doc_ids) >= 1 else None,
+                    source_doc_id_2=doc_ids[1] if len(doc_ids) >= 2 else None,
+                )
+            finally:
+                db_local.close()
+
+        await asyncio.to_thread(_persist)
+        update_job(job_id, progress=100, stage="completed")
+        return result
+
+    schedule_job(job["job_id"], _runner)
+    return JobCreateResponse(
+        job_id=job["job_id"],
+        status=job["status"],
+        progress=int(job["progress"]),
+        stage=str(job["stage"]),
+    )
 
 
 @router.get("/artifacts", response_model=List[ArtifactItem])

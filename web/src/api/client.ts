@@ -29,6 +29,25 @@ export interface ChatResponse {
   sources: SourceItem[]
   intent: string
   session_id: string | null
+  calendar_action: Record<string, any> | null
+}
+
+export interface JobCreateResponse {
+  job_id: string
+  status: string
+  progress: number
+  stage: string
+}
+
+export interface JobStatusResponse {
+  job_id: string
+  status: string
+  progress: number
+  stage: string
+  result: Record<string, any> | null
+  error: string | null
+  created_at: string
+  updated_at: string
 }
 
 export interface IngestResponse {
@@ -62,6 +81,34 @@ export interface CompareResponse {
   artifact_path: string | null
 }
 
+export interface ReminderItem {
+  id: number
+  title: string
+  starts_at: string
+  ends_at: string | null
+  note: string | null
+  all_day: boolean
+}
+
+export interface ScheduleItem {
+  id: number
+  title: string
+  day_of_week: number
+  start_time: string
+  end_time: string
+  note: string | null
+  active: boolean
+}
+
+export interface CalendarOverview {
+  date: string
+  now_iso: string
+  today_reminders: ReminderItem[]
+  today_schedule: ScheduleItem[]
+  current_schedule_item: ScheduleItem | null
+  next_schedule_item: ScheduleItem | null
+}
+
 // ── API functions ─────────────────────────────────────────────────────────────
 
 export const apiClient = {
@@ -74,9 +121,10 @@ export const apiClient = {
     message: string,
     session_id?: string,
     top_k?: number,
-    doc_names?: string[]
+    doc_names?: string[],
+    strict_grounding?: boolean
   ): Promise<ChatResponse> =>
-    api.post('/api/chat', { message, session_id, top_k, doc_names }).then(r => r.data),
+    api.post('/api/chat', { message, session_id, top_k, doc_names, strict_grounding }).then(r => r.data),
 
   ingestPath: (path: string, chunk_size = 0, chunk_overlap = 0): Promise<IngestResponse> =>
     api.post('/api/ingest', { path, chunk_size, chunk_overlap }).then(r => r.data),
@@ -94,6 +142,9 @@ export const apiClient = {
   summarize: (doc: string, save = true, summary_mode: 'brief' | 'deep' = 'brief'): Promise<SummarizeResponse> =>
     api.post('/api/summarize', { doc, save, summary_mode }).then(r => r.data),
 
+  summarizeAsync: (doc: string, save = true, summary_mode: 'brief' | 'deep' = 'brief'): Promise<JobCreateResponse> =>
+    api.post('/api/summarize/async', { doc, save, summary_mode }).then(r => r.data),
+
   compare: (doc1: string, doc2: string, save = false): Promise<CompareResponse> =>
     api.post('/api/compare', { doc1, doc2, save }).then(r => r.data),
 
@@ -104,6 +155,14 @@ export const apiClient = {
     doc_names?: string[]
   ): Promise<ArtifactResponse> =>
     api.post('/api/artifact', { type, topic, output, doc_names }).then(r => r.data),
+
+  createArtifactAsync: (
+    type: string,
+    topic: string,
+    output?: string,
+    doc_names?: string[]
+  ): Promise<JobCreateResponse> =>
+    api.post('/api/artifact/async', { type, topic, output, doc_names }).then(r => r.data),
 
   listArtifacts: (): Promise<ArtifactItem[]> =>
     api.get('/api/artifacts').then(r => r.data),
@@ -128,4 +187,56 @@ export const apiClient = {
 
   downloadArtifactPdfUrl: (filename: string): string =>
     `${BASE_URL}/api/artifacts/${encodeURIComponent(filename)}/pdf`,
+
+  getJobStatus: (jobId: string): Promise<JobStatusResponse> =>
+    api.get(`/api/jobs/${encodeURIComponent(jobId)}`).then(r => r.data),
+
+  listReminders: (start_from?: string, end_to?: string): Promise<ReminderItem[]> =>
+    api.get('/api/calendar/reminders', { params: { start_from, end_to } }).then(r => r.data),
+
+  createReminder: (payload: {
+    title: string
+    starts_at: string
+    ends_at?: string | null
+    note?: string | null
+    all_day?: boolean
+  }): Promise<ReminderItem> => api.post('/api/calendar/reminders', payload).then(r => r.data),
+
+  updateReminder: (id: number, payload: {
+    title: string
+    starts_at: string
+    ends_at?: string | null
+    note?: string | null
+    all_day?: boolean
+  }): Promise<ReminderItem> => api.put(`/api/calendar/reminders/${id}`, payload).then(r => r.data),
+
+  deleteReminder: (id: number): Promise<{ status: string }> =>
+    api.delete(`/api/calendar/reminders/${id}`).then(r => r.data),
+
+  listSchedules: (active_only = false): Promise<ScheduleItem[]> =>
+    api.get('/api/calendar/schedules', { params: { active_only } }).then(r => r.data),
+
+  createSchedule: (payload: {
+    title: string
+    day_of_week: number
+    start_time: string
+    end_time: string
+    note?: string | null
+    active?: boolean
+  }): Promise<ScheduleItem> => api.post('/api/calendar/schedules', payload).then(r => r.data),
+
+  updateSchedule: (id: number, payload: {
+    title: string
+    day_of_week: number
+    start_time: string
+    end_time: string
+    note?: string | null
+    active?: boolean
+  }): Promise<ScheduleItem> => api.put(`/api/calendar/schedules/${id}`, payload).then(r => r.data),
+
+  deleteSchedule: (id: number): Promise<{ status: string }> =>
+    api.delete(`/api/calendar/schedules/${id}`).then(r => r.data),
+
+  getCalendarOverview: (date?: string): Promise<CalendarOverview> =>
+    api.get('/api/calendar/overview', { params: { date } }).then(r => r.data),
 }

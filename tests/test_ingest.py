@@ -138,6 +138,8 @@ def test_supported_extensions():
     assert ".md" in SUPPORTED_EXTENSIONS
     assert ".csv" in SUPPORTED_EXTENSIONS
     assert ".xlsx" in SUPPORTED_EXTENSIONS
+    assert ".xls" in SUPPORTED_EXTENSIONS
+    assert ".ods" in SUPPORTED_EXTENSIONS
 
 
 # ── Ingestion pipeline integration ───────────────────────────────────────────

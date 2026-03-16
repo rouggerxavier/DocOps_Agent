@@ -54,6 +54,14 @@ def _build_tabular_content(
     return "\n".join(content_lines)
 
 
+def _normalize_tabular_rows(raw_rows: list[list[str]]) -> tuple[list[str], list[list[str]]]:
+    if not raw_rows:
+        return [], []
+    headers = raw_rows[0]
+    rows = raw_rows[1:] if len(raw_rows) > 1 else []
+    return headers, rows
+
+
 def load_pdf(file_path: Path) -> List[Document]:
     """Load a PDF file, one Document per page, with page metadata."""
     try:
@@ -145,12 +153,7 @@ def load_csv(file_path: Path) -> List[Document]:
         reader = csv.reader(handle)
         raw_rows = [[str(cell) for cell in row] for row in reader]
 
-    if not raw_rows:
-        headers: list[str] = []
-        rows: list[list[str]] = []
-    else:
-        headers = raw_rows[0]
-        rows = raw_rows[1:]
+    headers, rows = _normalize_tabular_rows(raw_rows)
 
     content = _build_tabular_content(
         title=f"Tabela CSV: {file_path.name}",
@@ -197,8 +200,7 @@ def load_xlsx(file_path: Path) -> List[Document]:
             if any(value.strip() for value in values):
                 raw_rows.append(values)
 
-        headers = raw_rows[0] if raw_rows else []
-        rows = raw_rows[1:] if len(raw_rows) > 1 else []
+        headers, rows = _normalize_tabular_rows(raw_rows)
         content = _build_tabular_content(
             title=f"Planilha XLSX: {file_path.name} | Aba: {sheet.title}",
             headers=headers,
@@ -227,6 +229,106 @@ def load_xlsx(file_path: Path) -> List[Document]:
     return docs
 
 
+def load_xls(file_path: Path) -> List[Document]:
+    """Load an XLS workbook with one Document per sheet."""
+    logger.info(f"Loading XLS: {file_path}")
+    try:
+        import xlrd
+    except ImportError as exc:
+        raise ImportError("xlrd is required for XLS loading: pip install xlrd") from exc
+
+    source_path = str(file_path)
+    book = xlrd.open_workbook(str(file_path))
+    docs: list[Document] = []
+    for sheet_idx, sheet in enumerate(book.sheets(), start=1):
+        raw_rows: list[list[str]] = []
+        for row_idx in range(sheet.nrows):
+            values = []
+            for col_idx in range(sheet.ncols):
+                cell_val = sheet.cell_value(row_idx, col_idx)
+                values.append("" if cell_val is None else str(cell_val))
+            if any(v.strip() for v in values):
+                raw_rows.append(values)
+        headers, rows = _normalize_tabular_rows(raw_rows)
+        content = _build_tabular_content(
+            title=f"Planilha XLS: {file_path.name} | Aba: {sheet.name}",
+            headers=headers,
+            rows=rows,
+        )
+        docs.append(
+            Document(
+                page_content=content,
+                metadata={
+                    "file_name": file_path.name,
+                    "source": source_path,
+                    "source_path": source_path,
+                    "doc_id": build_doc_id(source_path),
+                    "file_type": "xls",
+                    "page": sheet_idx,
+                    "page_start": sheet_idx,
+                    "page_end": sheet_idx,
+                    "section_title": sheet.name,
+                    "section_path": sheet.name,
+                },
+            )
+        )
+    return docs
+
+
+def load_ods(file_path: Path) -> List[Document]:
+    """Load an ODS workbook with one Document per sheet."""
+    logger.info(f"Loading ODS: {file_path}")
+    try:
+        from odf import teletype
+        from odf.opendocument import load as load_ods_doc
+        from odf.table import Table, TableCell, TableRow
+    except ImportError as exc:
+        raise ImportError("odfpy is required for ODS loading: pip install odfpy") from exc
+
+    source_path = str(file_path)
+    ods_doc = load_ods_doc(str(file_path))
+    docs: list[Document] = []
+
+    tables = ods_doc.spreadsheet.getElementsByType(Table)
+    for sheet_idx, table in enumerate(tables, start=1):
+        raw_rows: list[list[str]] = []
+        for row in table.getElementsByType(TableRow):
+            row_values: list[str] = []
+            for cell in row.getElementsByType(TableCell):
+                text = teletype.extractText(cell) if cell else ""
+                repeat = int(cell.getAttribute("numbercolumnsrepeated") or 1)
+                for _ in range(max(1, repeat)):
+                    row_values.append((text or "").strip())
+            if any(v.strip() for v in row_values):
+                raw_rows.append(row_values)
+
+        headers, rows = _normalize_tabular_rows(raw_rows)
+        sheet_name = str(table.getAttribute("name") or f"sheet_{sheet_idx}")
+        content = _build_tabular_content(
+            title=f"Planilha ODS: {file_path.name} | Aba: {sheet_name}",
+            headers=headers,
+            rows=rows,
+        )
+        docs.append(
+            Document(
+                page_content=content,
+                metadata={
+                    "file_name": file_path.name,
+                    "source": source_path,
+                    "source_path": source_path,
+                    "doc_id": build_doc_id(source_path),
+                    "file_type": "ods",
+                    "page": sheet_idx,
+                    "page_start": sheet_idx,
+                    "page_end": sheet_idx,
+                    "section_title": sheet_name,
+                    "section_path": sheet_name,
+                },
+            )
+        )
+    return docs
+
+
 _LOADERS = {
     ".pdf": load_pdf,
     ".txt": load_text,
@@ -234,6 +336,8 @@ _LOADERS = {
     ".markdown": load_markdown,
     ".csv": load_csv,
     ".xlsx": load_xlsx,
+    ".xls": load_xls,
+    ".ods": load_ods,
 }
 
 SUPPORTED_EXTENSIONS = set(_LOADERS.keys())
@@ -266,7 +370,7 @@ def load_directory(dir_path: Path) -> List[Document]:
     if not found_files:
         logger.warning(
             f"No supported files found in '{dir_path}'. "
-            f"Add PDF, MD, TXT, CSV, or XLSX files and run ingest again."
+            f"Add PDF, MD, TXT, CSV, XLSX, XLS, or ODS files and run ingest again."
         )
         return []
 

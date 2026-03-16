@@ -8,13 +8,14 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from docops.api.schemas import SummarizeRequest, SummarizeResponse
+from docops.api.schemas import JobCreateResponse, SummarizeRequest, SummarizeResponse
 from docops.auth.dependencies import get_current_user
 from docops.db.crud import create_artifact_record
-from docops.db.database import get_db
+from docops.db.database import SessionLocal, get_db
 from docops.db.models import User
 from docops.logging import get_logger
 from docops.services.ownership import require_user_document
+from docops.services.jobs import create_job, run_thread_with_progress, schedule_job, update_job
 
 logger = get_logger("docops.api.summarize")
 router = APIRouter()
@@ -147,4 +148,73 @@ async def summarize(
         artifact_path=result.get("artifact_path"),
         artifact_filename=result.get("artifact_filename"),
         summary_diagnostics=result.get("diagnostics") if body.debug_summary else None,
+    )
+
+
+@router.post("/summarize/async", response_model=JobCreateResponse)
+async def summarize_async(
+    body: SummarizeRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> JobCreateResponse:
+    """Create an async summarize job and return a pollable job id."""
+    document = require_user_document(db, current_user.id, body.doc)
+    job = create_job(user_id=current_user.id, job_type="summarize", stage="queued")
+
+    async def _runner(job_id: str) -> dict:
+        update_job(job_id, progress=12, stage="preparing")
+        result = await run_thread_with_progress(
+            job_id=job_id,
+            fn=_run_summarize,
+            args=(
+                document.file_name,
+                document.doc_id,
+                body.save,
+                body.summary_mode,
+                current_user.id,
+                body.debug_summary,
+                body.deep_profile,
+            ),
+            stage="analyzing document",
+            start_progress=30,
+            max_progress=82,
+            step=5,
+            interval_seconds=1.8,
+        )
+        update_job(job_id, progress=84, stage="persisting")
+
+        if body.save and result.get("artifact_path") and result.get("artifact_filename"):
+            mode_suffix = "breve" if body.summary_mode == "brief" else "aprofundado"
+
+            def _persist() -> None:
+                db_local = SessionLocal()
+                try:
+                    create_artifact_record(
+                        db_local,
+                        user_id=current_user.id,
+                        artifact_type="summary",
+                        title=f"Summary ({mode_suffix}) - {document.file_name}",
+                        filename=str(result["artifact_filename"]),
+                        path=str(result["artifact_path"]),
+                        source_doc_id=document.doc_id,
+                    )
+                finally:
+                    db_local.close()
+
+            await asyncio.to_thread(_persist)
+
+        update_job(job_id, progress=100, stage="completed")
+        return {
+            "answer": str(result.get("answer", "")),
+            "artifact_path": result.get("artifact_path"),
+            "artifact_filename": result.get("artifact_filename"),
+            "summary_diagnostics": result.get("diagnostics") if body.debug_summary else None,
+        }
+
+    schedule_job(job["job_id"], _runner)
+    return JobCreateResponse(
+        job_id=job["job_id"],
+        status=job["status"],
+        progress=int(job["progress"]),
+        stage=str(job["stage"]),
     )

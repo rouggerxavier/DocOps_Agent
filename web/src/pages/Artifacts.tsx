@@ -10,7 +10,12 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { apiClient, type ArtifactItem, type DocItem } from '@/api/client'
 import { formatBytes, formatDate } from '@/lib/utils'
 
-const ARTIFACT_TYPES = ['study_plan', 'summary', 'checklist', 'artifact'] as const
+const ARTIFACT_TYPES = [
+  { value: 'study_plan', label: 'Plano de Estudos' },
+  { value: 'summary', label: 'Resumo' },
+  { value: 'checklist', label: 'Checklist' },
+  { value: 'artifact', label: 'Artefato Livre' },
+] as const
 const MARKDOWN_FILE_RE = /\.(md|markdown|txt)$/i
 
 function isMarkdownArtifact(filename: string): boolean {
@@ -39,6 +44,7 @@ function CreateArtifactDialog({ onClose }: { onClose: () => void }) {
   const [type, setType] = useState<string>('study_plan')
   const [topic, setTopic] = useState('')
   const [result, setResult] = useState('')
+  const [jobId, setJobId] = useState<string | null>(null)
   const [selectedDoc, setSelectedDoc] = useState('')
   const [selectedDocs, setSelectedDocs] = useState<DocItem[]>([])
 
@@ -48,21 +54,46 @@ function CreateArtifactDialog({ onClose }: { onClose: () => void }) {
     retry: 1,
   })
 
-  const mutation = useMutation({
+  const startJob = useMutation({
     mutationFn: () =>
-      apiClient.createArtifact(
+      apiClient.createArtifactAsync(
         type,
         topic,
         undefined,
         selectedDocs.map(doc => doc.doc_id)
       ),
     onSuccess: data => {
-      setResult(data.answer)
-      qc.invalidateQueries({ queryKey: ['artifacts'] })
-      toast.success(`Artefato salvo: ${data.filename}`)
+      setJobId(data.job_id)
     },
-    onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao gerar artefato'),
+    onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao iniciar artefato'),
   })
+  const jobQuery = useQuery({
+    queryKey: ['job', jobId],
+    queryFn: () => apiClient.getJobStatus(jobId!),
+    enabled: !!jobId,
+    refetchInterval: query =>
+      query.state.data?.status === 'succeeded' || query.state.data?.status === 'failed'
+        ? false
+        : 1200,
+  })
+
+  useEffect(() => {
+    if (!jobId || !jobQuery.data) return
+    if (jobQuery.data.status === 'succeeded') {
+      const payload = jobQuery.data.result ?? {}
+      setResult(String(payload.answer ?? ''))
+      if (payload.filename) {
+        toast.success(`Artefato salvo: ${payload.filename}`)
+      }
+      qc.invalidateQueries({ queryKey: ['artifacts'] })
+      setJobId(null)
+    } else if (jobQuery.data.status === 'failed') {
+      toast.error(jobQuery.data.error ?? 'Erro ao gerar artefato')
+      setJobId(null)
+    }
+  }, [jobId, jobQuery.data, qc])
+
+  const isProcessing = startJob.isPending || !!jobId
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
@@ -86,15 +117,15 @@ function CreateArtifactDialog({ onClose }: { onClose: () => void }) {
                   className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100"
                 >
                   {ARTIFACT_TYPES.map(t => (
-                    <option key={t} value={t}>
-                      {t.replace('_', ' ')}
+                    <option key={t.value} value={t.value}>
+                      {t.label}
                     </option>
                   ))}
                 </select>
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-                  TÃ³pico
+                  Topico
                 </label>
                 <Input
                   placeholder="Ex: Python para iniciantes"
@@ -158,19 +189,33 @@ function CreateArtifactDialog({ onClose }: { onClose: () => void }) {
                 )}
               </div>
               <Button
-                onClick={() => mutation.mutate()}
-                disabled={!topic.trim() || mutation.isPending}
+                onClick={() => startJob.mutate()}
+                disabled={!topic.trim() || isProcessing}
                 className="w-full"
               >
-                {mutation.isPending ? (
+                {isProcessing ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Gerando...
+                    {jobQuery.data?.stage ?? 'Gerando...'}
                   </>
                 ) : (
                   'Gerar'
                 )}
               </Button>
+              {isProcessing && (
+                <div className="rounded-md border border-zinc-700 bg-zinc-800 p-2">
+                  <div className="mb-1 flex items-center justify-between text-[11px] text-zinc-400">
+                    <span>{jobQuery.data?.stage ?? 'iniciando'}</span>
+                    <span>{jobQuery.data?.progress ?? 5}%</span>
+                  </div>
+                  <div className="h-2 rounded bg-zinc-700">
+                    <div
+                      className="h-2 rounded bg-blue-500 transition-all"
+                      style={{ width: `${jobQuery.data?.progress ?? 5}%` }}
+                    />
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <>
@@ -385,7 +430,7 @@ export function Artifacts() {
                         {artifact.title?.trim() ? artifact.title : artifact.filename}
                       </p>
                       <p className="text-xs text-zinc-500">
-                        {artifact.artifact_type ? `${artifact.artifact_type} · ` : ''}{formatBytes(artifact.size)} · {formatDate(artifact.created_at)}
+                        {artifact.artifact_type ? `${ARTIFACT_TYPES.find(t => t.value === artifact.artifact_type)?.label ?? artifact.artifact_type} · ` : ''}{formatBytes(artifact.size)} · {formatDate(artifact.created_at)}
                       </p>
                     </div>
                   </div>

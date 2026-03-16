@@ -6,7 +6,17 @@ import os
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from docops.api.routes import health, docs, ingest, chat, summarize, compare, artifact
+from docops.api.routes import (
+    artifact,
+    calendar,
+    chat,
+    compare,
+    docs,
+    health,
+    ingest,
+    jobs,
+    summarize,
+)
 from docops.api.routes import auth as auth_routes
 from docops.auth.dependencies import get_current_user
 
@@ -52,6 +62,8 @@ def create_app() -> FastAPI:
     app.include_router(summarize.router, prefix=prefix, tags=["summarize"], dependencies=_auth)
     app.include_router(compare.router, prefix=prefix, tags=["compare"], dependencies=_auth)
     app.include_router(artifact.router, prefix=prefix, tags=["artifacts"], dependencies=_auth)
+    app.include_router(calendar.router, prefix=prefix, tags=["calendar"], dependencies=_auth)
+    app.include_router(jobs.router, prefix=prefix, tags=["jobs"], dependencies=_auth)
 
     return app
 

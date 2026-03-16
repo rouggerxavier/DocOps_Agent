@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta, timezone
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -349,4 +350,103 @@ def test_summarize_debug_false_hides_diagnostics(monkeypatch):
     data = resp.json()
     assert data["answer"] == "Resumo profundo."
     assert data["summary_diagnostics"] is None
+    _clear_auth_override()
+
+
+def test_calendar_reminder_crud():
+    auth_client, _ = _make_auth_client()
+    start = datetime.now(timezone.utc) + timedelta(hours=2)
+    end = start + timedelta(hours=1)
+
+    created = auth_client.post(
+        "/api/calendar/reminders",
+        json={
+            "title": "Revisar capitulo",
+            "starts_at": start.isoformat(),
+            "ends_at": end.isoformat(),
+            "note": "Arvores de decisao",
+            "all_day": False,
+        },
+    )
+    assert created.status_code == 200
+    reminder_id = created.json()["id"]
+
+    listed = auth_client.get("/api/calendar/reminders")
+    assert listed.status_code == 200
+    assert any(item["id"] == reminder_id for item in listed.json())
+
+    updated = auth_client.put(
+        f"/api/calendar/reminders/{reminder_id}",
+        json={
+            "title": "Revisar capitulo 7",
+            "starts_at": start.isoformat(),
+            "ends_at": end.isoformat(),
+            "note": "Checklist final",
+            "all_day": False,
+        },
+    )
+    assert updated.status_code == 200
+    assert updated.json()["title"] == "Revisar capitulo 7"
+
+    deleted = auth_client.delete(f"/api/calendar/reminders/{reminder_id}")
+    assert deleted.status_code == 200
+    _clear_auth_override()
+
+
+def test_calendar_schedule_overview():
+    auth_client, _ = _make_auth_client()
+    today_weekday = datetime.now(timezone.utc).weekday()
+
+    created = auth_client.post(
+        "/api/calendar/schedules",
+        json={
+            "title": "Estudo de ML",
+            "day_of_week": today_weekday,
+            "start_time": "14:00",
+            "end_time": "16:00",
+            "note": "Aula pratica",
+            "active": True,
+        },
+    )
+    assert created.status_code == 200
+    assert created.json()["day_of_week"] == today_weekday
+
+    overview = auth_client.get("/api/calendar/overview")
+    assert overview.status_code == 200
+    data = overview.json()
+    assert "today_schedule" in data
+    assert any(item["title"] == "Estudo de ML" for item in data["today_schedule"])
+    _clear_auth_override()
+
+
+def test_chat_calendar_query_bypasses_llm(monkeypatch):
+    auth_client, _ = _make_auth_client()
+
+    def _fail_llm(*_args, **_kwargs):
+        raise AssertionError("_run_chat should not be called for calendar query")
+
+    monkeypatch.setattr("docops.api.routes.chat._run_chat", _fail_llm)
+    resp = auth_client.post("/api/chat", json={"message": "Tenho compromisso hoje na agenda?"})
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["intent"] == "calendar"
+    assert "hoje" in payload["answer"].lower() or "calendario" in payload["answer"].lower()
+    _clear_auth_override()
+
+
+def test_chat_forwards_strict_grounding(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    captured: dict = {}
+
+    def _fake_run(msg, top_k, user_id=0, doc_names=None, strict_grounding=False):
+        captured["strict_grounding"] = strict_grounding
+        return {"answer": "ok", "intent": "qa", "retrieved_chunks": []}
+
+    monkeypatch.setattr("docops.api.routes.chat._run_chat", _fake_run)
+    resp = auth_client.post(
+        "/api/chat",
+        json={"message": "explique", "strict_grounding": True},
+    )
+    assert resp.status_code == 200
+    assert captured["strict_grounding"] is True
     _clear_auth_override()

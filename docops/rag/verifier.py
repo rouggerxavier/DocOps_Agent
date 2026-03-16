@@ -12,28 +12,41 @@ if TYPE_CHECKING:
 
 logger = get_logger("docops.rag.verifier")
 
-# Patterns that suggest a "factual" answer requiring citations
-_FACTUAL_PATTERNS = [
-    r"\b\d{4}\b",           # years (e.g., 2023)
-    r"\b\d+[\.,]\d+\b",     # decimal numbers
-    r"\b\d+%",              # percentages
-    r"\bsegundo\b",         # "according to"
-    r"\bconforme\b",        # "according to"
-    r"\bde acordo com\b",   # "according to"
-    r"\bporque\b",          # "because" — causal claims
-    r"\bportanto\b",        # "therefore"
-    r"\bconcluí\b",         # "I concluded"
-    r"\bdefine(-se)?\b",    # definitions
-    r"\bé composto\b",      # compositional claims
-    r"\bresultou\b",        # results/findings
-]
+_CITATION_INDEX_RE = re.compile(r"\[Fonte\s*\d+\]", re.IGNORECASE)
 
-_FACTUAL_RE = re.compile("|".join(_FACTUAL_PATTERNS), re.IGNORECASE)
+_FACTUAL_CHECK_PROMPT = """\
+Você é um classificador de respostas. Determine se a resposta abaixo contém afirmações factuais que requerem citação de fontes.
+
+Uma resposta FACTUAL contém: fatos, dados, números, datas, definições, resultados, atribuições, relações causais.
+Uma resposta NÃO-FACTUAL contém: "não sei", "não encontrei", perguntas de volta, pedidos de esclarecimento, respostas vazias.
+
+Responda APENAS com "factual" ou "nao_factual", sem nenhum texto adicional.
+
+RESPOSTA:
+{answer}"""
+
+
+def _llm_is_factual(answer: str) -> bool:
+    """Use LLM to determine if the answer contains factual claims requiring citations."""
+    try:
+        from langchain_core.messages import HumanMessage
+        from docops.llm.router import build_chat_model
+        from docops.llm.content import response_text
+
+        llm = build_chat_model(route="cheap", temperature=0.0)
+        response = llm.invoke(
+            [HumanMessage(content=_FACTUAL_CHECK_PROMPT.format(answer=answer[:2000]))]
+        )
+        raw = response_text(response).strip().lower()
+        return "nao_factual" not in raw
+    except Exception as exc:
+        logger.warning(f"LLM factual check failed ({exc}); defaulting to factual=True.")
+        return True
 
 
 def is_factual_answer(answer: str) -> bool:
-    """Heuristic: does the answer contain factual claims that require citations?"""
-    return bool(_FACTUAL_RE.search(answer))
+    """Determine if the answer contains factual claims that require citations."""
+    return _llm_is_factual(answer)
 
 
 def has_min_citations(answer: str, min_cites: int | None = None) -> bool:
@@ -73,7 +86,7 @@ def verify_grounding(state: "AgentState") -> dict:
     cites_ok = has_min_citations(answer)
 
     if not factual:
-        # Non-factual answer (e.g., "I don't know") — no citation required
+        # Non-factual answer (e.g., "I don't know", clarification question) — no citation required
         logger.debug("Answer is non-factual; grounding check passes.")
         return {"grounding_ok": True, "retry": False, "disclaimer": ""}
 

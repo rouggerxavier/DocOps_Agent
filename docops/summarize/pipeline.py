@@ -2126,58 +2126,96 @@ def _auto_merge_sections(text: str, target_sections: int = 5) -> tuple[str, dict
     }
 
 
+_COVERAGE_SIGNALS_LLM_PROMPT = """\
+Você é um analisador de conteúdo de documentos. Analise os trechos abaixo e identifique quais tipos de conteúdo estão presentes.
+
+TIPOS DE CONTEÚDO:
+- formula: notação matemática, equações, expressões algébricas, letras gregas, fórmulas científicas
+- procedure: passos de algoritmo, instruções sequenciais, procedimentos técnicos
+- example: exemplos explícitos, casos ilustrativos, demonstrações práticas
+- concept: definições de termos, conceitos explicados, taxonomias, glossários
+
+Para cada tipo, conte quantos trechos contêm esse tipo de conteúdo.
+
+Responda APENAS com JSON válido, sem texto antes ou depois.
+
+FORMATO: {{"formula_chunks": 0, "procedure_chunks": 0, "example_chunks": 0, "concept_chunks": 0}}
+
+TRECHOS (amostra de até 20):
+{sample_text}"""
+
+_COVERAGE_SCORE_LLM_PROMPT = """\
+Você é um avaliador de cobertura de conteúdo. Avalie se o resumo cobre adequadamente os tipos de conteúdo presentes no documento original.
+
+SINAIS DETECTADOS NO DOCUMENTO:
+{signals_summary}
+
+RESUMO A AVALIAR:
+{summary_text}
+
+Para cada tipo de conteúdo presente (has_X = true), atribua um score de cobertura de 0.0 a 1.0:
+- 1.0 = o resumo cobre completamente esse tipo de conteúdo
+- 0.5 = cobertura parcial
+- 0.0 = o resumo omite completamente esse tipo de conteúdo
+- Se o tipo não está presente no documento (has_X = false), use 1.0 (não há o que cobrir)
+
+Responda APENAS com JSON válido, sem texto antes ou depois.
+
+FORMATO: {{"formula_coverage": 1.0, "procedure_coverage": 1.0, "example_coverage": 1.0, "concept_coverage": 1.0, "overall_coverage_score": 1.0}}"""
+
+
 def detect_coverage_signals(chunks: list[Document]) -> dict[str, Any]:
-    """Detect content signal types present in document chunks.
+    """Detect content signal types present in document chunks using LLM.
 
-    Scans cleaned chunk texts for four heuristic signal types:
-    - ``formula``: mathematical notation, Greek letters, algebraic patterns.
-    - ``procedure``: step/algorithm markers, procedural vocabulary.
-    - ``example``: explicit example markers and illustrative phrases.
-    - ``concept``: bold-term definitions and definitional phrases.
-
-    A signal type is marked as *present* when at least one chunk matches its
-    pattern. The chunk counts are returned for observability.
-
-    Args:
-        chunks: Cleaned document chunks (``Document`` objects with
-            ``page_content``).
-
-    Returns:
-        Dict with keys:
-            ``formula_chunks``   — number of chunks with math/formula content.
-            ``procedure_chunks`` — number of chunks with procedural content.
-            ``example_chunks``   — number of chunks with example content.
-            ``concept_chunks``   — number of chunks with concept/definition patterns.
-            ``total_chunks``     — total number of chunks scanned.
-            ``has_formulas``     — True if formula_chunks >= 1.
-            ``has_procedures``   — True if procedure_chunks >= 1.
-            ``has_examples``     — True if example_chunks >= 1.
-            ``has_concepts``     — True if concept_chunks >= 1.
+    Returns dict with formula_chunks, procedure_chunks, example_chunks,
+    concept_chunks, total_chunks, has_formulas, has_procedures,
+    has_examples, has_concepts.
     """
-    formula_chunks = 0
-    procedure_chunks = 0
-    example_chunks = 0
-    concept_chunks = 0
+    total = len(chunks)
+    if total == 0:
+        return {
+            "formula_chunks": 0, "procedure_chunks": 0,
+            "example_chunks": 0, "concept_chunks": 0,
+            "total_chunks": 0,
+            "has_formulas": False, "has_procedures": False,
+            "has_examples": False, "has_concepts": False,
+        }
 
-    for chunk in chunks:
-        text = chunk.page_content if hasattr(chunk, "page_content") else str(chunk)
-        if not text:
-            continue
-        if _COVERAGE_FORMULA_SIGNAL_RE.search(text):
-            formula_chunks += 1
-        if _COVERAGE_PROCEDURE_SIGNAL_RE.search(text):
-            procedure_chunks += 1
-        if _COVERAGE_EXAMPLE_SIGNAL_RE.search(text):
-            example_chunks += 1
-        if _COVERAGE_CONCEPT_SIGNAL_RE.search(text):
-            concept_chunks += 1
+    # Sample up to 20 chunks for the prompt
+    sample = chunks[:20]
+    sample_text = "\n---\n".join(
+        (c.page_content if hasattr(c, "page_content") else str(c))[:400]
+        for c in sample
+    )
+
+    try:
+        import json as _json
+        from langchain_core.messages import HumanMessage
+        from docops.llm.content import response_text
+
+        llm = build_chat_model(route="cheap", temperature=0.0)
+        response = llm.invoke([HumanMessage(
+            content=_COVERAGE_SIGNALS_LLM_PROMPT.format(sample_text=sample_text)
+        )])
+        raw = response_text(response).strip()
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw).strip()
+        parsed = _json.loads(raw)
+
+        formula_chunks = int(parsed.get("formula_chunks", 0))
+        procedure_chunks = int(parsed.get("procedure_chunks", 0))
+        example_chunks = int(parsed.get("example_chunks", 0))
+        concept_chunks = int(parsed.get("concept_chunks", 0))
+    except Exception as exc:
+        _pipeline_logger.warning(f"LLM coverage signal detection failed ({exc}); defaulting to zeros.")
+        formula_chunks = procedure_chunks = example_chunks = concept_chunks = 0
 
     return {
         "formula_chunks": formula_chunks,
         "procedure_chunks": procedure_chunks,
         "example_chunks": example_chunks,
         "concept_chunks": concept_chunks,
-        "total_chunks": len(chunks),
+        "total_chunks": total,
         "has_formulas": formula_chunks >= 1,
         "has_procedures": procedure_chunks >= 1,
         "has_examples": example_chunks >= 1,
@@ -2190,122 +2228,67 @@ def score_coverage(
     signals: dict[str, Any],
     coverage_profile: dict[str, Any] | None = None,
 ) -> dict[str, float]:
-    """Measure how well the summary covers the document's detected content signals.
+    """Measure how well the summary covers the document's detected content signals using LLM.
 
-    Each signal type that is *present* in the source chunks contributes a
-    coverage sub-score in [0, 1].  Absent signal types contribute 1.0 (no
-    penalty — we cannot fault the summary for omitting content that was never
-    in the source).
-
-    The overall score is a weighted mean over *active* (present) signal types.
-    If no signals are detected, returns 1.0 (nothing to cover).
-
-    Weights are read from config (``summary_coverage_weight_*``) and default to:
-    formula=0.30, procedure=0.30, example=0.20, concept=0.20.
-
-    The concept signal requires at least ``summary_coverage_concept_min_hits``
-    (default: 2) chunks with concept patterns before it contributes to the score;
-    this avoids penalising summaries of documents with only incidental definitions.
-
-    Args:
-        final_text: The final summary text (before the Fontes: section is appended).
-        signals:    Output of :func:`detect_coverage_signals`.
-        coverage_profile: Optional resolved coverage profile dict. When provided,
-            its weights and concept_min_hits are used instead of global config.
-
-    Returns:
-        Dict with keys:
-            ``formula_coverage``   — float in [0, 1].
-            ``procedure_coverage`` — float in [0, 1].
-            ``example_coverage``   — float in [0, 1].
-            ``concept_coverage``   — float in [0, 1].
-            ``overall_coverage_score`` — weighted mean over active types, float in [0, 1].
+    Returns dict with formula_coverage, procedure_coverage, example_coverage,
+    concept_coverage, overall_coverage_score (all floats in [0, 1]).
     """
-    if not signals or not final_text:
-        return {
-            "formula_coverage": 1.0,
-            "procedure_coverage": 1.0,
-            "example_coverage": 1.0,
-            "concept_coverage": 1.0,
-            "overall_coverage_score": 1.0,
-        }
-
-    if coverage_profile is not None:
-        weights: dict[str, float] = {
-            "formula": float(coverage_profile.get("weight_formula", 0.30)),
-            "procedure": float(coverage_profile.get("weight_procedure", 0.30)),
-            "example": float(coverage_profile.get("weight_example", 0.20)),
-            "concept": float(coverage_profile.get("weight_concept", 0.20)),
-        }
-        concept_min_hits = int(coverage_profile.get("concept_min_hits", 2))
-    else:
-        weights = {
-            "formula":   float(getattr(config, "summary_coverage_weight_formula",   0.30)),
-            "procedure": float(getattr(config, "summary_coverage_weight_procedure", 0.30)),
-            "example":   float(getattr(config, "summary_coverage_weight_example",   0.20)),
-            "concept":   float(getattr(config, "summary_coverage_weight_concept",   0.20)),
-        }
-        concept_min_hits = int(getattr(config, "summary_coverage_concept_min_hits", 2))
-
-    # ── Per-type coverage ─────────────────────────────────────────────────────
-
-    # Formula: 2 keyword/symbol hits in summary = full coverage.
-    if signals.get("has_formulas"):
-        hits = len(_COVERAGE_FORMULA_SUMMARY_RE.findall(final_text))
-        formula_cov = min(1.0, hits / 2)
-    else:
-        formula_cov = 1.0
-
-    # Procedure: 2 procedural-keyword hits in summary = full coverage.
-    if signals.get("has_procedures"):
-        hits = len(_COVERAGE_PROCEDURE_SUMMARY_RE.findall(final_text))
-        procedure_cov = min(1.0, hits / 2)
-    else:
-        procedure_cov = 1.0
-
-    # Example: 1 example keyword hit in summary = full coverage.
-    if signals.get("has_examples"):
-        hits = len(_COVERAGE_EXAMPLE_SUMMARY_RE.findall(final_text))
-        example_cov = min(1.0, hits / 1)
-    else:
-        example_cov = 1.0
-
-    # Concept: only active when concept_chunks >= concept_min_hits.
-    # 2 definitional-keyword hits in summary = full coverage.
-    concept_active = (
-        signals.get("has_concepts", False)
-        and signals.get("concept_chunks", 0) >= concept_min_hits
-    )
-    if concept_active:
-        hits = len(_COVERAGE_CONCEPT_SUMMARY_RE.findall(final_text))
-        concept_cov = min(1.0, hits / 2)
-    else:
-        concept_cov = 1.0
-
-    # ── Weighted overall ─────────────────────────────────────────────────────
-    active: list[tuple[float, float]] = []
-    if signals.get("has_formulas"):
-        active.append((formula_cov, weights["formula"]))
-    if signals.get("has_procedures"):
-        active.append((procedure_cov, weights["procedure"]))
-    if signals.get("has_examples"):
-        active.append((example_cov, weights["example"]))
-    if concept_active:
-        active.append((concept_cov, weights["concept"]))
-
-    if not active:
-        overall = 1.0
-    else:
-        total_w = sum(w for _, w in active)
-        overall = sum(cov * w for cov, w in active) / total_w if total_w > 0 else 1.0
-
-    return {
-        "formula_coverage":   formula_cov,
-        "procedure_coverage": procedure_cov,
-        "example_coverage":   example_cov,
-        "concept_coverage":   concept_cov,
-        "overall_coverage_score": round(overall, 4),
+    _default = {
+        "formula_coverage": 1.0,
+        "procedure_coverage": 1.0,
+        "example_coverage": 1.0,
+        "concept_coverage": 1.0,
+        "overall_coverage_score": 1.0,
     }
+    if not signals or not final_text:
+        return _default
+
+    # Build signals summary for the prompt
+    signals_summary = (
+        f"formula: has={signals.get('has_formulas', False)}, chunks={signals.get('formula_chunks', 0)}\n"
+        f"procedure: has={signals.get('has_procedures', False)}, chunks={signals.get('procedure_chunks', 0)}\n"
+        f"example: has={signals.get('has_examples', False)}, chunks={signals.get('example_chunks', 0)}\n"
+        f"concept: has={signals.get('has_concepts', False)}, chunks={signals.get('concept_chunks', 0)}"
+    )
+
+    try:
+        import json as _json
+        from langchain_core.messages import HumanMessage
+        from docops.llm.content import response_text
+
+        llm = build_chat_model(route="cheap", temperature=0.0)
+        response = llm.invoke([HumanMessage(content=_COVERAGE_SCORE_LLM_PROMPT.format(
+            signals_summary=signals_summary,
+            summary_text=final_text[:3000],
+        ))])
+        raw = response_text(response).strip()
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw).strip()
+        parsed = _json.loads(raw)
+
+        formula_cov = float(parsed.get("formula_coverage", 1.0))
+        procedure_cov = float(parsed.get("procedure_coverage", 1.0))
+        example_cov = float(parsed.get("example_coverage", 1.0))
+        concept_cov = float(parsed.get("concept_coverage", 1.0))
+        overall = float(parsed.get("overall_coverage_score", 1.0))
+
+        # Clamp to [0, 1]
+        formula_cov = max(0.0, min(1.0, formula_cov))
+        procedure_cov = max(0.0, min(1.0, procedure_cov))
+        example_cov = max(0.0, min(1.0, example_cov))
+        concept_cov = max(0.0, min(1.0, concept_cov))
+        overall = max(0.0, min(1.0, overall))
+
+        return {
+            "formula_coverage": formula_cov,
+            "procedure_coverage": procedure_cov,
+            "example_coverage": example_cov,
+            "concept_coverage": concept_cov,
+            "overall_coverage_score": round(overall, 4),
+        }
+    except Exception as exc:
+        _pipeline_logger.warning(f"LLM coverage scoring failed ({exc}); returning 1.0.")
+        return _default
 
 
 def _compute_weak_ratio(grounding_info: dict[str, Any]) -> float:
@@ -2808,167 +2791,248 @@ _RISK_TECHNICAL_ASSERTION_RE = re.compile(
 )
 
 
+_LOW_INFO_LLM_PROMPT = """\
+Você é um classificador de seções de documento. Determine se a seção descrita abaixo é uma seção de "baixo conteúdo informacional" — ou seja, uma seção estrutural que contém referências a outros capítulos mas não possui conteúdo substantivo para suportar afirmações técnicas.
+
+Exemplos de seções LOW-INFO: sumário, índice, table of contents, lista de figuras, lista de tabelas, prefácio, agradecimentos, apresentação, lista de abreviaturas.
+Exemplos de seções HIGH-INFO: introdução com conteúdo, metodologia, resultados, análise, discussão, conclusão, capítulos com desenvolvimento.
+
+Se section_title e section_path estiverem vazios, responda "high_info".
+
+Responda APENAS com "low_info" ou "high_info", sem nenhum texto adicional.
+
+section_title: {section_title}
+section_path: {section_path}"""
+
+_low_info_cache: dict[str, bool] = {}
+
+
 def _is_low_info_source(anchor: "Document") -> bool:
     """Return True if the anchor chunk comes from a low-information section.
 
-    Low-info sections (e.g. table of contents, index, prefácio) may contain
-    references to other sections but lack the substantive evidence needed to
-    support high-risk technical claims.
+    Uses LLM semantic judgment instead of a hardcoded keyword list.
+    Falls back to False (high-info) on LLM error to avoid false positives.
     """
     meta = anchor.metadata
     section_title = str(meta.get("section_title") or "").strip().lower()
     section_path = str(meta.get("section_path") or "").strip().lower()
 
-    # Check exact match first, then "starts with" for compound paths.
-    for label in _LOW_INFO_SECTION_LABELS:
-        if section_title == label or section_path == label:
-            return True
-        # e.g. section_path = "sumário > capítulo 1"
-        if section_title.startswith(label) or section_path.startswith(label):
-            return True
-    return False
+    # Fast path: empty metadata → treat as high-info
+    if not section_title and not section_path:
+        return False
+
+    cache_key = f"{section_title}||{section_path}"
+    if cache_key in _low_info_cache:
+        return _low_info_cache[cache_key]
+
+    try:
+        from langchain_core.messages import HumanMessage
+        from docops.llm.content import response_text
+
+        llm = build_chat_model(route="cheap", temperature=0.0)
+        response = llm.invoke([HumanMessage(content=_LOW_INFO_LLM_PROMPT.format(
+            section_title=section_title or "(vazio)",
+            section_path=section_path or "(vazio)",
+        ))])
+        raw = response_text(response).strip().lower()
+        result = "low_info" in raw and "high_info" not in raw
+    except Exception as exc:
+        _pipeline_logger.warning(f"LLM low-info check failed ({exc}); treating as high-info.")
+        result = False
+
+    _low_info_cache[cache_key] = result
+    return result
+
+
+_CLAIM_RISK_LLM_PROMPT = """\
+Você é um classificador de risco de afirmações em resumos acadêmicos/técnicos.
+
+Analise cada frase do resumo abaixo e classifique seu tipo de risco. Também verifique se as fontes citadas são de alta ou baixa qualidade informacional para suportar a afirmação.
+
+TIPOS DE RISCO:
+- "formula": contém notação matemática, fórmulas, equações, expressões algébricas, letras gregas
+- "quantitative": contém números, percentuais, métricas comparativas ("maior que", "30%", "2x mais")
+- "taxonomy_comparison": comparações entre categorias, taxonomias, classificações ("difere de", "em contraste com", "pertence à classe")
+- "technical_assertion": afirmações técnicas de causalidade/efeito ("melhora robustez", "reduz variância", "mitiga overfitting")
+- "procedural": descreve passos, algoritmos, sequências de procedimento
+- "descriptive": descrição geral sem afirmação técnica verificável de alto risco
+
+HIGH-RISK: formula, quantitative, taxonomy_comparison, technical_assertion, procedural
+LOW-RISK: descriptive
+
+SOBRE CITAÇÕES:
+- Cada [Fonte N] referencia um anchor. Se uma frase high-risk não tem citação → "unsupported": true
+- Se a frase tem citações mas todas são de seções low-info (sumário, índice, prefácio) → "low_info_only": true, e se require_non_low_info=true → também "unsupported": true
+
+Para cada frase, retorne um objeto JSON. Responda APENAS com JSON válido (array).
+
+FORMATO:
+[
+  {{"idx": 0, "text": "...", "risk_type": "formula|quantitative|taxonomy_comparison|technical_assertion|procedural|descriptive", "high_risk": true|false, "cited_indices": [0, 1], "low_info_only": false, "unsupported": false}},
+  ...
+]
+
+RESUMO (frases numeradas):
+{numbered_sentences}
+
+ANCHORS disponíveis (idx 0-based):
+{anchors_summary}
+
+require_non_low_info: {require_non_low_info}"""
+
+
+def _classify_claim_risks_llm(
+    sentences: list[str],
+    citation_anchors: list["Document"],
+) -> list[dict[str, Any]] | None:
+    """Use LLM to classify all sentences at once. Returns None on failure."""
+    try:
+        import json as _json
+        from langchain_core.messages import HumanMessage
+        from docops.llm.content import response_text
+
+        numbered = "\n".join(f"[{i}] {s}" for i, s in enumerate(sentences))
+        anchors_summary_lines = []
+        for i, a in enumerate(citation_anchors[:20]):  # cap to avoid huge prompts
+            meta = a.metadata
+            title = meta.get("section_title") or meta.get("file_name") or f"anchor_{i}"
+            anchors_summary_lines.append(f"  idx={i}: {title}")
+        anchors_summary = "\n".join(anchors_summary_lines) or "  (nenhum)"
+
+        _require_non_low_info = bool(
+            getattr(config, "summary_require_non_low_info_for_high_risk", True)
+        )
+
+        prompt = _CLAIM_RISK_LLM_PROMPT.format(
+            numbered_sentences=numbered[:6000],
+            anchors_summary=anchors_summary,
+            require_non_low_info=str(_require_non_low_info).lower(),
+        )
+
+        llm = build_chat_model(route="cheap", temperature=0.0)
+        response = llm.invoke([HumanMessage(content=prompt)])
+        raw = response_text(response).strip()
+
+        # Strip markdown fences
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw).strip()
+
+        parsed = _json.loads(raw)
+        if not isinstance(parsed, list):
+            return None
+        return parsed
+    except Exception as exc:
+        _pipeline_logger.warning(f"LLM claim risk classification failed ({exc}); using fallback.")
+        return None
+
+
+def _classify_claim_risks_fallback(
+    sentences: list[str],
+    citation_anchors: list["Document"],
+) -> list[dict[str, Any]]:
+    """Minimal fallback: mark all sentences as descriptive with citation check only."""
+    _require_non_low_info = bool(
+        getattr(config, "summary_require_non_low_info_for_high_risk", True)
+    )
+    classified = []
+    for idx, sentence in enumerate(sentences):
+        cited_indices_1based = [int(m) for m in _CITATION_RE.findall(sentence)]
+        cited_indices_0based = [
+            i - 1 for i in cited_indices_1based
+            if 1 <= i <= len(citation_anchors)
+        ]
+        classified.append({
+            "idx": idx,
+            "text": sentence,
+            "risk_type": "descriptive",
+            "high_risk": False,
+            "cited_indices": cited_indices_0based,
+            "low_info_only": False,
+            "unsupported": False,
+        })
+    return classified
 
 
 def classify_claim_risks(
     text: str,
     citation_anchors: list["Document"],
 ) -> dict[str, Any]:
-    """Classify sentences in the summary by risk level and check source support.
+    """Classify sentences in the summary by risk level using LLM judgment.
 
-    High-risk claim types (taxonomy/comparison, quantitative, formula,
-    procedural, technical-assertion) require
-    direct evidence from the cited anchors. If all cited anchors for a high-risk
-    sentence come from low-information sources (or none are cited), the claim is
-    flagged as unsupported.
-
-    Args:
-        text: Final summary text (body only, no Fontes: section).
-        citation_anchors: Ordered list of citation anchors used in this summary.
-            Index 0 → [Fonte 1], index 1 → [Fonte 2], etc.
-
-    Returns:
-        dict with keys:
-            sentences_total, sentences_classified, high_risk_count,
-            unsupported_high_risk_count, unsupported_high_risk_indices,
-            low_info_source_claims_count, low_info_source_claim_indices,
-            formula_claims_total, formula_claims_supported,
-            formula_claims_downgraded_to_concept (initialised to 0; filled by
-            check_formula_mode).
+    Returns dict with same contract as before (sentences_total, sentences_classified,
+    high_risk_count, unsupported_high_risk_count, etc.).
     """
-    # Strip sources section if present so we don't analyse citation metadata.
+    # Strip sources section if present.
     body = _SOURCES_SECTION_RE.sub("", text).strip()
 
-    # Split body into paragraphs, then sentences.
+    # Split body into sentences.
     paragraphs = re.split(r"\n{1,}", body)
     sentences: list[str] = []
     for para in paragraphs:
-        # Skip heading lines and blank lines.
         stripped = para.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        # Naive sentence split on Portuguese sentence boundaries.
         parts = re.split(r"(?<=[.!?])\s+(?=[A-ZÀ-Ú\[])", stripped)
         sentences.extend(p.strip() for p in parts if p.strip())
 
-    classified: list[dict[str, Any]] = []
-    high_risk_count = 0
-    unsupported_high_risk_count = 0
-    unsupported_high_risk_indices: list[int] = []
-    low_info_source_claims_count = 0
-    low_info_source_claim_indices: list[int] = []
-    formula_claims_total = 0
-    formula_claims_supported = 0
-
-    for idx, sentence in enumerate(sentences):
-        # Determine risk type.
-        # Use both signal-detection pattern (for raw notation) and the summary-
-        # coverage pattern (for natural-language formula references in paraphrased text).
-        is_formula = bool(
-            _COVERAGE_FORMULA_SIGNAL_RE.search(sentence)
-            or _COVERAGE_FORMULA_SUMMARY_RE.search(sentence)
-        )
-        is_quantitative = bool(_RISK_QUANTITATIVE_RE.search(sentence))
-        is_comparison = bool(_RISK_COMPARISON_RE.search(sentence))
-        is_procedural = bool(_COVERAGE_PROCEDURE_SIGNAL_RE.search(sentence))
-        is_technical_assertion = bool(_RISK_TECHNICAL_ASSERTION_RE.search(sentence))
-
-        if is_formula:
-            risk_type = "formula"
-        elif is_quantitative:
-            risk_type = "quantitative"
-        elif is_comparison:
-            risk_type = "taxonomy_comparison"
-        elif is_technical_assertion:
-            risk_type = "technical_assertion"
-        elif is_procedural:
-            risk_type = "procedural"
-        else:
-            risk_type = "descriptive"
-
-        high_risk = risk_type in {
-            "formula",
-            "quantitative",
-            "taxonomy_comparison",
-            "procedural",
-            "technical_assertion",
+    if not sentences:
+        return {
+            "sentences_total": 0,
+            "sentences_classified": [],
+            "high_risk_count": 0,
+            "unsupported_high_risk_count": 0,
+            "unsupported_high_risk_indices": [],
+            "unsupported_high_risk_low_info_only_count": 0,
+            "low_info_source_claims_count": 0,
+            "low_info_source_claim_indices": [],
+            "formula_claims_total": 0,
+            "formula_claims_supported": 0,
+            "formula_claims_downgraded_to_concept": 0,
         }
 
-        if risk_type == "formula":
-            formula_claims_total += 1
+    # Try LLM classification first, fall back to minimal heuristic on failure.
+    llm_result = _classify_claim_risks_llm(sentences, citation_anchors)
+    if llm_result is None:
+        classified = _classify_claim_risks_fallback(sentences, citation_anchors)
+    else:
+        # Normalize and fill any missing citations from the raw text
+        classified = []
+        for item in llm_result:
+            idx = int(item.get("idx", len(classified)))
+            sentence = sentences[idx] if idx < len(sentences) else item.get("text", "")
+            cited_raw = item.get("cited_indices") or []
+            # Also extract from text in case LLM missed some
+            cited_from_text = [
+                int(m) - 1 for m in _CITATION_RE.findall(sentence)
+                if 1 <= int(m) <= len(citation_anchors)
+            ]
+            cited = list(dict.fromkeys(cited_raw + cited_from_text))  # dedup preserve order
+            classified.append({
+                "text": sentence,
+                "risk_type": str(item.get("risk_type", "descriptive")),
+                "high_risk": bool(item.get("high_risk", False)),
+                "cited_indices": cited,
+                "low_info_only": bool(item.get("low_info_only", False)),
+                "unsupported": bool(item.get("unsupported", False)),
+            })
 
-        # Extract cited anchor indices (1-based from text, convert to 0-based).
-        cited_indices_1based = [int(m) for m in _CITATION_RE.findall(sentence)]
-        cited_indices_0based = [
-            i - 1 for i in cited_indices_1based
-            if 1 <= i <= len(citation_anchors)
-        ]
-
-        # Check source quality for high-risk claims.
-        # The hard rule (require_non_low_info) controls whether low-info-only citations
-        # count as "unsupported". When disabled, low-info sources are still flagged in
-        # diagnostics but do not increment unsupported_high_risk_count.
-        _require_non_low_info = bool(
-            getattr(config, "summary_require_non_low_info_for_high_risk", True)
-        )
-        low_info_only = False
-        unsupported = False
-        if high_risk:
-            high_risk_count += 1
-            if not cited_indices_0based:
-                # High-risk claim with no citations at all.
-                unsupported = True
-            else:
-                # Check if ALL cited anchors are low-info.
-                low_info_anchors = [
-                    citation_anchors[i]
-                    for i in cited_indices_0based
-                    if _is_low_info_source(citation_anchors[i])
-                ]
-                if len(low_info_anchors) == len(cited_indices_0based):
-                    low_info_only = True
-                    low_info_source_claims_count += 1
-                    low_info_source_claim_indices.append(idx)
-                    # Only mark as unsupported when the hard rule is active.
-                    if _require_non_low_info:
-                        unsupported = True
-
-            if unsupported:
-                unsupported_high_risk_count += 1
-                unsupported_high_risk_indices.append(idx)
-            elif risk_type == "formula":
-                formula_claims_supported += 1
-
-        classified.append({
-            "text": sentence,
-            "risk_type": risk_type,
-            "high_risk": high_risk,
-            "cited_indices": cited_indices_0based,
-            "low_info_only": low_info_only,
-            "unsupported": unsupported,
-        })
-
-    # unsupported_high_risk_low_info_only_count counts exactly the claims where
-    # the *only* reason for being unsupported was low-info sources (not missing citation).
+    # Aggregate counters from classified list.
+    high_risk_count = sum(1 for c in classified if c.get("high_risk"))
+    unsupported_high_risk_count = sum(
+        1 for c in classified if c.get("high_risk") and c.get("unsupported")
+    )
+    unsupported_high_risk_indices = [
+        i for i, c in enumerate(classified) if c.get("high_risk") and c.get("unsupported")
+    ]
+    low_info_source_claims_count = sum(1 for c in classified if c.get("low_info_only"))
+    low_info_source_claim_indices = [
+        i for i, c in enumerate(classified) if c.get("low_info_only")
+    ]
+    formula_claims_total = sum(1 for c in classified if c.get("risk_type") == "formula")
+    formula_claims_supported = sum(
+        1 for c in classified
+        if c.get("risk_type") == "formula" and not c.get("unsupported")
+    )
     _unsupported_low_info_only_count = sum(
         1 for c in classified
         if c.get("high_risk") and c.get("low_info_only") and c.get("unsupported")

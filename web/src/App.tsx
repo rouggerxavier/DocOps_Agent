@@ -8,6 +8,7 @@ import { Ingest } from '@/pages/Ingest'
 import { Chat } from '@/pages/Chat'
 import { Docs } from '@/pages/Docs'
 import { Artifacts } from '@/pages/Artifacts'
+import { Schedule } from '@/pages/Schedule'
 import { Login } from '@/pages/Login'
 import { Register } from '@/pages/Register'
 
@@ -48,6 +49,7 @@ export default function App() {
               <Route path="/chat" element={<Chat />} />
               <Route path="/docs" element={<Docs />} />
               <Route path="/artifacts" element={<Artifacts />} />
+              <Route path="/schedule" element={<Schedule />} />
             </Route>
           </Routes>
           <Toaster

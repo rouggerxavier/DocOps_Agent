@@ -37,12 +37,21 @@ _FACTUAL_RE = re.compile("|".join(_FACTUAL_MARKERS), re.IGNORECASE)
 _CITATION_RE = re.compile(r"\[Fonte\s*\d+\]", re.IGNORECASE)
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n{2,}")
 
-_CLAIMS_LLM_PROMPT = (
-    "Extraia apenas afirmacoes factuais verificaveis do texto abaixo. "
-    "Responda JSON puro com este formato: "
-    "{\"claims\": [\"claim1\", \"claim2\"]}.\n\n"
-    "TEXTO:\n{text}"
-)
+_CLAIMS_LLM_PROMPT = """\
+Você é um extrator de afirmações factuais. Analise o texto abaixo e extraia todas as frases que contêm afirmações verificáveis — fatos, números, datas, definições, relações causais, resultados, atribuições de autoria.
+
+REGRAS:
+- Inclua afirmações mesmo que não sigam padrões linguísticos específicos.
+- Não limite a lista por forma gramatical — use o significado, não palavras-chave.
+- Se uma frase contiver múltiplas afirmações, mantenha-a inteira.
+- Se houver incerteza se é factual, prefira incluir.
+- Se o texto não tiver afirmações verificáveis, retorne lista vazia.
+- Responda APENAS com JSON válido, sem texto antes ou depois.
+
+FORMATO: {{"claims": ["frase1", "frase2", ...]}}
+
+TEXTO:
+{text}"""
 
 
 def extract_sentences(text: str) -> List[str]:
