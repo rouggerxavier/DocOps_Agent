@@ -226,6 +226,56 @@ def test_chat_success(monkeypatch):
     _clear_auth_override()
 
 
+def test_chat_returns_only_cited_sources(monkeypatch):
+    from langchain_core.documents import Document
+
+    auth_client, _ = _make_auth_client()
+    fake_state = {
+        "answer": "Use este trecho [Fonte 2]",
+        "intent": "qa",
+        "retrieved_chunks": [
+            Document(
+                page_content="chunk um",
+                metadata={"file_name": "doc1.pdf", "page": "1", "chunk_id": "c1"},
+            ),
+            Document(
+                page_content="chunk dois",
+                metadata={"file_name": "doc2.pdf", "page": "2", "chunk_id": "c2"},
+            ),
+        ],
+    }
+    monkeypatch.setattr("docops.api.routes.chat._run_chat", lambda msg, top_k: fake_state)
+
+    resp = auth_client.post("/api/chat", json={"message": "hello"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["sources"]) == 1
+    assert data["sources"][0]["fonte_n"] == 2
+    assert data["sources"][0]["file_name"] == "doc2.pdf"
+    _clear_auth_override()
+
+
+def test_chat_forwards_doc_filters(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    captured: dict = {}
+
+    def _fake_run(msg, top_k, user_id=0, doc_names=None):
+        captured["message"] = msg
+        captured["top_k"] = top_k
+        captured["user_id"] = user_id
+        captured["doc_names"] = doc_names
+        return {"answer": "ok", "intent": "qa", "retrieved_chunks": []}
+
+    monkeypatch.setattr("docops.api.routes.chat._run_chat", _fake_run)
+    resp = auth_client.post(
+        "/api/chat",
+        json={"message": "hello", "doc_names": ["a.pdf", "b.pdf"]},
+    )
+    assert resp.status_code == 200
+    assert captured["doc_names"] == ["a.pdf", "b.pdf"]
+    _clear_auth_override()
+
+
 def test_artifacts_empty():
     auth_client, _ = _make_auth_client()
     with patch("docops.api.routes.artifact.config") as mock_cfg:

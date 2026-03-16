@@ -20,7 +20,7 @@ from docops.rag.prompts import (
     GROUNDING_REPAIR_PROMPT,
     SYSTEM_PROMPT,
 )
-from docops.rag.retriever import retrieve_for_doc
+from docops.rag.retriever import retrieve_for_doc, retrieve_for_docs
 from docops.rag.verifier import verify_grounding
 from docops.tools.doc_tools import tool_search_docs
 from docops.graph.state import AgentState
@@ -79,8 +79,11 @@ def retrieve_node(state: AgentState) -> dict[str, Any]:
     extra = state.get("extra", {}) or {}
     doc_name = extra.get("doc_name")
     doc_id = extra.get("doc_id")
+    doc_names = [str(name).strip() for name in extra.get("doc_names", []) if str(name).strip()]
+    doc_ids = [str(did).strip() for did in extra.get("doc_ids", []) if str(did).strip()]
+    intent = state.get("intent")
 
-    if doc_name and state.get("intent") in ("summary", "comparison"):
+    if doc_name and intent in ("summary", "comparison"):
         logger.info(f"Retrieving all chunks from '{doc_name}' for user {user_id}, {state.get('intent')}")
         chunks = retrieve_for_doc(
             doc_name,
@@ -88,6 +91,25 @@ def retrieve_node(state: AgentState) -> dict[str, Any]:
             top_k=200,
             user_id=user_id,
             doc_id=str(doc_id) if doc_id else None,
+        )
+    elif doc_names:
+        per_doc_k: int | None = None
+        if intent in ("summary", "comparison", "study_plan", "artifact", "checklist"):
+            per_doc_k = max(20, min(200, int(top_k) * 4))
+        logger.info(
+            "Retrieving with document filter for user %s docs=%s top_k=%s per_doc_k=%s",
+            user_id,
+            doc_names,
+            top_k,
+            per_doc_k,
+        )
+        chunks = retrieve_for_docs(
+            doc_names,
+            query=query,
+            top_k=top_k,
+            user_id=user_id,
+            doc_ids=doc_ids,
+            per_doc_k=per_doc_k,
         )
     else:
         logger.info(f"Retrieving top_k={top_k} chunks for user {user_id}, query: '{query[:60]}'")

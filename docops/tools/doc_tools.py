@@ -125,12 +125,29 @@ logger = get_logger("docops.tools.doc_tools")
 
 # ── tool_search_docs ─────────────────────────────────────────────────────────
 
-def tool_search_docs(query: str, user_id: int, top_k: Optional[int] = None) -> List[Document]:
+def tool_search_docs(
+    query: str,
+    user_id: int,
+    top_k: Optional[int] = None,
+    doc_names: Optional[List[str]] = None,
+    doc_ids: Optional[List[str]] = None,
+) -> List[Document]:
     """Search the user's indexed documents and return matching chunks."""
-    from docops.rag.retriever import retrieve
+    from docops.rag.retriever import retrieve, retrieve_for_docs
 
     k = top_k or config.top_k
-    chunks = retrieve(query, user_id=user_id, top_k=k)
+    clean_doc_names = [str(name).strip() for name in (doc_names or []) if str(name).strip()]
+    clean_doc_ids = [str(doc_id).strip() for doc_id in (doc_ids or []) if str(doc_id).strip()]
+    if clean_doc_names or clean_doc_ids:
+        chunks = retrieve_for_docs(
+            clean_doc_names,
+            query=query,
+            top_k=k,
+            user_id=user_id,
+            doc_ids=clean_doc_ids,
+        )
+    else:
+        chunks = retrieve(query, user_id=user_id, top_k=k)
 
     scores = [c.metadata.get("retrieval_score", "n/a") for c in chunks]
     logger.debug(

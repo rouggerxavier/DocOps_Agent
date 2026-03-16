@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Upload, FolderOpen, CheckCircle, X, FileText } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -9,6 +9,8 @@ import { apiClient, type IngestResponse } from '@/api/client'
 import { cn } from '@/lib/utils'
 
 export function Ingest() {
+  const qc = useQueryClient()
+
   // Upload tab state
   const [dragOver, setDragOver] = useState(false)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
@@ -36,6 +38,7 @@ export function Ingest() {
     onSuccess: data => {
       setResult(data)
       setSelectedFiles([])
+      qc.invalidateQueries({ queryKey: ['docs'] })
       toast.success(`${data.chunks_indexed} chunks indexados com sucesso!`)
     },
     onError: (err: any) => {
@@ -53,6 +56,7 @@ export function Ingest() {
     onSuccess: data => {
       setResult(data)
       setServerPath('')
+      qc.invalidateQueries({ queryKey: ['docs'] })
       toast.success(`${data.chunks_indexed} chunks indexados com sucesso!`)
     },
     onError: (err: any) => {
@@ -66,7 +70,7 @@ export function Ingest() {
     e.preventDefault()
     setDragOver(false)
     const files = Array.from(e.dataTransfer.files).filter(f =>
-      /\.(pdf|txt|md|markdown)$/i.test(f.name)
+      /\.(pdf|txt|md|markdown|csv|xlsx)$/i.test(f.name)
     )
     setSelectedFiles(prev => [...prev, ...files])
   }
@@ -80,9 +84,9 @@ export function Ingest() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-zinc-100">Ingestão de Documentos</h1>
+        <h1 className="text-2xl font-bold text-zinc-100">IngestÃ£o de Documentos</h1>
         <p className="mt-1 text-sm text-zinc-400">
-          Indexe PDFs, Markdown e arquivos de texto no Chroma
+          Indexe PDFs, Markdown, texto e planilhas (CSV/XLSX) no Chroma
         </p>
       </div>
 
@@ -113,7 +117,7 @@ export function Ingest() {
               Upload de Arquivos
             </CardTitle>
             <CardDescription>
-              Arraste arquivos ou clique para selecionar. Suporta PDF, TXT, MD.
+              Arraste arquivos ou clique para selecionar. Suporta PDF, TXT, MD, CSV e XLSX
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -134,12 +138,12 @@ export function Ingest() {
               <p className="text-sm font-medium text-zinc-300">
                 Arraste arquivos aqui ou clique para selecionar
               </p>
-              <p className="mt-1 text-xs text-zinc-500">PDF, TXT, MD, MARKDOWN</p>
+              <p className="mt-1 text-xs text-zinc-500">PDF, TXT, MD, MARKDOWN, CSV, XLSX</p>
               <input
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".pdf,.txt,.md,.markdown"
+                accept=".pdf,.txt,.md,.markdown,.csv,.xlsx"
                 className="hidden"
                 onChange={handleFileInput}
               />
@@ -225,12 +229,12 @@ export function Ingest() {
       {/* Advanced settings */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm text-zinc-400">Configurações Avançadas</CardTitle>
+          <CardTitle className="text-sm text-zinc-400">ConfiguraÃ§Ãµes AvanÃ§adas</CardTitle>
         </CardHeader>
         <CardContent className="grid gap-4 sm:grid-cols-2">
           <div>
             <label className="mb-1.5 block text-xs font-medium text-zinc-400">
-              Chunk Size (padrão: 900)
+              Chunk Size (padrÃ£o: 900)
             </label>
             <Input
               type="number"
@@ -241,7 +245,7 @@ export function Ingest() {
           </div>
           <div>
             <label className="mb-1.5 block text-xs font-medium text-zinc-400">
-              Chunk Overlap (padrão: 150)
+              Chunk Overlap (padrÃ£o: 150)
             </label>
             <Input
               type="number"
@@ -260,7 +264,7 @@ export function Ingest() {
             <div className="flex items-start gap-3">
               <CheckCircle className="mt-0.5 h-5 w-5 shrink-0 text-green-400" />
               <div>
-                <p className="font-medium text-green-300">Ingestão concluída!</p>
+                <p className="font-medium text-green-300">IngestÃ£o concluÃ­da!</p>
                 <p className="mt-1 text-sm text-green-500">
                   {result.files_loaded} documento(s) carregado(s),{' '}
                   {result.chunks_indexed} chunks indexados.
@@ -283,3 +287,4 @@ export function Ingest() {
     </div>
   )
 }
+

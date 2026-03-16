@@ -69,6 +69,7 @@ class IngestResponse(BaseModel):
 # ── /api/docs ─────────────────────────────────────────────────────────────────
 
 class DocItem(BaseModel):
+    doc_id: str = ""
     file_name: str
     source: str
     chunk_count: int
@@ -80,6 +81,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     session_id: Optional[str] = None
     top_k: Optional[int] = Field(default=None, ge=1, le=50)
+    doc_names: List[str] = Field(default_factory=list)
     debug_grounding: bool = False
 
 
@@ -116,6 +118,7 @@ class SummarizeRequest(BaseModel):
 class SummarizeResponse(BaseModel):
     answer: str
     artifact_path: Optional[str] = None
+    artifact_filename: Optional[str] = None
     summary_diagnostics: Optional[dict[str, Any]] = None
 
 
@@ -137,6 +140,10 @@ class CompareResponse(BaseModel):
 class ArtifactRequest(BaseModel):
     type: str = Field(description="study_plan | summary | checklist | artifact")
     topic: str = Field(min_length=1)
+    doc_names: List[str] = Field(
+        default_factory=list,
+        description="Optional list of document names/ids to constrain generation",
+    )
     output: Optional[str] = None
 
 
@@ -152,6 +159,8 @@ class ArtifactItem(BaseModel):
     filename: str
     size: int
     created_at: str
+    artifact_type: str = ""
+    title: Optional[str] = None
 
 
 # ── /api/health ───────────────────────────────────────────────────────────────

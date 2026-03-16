@@ -180,11 +180,37 @@ def _fallback_collect(doc_name: str, doc_id: str, user_id: int) -> list[Document
 def _sort_chunks(chunks: list[Document]) -> list[Document]:
     """Sort chunks by document order using available metadata."""
 
+    def _to_int(value: Any, default: int) -> int:
+        """Best-effort int conversion for heterogeneous metadata values.
+
+        Chunks coming from different loaders/index versions may carry values like
+        `None`, empty strings, numeric strings, floats-as-text, or sentinel labels
+        such as "N/A". Sorting must never crash on these values.
+        """
+        if value is None:
+            return default
+        if isinstance(value, (int, float)):
+            try:
+                return int(value)
+            except (TypeError, ValueError):
+                return default
+
+        text = str(value).strip()
+        if not text:
+            return default
+        try:
+            return int(text)
+        except ValueError:
+            try:
+                return int(float(text))
+            except ValueError:
+                return default
+
     def _sort_key(doc: Document) -> tuple[int, int, int]:
         meta = doc.metadata
-        raw_ci = meta.get("chunk_index"); chunk_index = int(raw_ci) if raw_ci is not None else 999_999
-        page_start = int(meta.get("page_start") or meta.get("page") or 0)
-        page_end = int(meta.get("page_end") or page_start)
+        chunk_index = _to_int(meta.get("chunk_index"), 999_999)
+        page_start = _to_int(meta.get("page_start") or meta.get("page"), 0)
+        page_end = _to_int(meta.get("page_end"), page_start)
         return (chunk_index, page_start, page_end)
 
     return sorted(chunks, key=_sort_key)

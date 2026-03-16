@@ -10,6 +10,8 @@ from langchain_core.documents import Document
 from docops.ingestion.loaders import (
     load_text,
     load_markdown,
+    load_csv,
+    load_xlsx,
     load_directory,
     SUPPORTED_EXTENSIONS,
 )
@@ -42,6 +44,47 @@ def test_load_markdown_returns_document():
         assert docs[0].metadata["page"] == "N/A"
     finally:
         tmp.unlink()
+
+
+def test_load_csv_returns_document():
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False, encoding="utf-8") as f:
+        f.write("nome,idade\nAna,21\nBruno,34\n")
+        tmp = Path(f.name)
+    try:
+        docs = load_csv(tmp)
+        assert len(docs) == 1
+        assert "Tabela CSV" in docs[0].page_content
+        assert "nome: Ana" in docs[0].page_content
+        assert docs[0].metadata["file_type"] == "csv"
+    finally:
+        tmp.unlink()
+
+
+def test_load_xlsx_returns_sheet_documents():
+    openpyxl = pytest.importorskip("openpyxl")
+
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+        tmp = Path(f.name)
+
+    try:
+        wb = openpyxl.Workbook()
+        ws1 = wb.active
+        ws1.title = "Dados"
+        ws1.append(["nome", "nota"])
+        ws1.append(["Ana", 9.5])
+        ws2 = wb.create_sheet("Resumo")
+        ws2.append(["topico", "status"])
+        ws2.append(["ID3", "ok"])
+        wb.save(tmp)
+        wb.close()
+
+        docs = load_xlsx(tmp)
+        assert len(docs) == 2
+        assert all(d.metadata["file_type"] == "xlsx" for d in docs)
+        assert any(d.metadata["section_title"] == "Dados" for d in docs)
+        assert any("Planilha XLSX" in d.page_content for d in docs)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def test_load_text_metadata():
@@ -93,6 +136,8 @@ def test_supported_extensions():
     assert ".pdf" in SUPPORTED_EXTENSIONS
     assert ".txt" in SUPPORTED_EXTENSIONS
     assert ".md" in SUPPORTED_EXTENSIONS
+    assert ".csv" in SUPPORTED_EXTENSIONS
+    assert ".xlsx" in SUPPORTED_EXTENSIONS
 
 
 # ── Ingestion pipeline integration ───────────────────────────────────────────

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import { FileText, BookOpen, GitCompare, Loader2, Search } from 'lucide-react'
+import { FileText, BookOpen, GitCompare, Loader2, Search, Download } from 'lucide-react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import { Card, CardContent } from '@/components/ui/card'
@@ -9,6 +9,17 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { apiClient, type DocItem } from '@/api/client'
+
+function downloadBlobFile(blob: Blob, filename: string) {
+  const objectUrl = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = objectUrl
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  URL.revokeObjectURL(objectUrl)
+}
 
 function SummarizeDialog({
   doc,
@@ -19,14 +30,50 @@ function SummarizeDialog({
 }) {
   const [result, setResult] = useState('')
   const [mode, setMode] = useState<'brief' | 'deep'>('brief')
+  const [saveSummary, setSaveSummary] = useState(true)
+  const [artifactFilename, setArtifactFilename] = useState<string | null>(null)
+  const [downloading, setDownloading] = useState<'md' | 'pdf' | null>(null)
 
   const mutation = useMutation({
-    mutationFn: () => apiClient.summarize(doc, false, mode),
-    onSuccess: data => setResult(data.answer),
+    mutationFn: () => apiClient.summarize(doc, saveSummary, mode),
+    onSuccess: data => {
+      setResult(data.answer)
+      setArtifactFilename(data.artifact_filename ?? null)
+      if (saveSummary && data.artifact_filename) {
+        toast.success(`Resumo salvo: ${data.artifact_filename}`)
+      }
+    },
     onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao resumir'),
   })
 
   const modeLabel = mode === 'brief' ? 'Resumo Breve' : 'Resumo Aprofundado'
+
+  async function handleDownloadMd() {
+    if (!artifactFilename) return
+    setDownloading('md')
+    try {
+      const blob = await apiClient.getArtifactBlob(artifactFilename)
+      downloadBlobFile(blob, artifactFilename)
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail ?? 'Erro ao baixar .md')
+    } finally {
+      setDownloading(null)
+    }
+  }
+
+  async function handleDownloadPdf() {
+    if (!artifactFilename) return
+    setDownloading('pdf')
+    try {
+      const blob = await apiClient.getArtifactPdfBlob(artifactFilename)
+      const pdfName = artifactFilename.replace(/\.(md|markdown|txt)$/i, '.pdf')
+      downloadBlobFile(blob, pdfName)
+    } catch (err: any) {
+      toast.error(err?.response?.data?.detail ?? 'Erro ao baixar PDF')
+    } finally {
+      setDownloading(null)
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
@@ -70,6 +117,14 @@ function SummarizeDialog({
                   </button>
                 </div>
               </div>
+              <label className="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200">
+                <input
+                  type="checkbox"
+                  checked={saveSummary}
+                  onChange={e => setSaveSummary(e.target.checked)}
+                />
+                Salvar resumo em artefatos (habilita exportação .md e PDF)
+              </label>
               <Button onClick={() => mutation.mutate()} className="w-full">
                 <BookOpen className="mr-2 h-4 w-4" />
                 Gerar {modeLabel}
@@ -100,11 +155,27 @@ function SummarizeDialog({
                   variant="ghost"
                   size="sm"
                   className="text-xs text-zinc-500 hover:text-zinc-300"
-                  onClick={() => { setResult(''); mutation.reset() }}
+                  onClick={() => {
+                    setResult('')
+                    setArtifactFilename(null)
+                    mutation.reset()
+                  }}
                 >
                   Gerar outro
                 </Button>
               </div>
+              {artifactFilename && (
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={handleDownloadMd} disabled={downloading !== null}>
+                    <Download className="mr-2 h-4 w-4" />
+                    {downloading === 'md' ? 'Baixando...' : 'Exportar .md'}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={handleDownloadPdf} disabled={downloading !== null}>
+                    <FileText className="mr-2 h-4 w-4" />
+                    {downloading === 'pdf' ? 'Baixando...' : 'Exportar PDF'}
+                  </Button>
+                </div>
+              )}
               <div className="prose prose-invert prose-sm max-w-none max-h-[32rem] overflow-y-auto">
                 <ReactMarkdown>{result}</ReactMarkdown>
               </div>

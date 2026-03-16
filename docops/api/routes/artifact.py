@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import mimetypes
+import re
 from pathlib import Path
 from typing import List
 
@@ -18,26 +19,50 @@ from docops.db.crud import create_artifact_record, list_artifacts_for_user
 from docops.db.database import get_db
 from docops.db.models import User
 from docops.logging import get_logger
-from docops.services.ownership import require_user_artifact
+from docops.services.ownership import require_user_artifact, require_user_document
 from docops.storage.paths import get_user_artifacts_dir
 
 logger = get_logger("docops.api.artifact")
 router = APIRouter()
 
 
-def _run_artifact(type_: str, topic: str, output: str | None, user_id: int) -> dict:
+def _safe_stem(text: str, limit: int = 48) -> str:
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", text.strip())
+    stem = stem.strip("._-") or "artifact"
+    return stem[:limit]
+
+
+def _run_artifact(
+    type_: str,
+    topic: str,
+    output: str | None,
+    user_id: int,
+    doc_names: list[str] | None = None,
+    doc_ids: list[str] | None = None,
+) -> dict:
     from docops.graph.graph import run
     from docops.tools.doc_tools import tool_write_artifact
 
+    selected_docs = [name for name in (doc_names or []) if str(name).strip()]
+    query = f"Gere um {type_} sobre: {topic}"
+    if selected_docs:
+        query += f". Use apenas os documentos: {', '.join(selected_docs)}."
+
+    extra: dict[str, object] = {"topic": topic}
+    if selected_docs:
+        extra["doc_names"] = selected_docs
+    if doc_ids:
+        extra["doc_ids"] = [str(d) for d in doc_ids if str(d).strip()]
+
     state = dict(
         run(
-            query=f"Gere um {type_} sobre: {topic}",
-            extra={"topic": topic},
+            query=query,
+            extra=extra,
             user_id=user_id,
         )
     )
     answer = state.get("answer", "")
-    fname = output or f"{type_}_{topic[:30].replace(' ', '_')}.md"
+    fname = output or f"{type_}_{_safe_stem(topic)}.md"
     path = tool_write_artifact(fname, answer, user_id=user_id)
     return {"answer": answer, "filename": path.name, "path": str(path)}
 
@@ -50,9 +75,22 @@ async def create_artifact(
 ) -> ArtifactResponse:
     """Generate and save a structured artifact scoped to the current user."""
     logger.info(f"Artifact: type={body.type}, topic='{body.topic[:50]}' for user {current_user.id}")
+    selected_docs = []
+    for doc_name in body.doc_names:
+        selected_docs.append(require_user_document(db, current_user.id, doc_name))
+
+    doc_names = [doc.file_name for doc in selected_docs]
+    doc_ids = [doc.doc_id for doc in selected_docs]
+
     try:
         result = await asyncio.to_thread(
-            _run_artifact, body.type, body.topic, body.output, current_user.id
+            _run_artifact,
+            body.type,
+            body.topic,
+            body.output,
+            current_user.id,
+            doc_names,
+            doc_ids,
         )
     except EnvironmentError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
@@ -67,6 +105,8 @@ async def create_artifact(
         title=body.topic[:512],
         filename=result["filename"],
         path=result["path"],
+        source_doc_id=doc_ids[0] if len(doc_ids) >= 1 else None,
+        source_doc_id_2=doc_ids[1] if len(doc_ids) >= 2 else None,
     )
 
     return ArtifactResponse(**result)
@@ -88,6 +128,8 @@ async def list_artifacts(
                 filename=r.filename,
                 size=size,
                 created_at=r.created_at.isoformat(),
+                artifact_type=r.artifact_type,
+                title=r.title,
             )
         )
     return items

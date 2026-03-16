@@ -1,13 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
-import { useMutation } from '@tanstack/react-query'
-import { Send, Bot, User, FileText, ChevronRight, Loader2 } from 'lucide-react'
+import { useMutation, useQuery } from '@tanstack/react-query'
+import { Send, Bot, User, FileText, ChevronRight, Loader2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import { CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { apiClient, type ChatResponse, type SourceItem } from '@/api/client'
+import { apiClient, type ChatResponse, type SourceItem, type DocItem } from '@/api/client'
 import { cn } from '@/lib/utils'
 
 interface Message {
@@ -126,14 +126,27 @@ function MessageBubble({
 export function Chat() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
+  const [selectedDoc, setSelectedDoc] = useState('')
+  const [selectedDocs, setSelectedDocs] = useState<DocItem[]>([])
   const [activeSources, setActiveSources] = useState<SourceItem[]>([])
   const [selectedSource, setSelectedSource] = useState<SourceItem | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const sessionId = useRef(`session_${Date.now()}`)
 
+  const { data: docs } = useQuery<DocItem[]>({
+    queryKey: ['docs'],
+    queryFn: apiClient.listDocs,
+    retry: 1,
+  })
+
   const mutation = useMutation({
     mutationFn: (message: string) =>
-      apiClient.chat(message, sessionId.current),
+      apiClient.chat(
+        message,
+        sessionId.current,
+        undefined,
+        selectedDocs.map(doc => doc.doc_id)
+      ),
     onSuccess: (data: ChatResponse) => {
       setMessages(prev => [
         ...prev,
@@ -201,9 +214,9 @@ export function Chat() {
           {messages.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
               <Bot className="h-12 w-12 text-zinc-600" />
-              <p className="text-sm font-medium text-zinc-400">Olá! Como posso ajudar?</p>
+              <p className="text-sm font-medium text-zinc-400">OlÃ¡! Como posso ajudar?</p>
               <p className="text-xs text-zinc-600">
-                Faça perguntas sobre seus documentos indexados.
+                FaÃ§a perguntas sobre seus documentos indexados.
               </p>
             </div>
           )}
@@ -236,9 +249,62 @@ export function Chat() {
 
         {/* Input */}
         <div className="border-t border-zinc-800 p-4">
+          <div className="mb-3 space-y-2">
+            <div className="flex gap-2">
+              <select
+                value={selectedDoc}
+                onChange={e => setSelectedDoc(e.target.value)}
+                disabled={mutation.isPending}
+                className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100"
+              >
+                <option value="">Selecionar documento (opcional)</option>
+                {(docs ?? [])
+                  .filter(doc => !selectedDocs.some(item => item.doc_id === doc.doc_id))
+                  .map(doc => (
+                    <option key={doc.doc_id} value={doc.doc_id}>
+                      {doc.file_name}
+                    </option>
+                  ))}
+              </select>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!selectedDoc || mutation.isPending}
+                onClick={() => {
+                  const docToAdd = (docs ?? []).find(doc => doc.doc_id === selectedDoc)
+                  if (!docToAdd || selectedDocs.some(item => item.doc_id === docToAdd.doc_id)) return
+                  setSelectedDocs(prev => [...prev, docToAdd])
+                  setSelectedDoc('')
+                }}
+              >
+                Adicionar
+              </Button>
+            </div>
+            {selectedDocs.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {selectedDocs.map(doc => (
+                  <span
+                    key={doc.doc_id}
+                    className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs text-zinc-200"
+                  >
+                    {doc.file_name}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSelectedDocs(prev => prev.filter(item => item.doc_id !== doc.doc_id))
+                      }
+                      className="text-zinc-400 hover:text-red-400"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
           <div className="flex gap-2">
             <Input
-              placeholder="Faça uma pergunta sobre seus documentos..."
+              placeholder="FaÃ§a uma pergunta sobre seus documentos..."
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -279,7 +345,7 @@ export function Chat() {
             <div className="flex flex-col items-center gap-2 py-8 text-center">
               <FileText className="h-8 w-8 text-zinc-600" />
               <p className="text-xs text-zinc-500">
-                As fontes aparecerão aqui após o chat
+                As fontes aparecerÃ£o aqui apÃ³s o chat
               </p>
             </div>
           ) : (

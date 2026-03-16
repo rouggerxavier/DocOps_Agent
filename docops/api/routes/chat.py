@@ -19,12 +19,40 @@ logger = get_logger("docops.api.chat")
 router = APIRouter()
 
 
+_CITATION_RE = re.compile(r"\[Fonte\s*(\d+)\]", re.IGNORECASE)
+
+
+def _extract_cited_indices(answer: str, total_chunks: int) -> list[int]:
+    """Return valid [Fonte N] indices found in answer, preserving first-seen order."""
+    if total_chunks <= 0 or not answer:
+        return []
+
+    seen: set[int] = set()
+    ordered: list[int] = []
+    for match in _CITATION_RE.finditer(answer):
+        idx = int(match.group(1))
+        if idx < 1 or idx > total_chunks or idx in seen:
+            continue
+        seen.add(idx)
+        ordered.append(idx)
+    return ordered
+
+
 def _extract_sources(state: dict) -> List[SourceItem]:
-    """Convert retrieved chunks into response source objects."""
+    """Convert retrieved chunks into response source objects.
+
+    Prefer only sources that were actually cited in the answer body.
+    Fallback to all retrieved chunks when no valid citation is present.
+    """
     chunks = state.get("retrieved_chunks") or []
+    answer = str(state.get("answer", "") or "")
+    cited_indices = _extract_cited_indices(answer, len(chunks))
+    selected_indices = cited_indices if cited_indices else list(range(1, len(chunks) + 1))
+
     sources: list[SourceItem] = []
 
-    for idx, doc in enumerate(chunks, start=1):
+    for idx in selected_indices:
+        doc = chunks[idx - 1]
         metadata = doc.metadata if hasattr(doc, "metadata") else {}
         text = doc.page_content if hasattr(doc, "page_content") else str(doc)
         text = _strip_embedding_header(text)
@@ -46,18 +74,37 @@ def _extract_sources(state: dict) -> List[SourceItem]:
     return sources
 
 
-def _run_chat(message: str, top_k: int | None, user_id: int = 0) -> dict:
+def _run_chat(
+    message: str,
+    top_k: int | None,
+    user_id: int = 0,
+    doc_names: list[str] | None = None,
+) -> dict:
     from docops.graph.graph import run
 
-    return dict(run(query=message, top_k=top_k, user_id=user_id))
+    extra = None
+    if doc_names:
+        clean_doc_names = [str(name).strip() for name in doc_names if str(name).strip()]
+        if clean_doc_names:
+            extra = {"doc_names": clean_doc_names}
+
+    return dict(run(query=message, top_k=top_k, user_id=user_id, extra=extra))
 
 
-async def _invoke_chat_runner(message: str, top_k: int | None, user_id: int) -> dict:
+async def _invoke_chat_runner(
+    message: str,
+    top_k: int | None,
+    user_id: int,
+    doc_names: list[str] | None = None,
+) -> dict:
     """Call _run_chat with compatibility for legacy monkeypatch signatures."""
     try:
-        return await asyncio.to_thread(_run_chat, message, top_k, user_id)
+        return await asyncio.to_thread(_run_chat, message, top_k, user_id, doc_names)
     except TypeError:
-        return await asyncio.to_thread(_run_chat, message, top_k)
+        try:
+            return await asyncio.to_thread(_run_chat, message, top_k, user_id)
+        except TypeError:
+            return await asyncio.to_thread(_run_chat, message, top_k)
 
 
 @router.post("/chat", response_model=ChatResponse)
@@ -69,7 +116,12 @@ async def chat(
     logger.info("Chat request from user %s: '%s'", current_user.id, body.message[:80])
 
     try:
-        state = await _invoke_chat_runner(body.message, body.top_k, current_user.id)
+        state = await _invoke_chat_runner(
+            body.message,
+            body.top_k,
+            current_user.id,
+            body.doc_names,
+        )
     except EnvironmentError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:

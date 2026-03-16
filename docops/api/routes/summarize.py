@@ -110,7 +110,7 @@ async def summarize(
     except EnvironmentError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
-        logger.error("Summarize error: %s", exc)
+        logger.exception("Summarize error: %s", exc)
         raise HTTPException(status_code=500, detail="Agent error")
 
     # Strict fail-closed: em perfil strict, se accepted=False retorna 422
@@ -145,5 +145,6 @@ async def summarize(
     return SummarizeResponse(
         answer=str(result.get("answer", "")),
         artifact_path=result.get("artifact_path"),
+        artifact_filename=result.get("artifact_filename"),
         summary_diagnostics=result.get("diagnostics") if body.debug_summary else None,
     )

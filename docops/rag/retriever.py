@@ -182,3 +182,68 @@ def retrieve_for_doc(
     except Exception as exc:
         logger.error("Filtered retrieval failed: %s", exc)
         return []
+
+
+def retrieve_for_docs(
+    doc_names_or_ids: list[str],
+    query: str,
+    top_k: int | None = None,
+    user_id: int = 0,
+    doc_ids: list[str] | None = None,
+    per_doc_k: int | None = None,
+) -> List[Document]:
+    """Retrieve chunks restricted to a list of documents in one tenant.
+
+    If ``per_doc_k`` is provided, each selected document retrieves up to that
+    amount and the merged list is returned (deduplicated). Otherwise, ``top_k``
+    is treated as a global cap across selected documents.
+    """
+    names = [str(name).strip() for name in (doc_names_or_ids or []) if str(name).strip()]
+    ids = [str(doc_id).strip() for doc_id in (doc_ids or []) if str(doc_id).strip()]
+    if not names and not ids:
+        return []
+
+    targets: list[tuple[str, str | None]] = []
+    if ids:
+        for idx, doc_id in enumerate(ids):
+            name = names[idx] if idx < len(names) else doc_id
+            targets.append((name, doc_id))
+    else:
+        for name in names:
+            targets.append((name, None))
+
+    if not targets:
+        return []
+
+    total_k = top_k if top_k is not None else config.top_k
+    each_k = per_doc_k if per_doc_k is not None else max(1, total_k)
+
+    merged: list[Document] = []
+    for name, doc_id in targets:
+        docs = retrieve_for_doc(
+            name,
+            query=query,
+            top_k=each_k,
+            user_id=user_id,
+            doc_id=doc_id,
+        )
+        for doc in docs:
+            doc.metadata["retrieval_mode"] = "filtered_multi_doc"
+        merged.extend(docs)
+
+    seen: set[str] = set()
+    unique_docs: list[Document] = []
+    for doc in merged:
+        meta = doc.metadata if hasattr(doc, "metadata") else {}
+        identity = str(
+            meta.get("chunk_id")
+            or f"{meta.get('doc_id','')}|{meta.get('page_start','')}|{meta.get('chunk_index','')}|{hash(doc.page_content)}"
+        )
+        if identity in seen:
+            continue
+        seen.add(identity)
+        unique_docs.append(doc)
+
+    if per_doc_k is None:
+        return unique_docs[:total_k]
+    return unique_docs

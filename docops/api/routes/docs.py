@@ -21,6 +21,7 @@ def tool_list_docs(user_id: int, db: Session) -> list[dict]:
     rows = list_documents_for_user(db, user_id)
     return [
         {
+            "doc_id": row.doc_id,
             "file_name": row.file_name,
             "source": row.source_path,
             "chunk_count": row.chunk_count,
@@ -49,6 +50,7 @@ async def list_docs(
     rows = _safe_tool_list_docs(current_user.id, db)
     return [
         DocItem(
+            doc_id=str(item.get("doc_id", "")),
             file_name=item.get("file_name", ""),
             source=item.get("source", ""),
             chunk_count=int(item.get("chunk_count", 0)),
