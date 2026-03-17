@@ -147,16 +147,14 @@ export function StudyPlan() {
 
           <Card className="border-zinc-800 bg-zinc-900">
             <CardContent className="p-6">
-              <ReactMarkdown
-                className="prose prose-invert prose-sm max-w-none
+              <div className="prose prose-invert prose-sm max-w-none
                   prose-headings:text-zinc-100 prose-h1:text-lg prose-h2:text-base prose-h3:text-sm
                   prose-p:text-zinc-400 prose-li:text-zinc-400
                   prose-strong:text-zinc-200 prose-em:text-zinc-300
                   prose-code:text-blue-300 prose-code:bg-zinc-800 prose-code:px-1 prose-code:rounded
-                  prose-hr:border-zinc-800"
-              >
-                {result.plan}
-              </ReactMarkdown>
+                  prose-hr:border-zinc-800">
+                <ReactMarkdown>{result.plan}</ReactMarkdown>
+              </div>
             </CardContent>
           </Card>
         </div>

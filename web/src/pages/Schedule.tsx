@@ -238,7 +238,7 @@ function BlockPopover({
   onClose: () => void
   onDeleteSchedule: (id: number) => void
   onDeleteReminder: (id: number) => void
-  onUpdateSchedule: (id: number, payload: { title: string; start_time: string; end_time: string; note?: string | null }) => void
+  onUpdateSchedule: (id: number, payload: { title: string; day_of_week: number; start_time: string; end_time: string; note?: string | null }) => void
   onUpdateReminder: (id: number, payload: { title: string; starts_at: string; ends_at?: string | null; note?: string | null }) => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -286,7 +286,7 @@ function BlockPopover({
 
   function handleSave() {
     if (block.kind === 'schedule') {
-      onUpdateSchedule(block.item.id, { title, start_time: startTime, end_time: endTime, note: note || null })
+      onUpdateSchedule(block.item.id, { title, day_of_week: block.item.day_of_week, start_time: startTime, end_time: endTime, note: note || null })
     } else {
       const dateStr = new Date(block.item.starts_at).toISOString().slice(0, 10)
       onUpdateReminder(block.item.id, {
@@ -446,7 +446,7 @@ function WeekView({
   const now = new Date()
   const nowMinutes = now.getHours() * 60 + now.getMinutes()
   const nowTop = minutesToTop(nowMinutes)
-  const todayKey = toDateKey(now)
+
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
@@ -748,7 +748,7 @@ export function Schedule() {
   })
 
   const updateSchedule = useMutation({
-    mutationFn: ({ id, payload }: { id: number; payload: { title: string; start_time: string; end_time: string; note?: string | null } }) =>
+    mutationFn: ({ id, payload }: { id: number; payload: { title: string; day_of_week: number; start_time: string; end_time: string; note?: string | null } }) =>
       apiClient.updateSchedule(id, { ...payload, active: true }),
     onSuccess: () => {
       toast.success('Bloco atualizado')

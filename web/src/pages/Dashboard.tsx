@@ -2,7 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import {
   CalendarClock, FileText, Layers, BookOpen,
   MessageSquare, Clock, ChevronRight, ArrowRight, ScrollText,
-  Sun, AlertTriangle, CheckCircle2, ListTodo, StickyNote,
+  Sun, AlertTriangle, ListTodo, StickyNote,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -102,11 +102,12 @@ function StatCard({
   loading?: boolean
   accent?: 'green' | 'blue' | 'yellow'
 }) {
-  const accentClass = {
+  const accentMap: Record<string, string> = {
     green: 'text-emerald-400',
     blue: 'text-blue-400',
     yellow: 'text-yellow-400',
-  }[accent ?? ''] ?? 'text-zinc-100'
+  }
+  const accentClass = accent ? (accentMap[accent] ?? 'text-zinc-100') : 'text-zinc-100'
 
   return (
     <Card className="bg-zinc-900 border-zinc-800">
@@ -215,7 +216,7 @@ export function Dashboard() {
     retry: 1,
   })
 
-  const totalChunks = docs?.reduce((sum, d) => sum + d.chunk_count, 0) ?? 0
+
   const hasDocuments = !isLoading && docs && docs.length > 0
   const apiStatus = error ? 'Offline' : 'Online'
 
