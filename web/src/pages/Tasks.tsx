@@ -3,11 +3,12 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
   Plus, Trash2, CheckCircle2, Circle, Clock, ChevronDown, ChevronUp,
-  Flag, AlertTriangle, ListTodo, Pencil, Check, X,
+  Flag, AlertTriangle, ListTodo, Pencil, Check, X, CheckSquare, Square,
+  ScrollText,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { apiClient, type TaskItem } from '@/api/client'
+import { apiClient, type TaskItem, type TaskChecklistItem, type TaskActivityLog } from '@/api/client'
 import { cn } from '@/lib/utils'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -30,6 +31,282 @@ function PriorityBadge({ priority }: { priority: string }) {
       <Flag className="h-2.5 w-2.5" />
       {labels[priority] ?? priority}
     </span>
+  )
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const config: Record<string, { label: string; className: string }> = {
+    pending: { label: 'Pendente',     className: 'text-zinc-400 border-zinc-700 bg-zinc-900' },
+    doing:   { label: 'Em andamento', className: 'text-blue-400 border-blue-800/50 bg-blue-950/20' },
+    done:    { label: 'Concluída',    className: 'text-emerald-400 border-emerald-800/50 bg-emerald-950/20' },
+  }
+  const { label, className } = config[status] ?? config.pending
+  return (
+    <span className={cn(
+      'inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium',
+      className,
+    )}>
+      {label}
+    </span>
+  )
+}
+
+// ── Task Drawer ───────────────────────────────────────────────────────────────
+
+function TaskDrawer({ task, onClose }: { task: TaskItem; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [newItem, setNewItem] = useState('')
+  const [activityText, setActivityText] = useState('')
+
+  const { data: checklist = [], isLoading: loadingChecklist } = useQuery<TaskChecklistItem[]>({
+    queryKey: ['task-checklist', task.id],
+    queryFn: () => apiClient.listTaskChecklist(task.id),
+  })
+
+  const { data: activities = [], isLoading: loadingActivities } = useQuery<TaskActivityLog[]>({
+    queryKey: ['task-activities', task.id],
+    queryFn: () => apiClient.listTaskActivities(task.id),
+  })
+
+  const addItemMut = useMutation({
+    mutationFn: (text: string) => apiClient.createChecklistItem(task.id, text),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['task-checklist', task.id] })
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      setNewItem('')
+    },
+    onError: () => toast.error('Erro ao adicionar item.'),
+  })
+
+  const toggleItemMut = useMutation({
+    mutationFn: ({ itemId, done }: { itemId: number; done: boolean }) =>
+      apiClient.updateChecklistItem(task.id, itemId, { done }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['task-checklist', task.id] })
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+    },
+  })
+
+  const deleteItemMut = useMutation({
+    mutationFn: (itemId: number) => apiClient.deleteChecklistItem(task.id, itemId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['task-checklist', task.id] })
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+    },
+  })
+
+  const addActivityMut = useMutation({
+    mutationFn: (text: string) => apiClient.createTaskActivity(task.id, text),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['task-activities', task.id] })
+      setActivityText('')
+      toast.success('Progresso registrado!')
+    },
+    onError: () => toast.error('Erro ao registrar progresso.'),
+  })
+
+  const deleteActivityMut = useMutation({
+    mutationFn: (logId: number) => apiClient.deleteTaskActivity(task.id, logId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['task-activities', task.id] }),
+  })
+
+  function submitItem() {
+    if (!newItem.trim()) return
+    addItemMut.mutate(newItem.trim())
+  }
+
+  function submitActivity() {
+    if (!activityText.trim()) return
+    addActivityMut.mutate(activityText.trim())
+  }
+
+  const doneCount = checklist.filter(i => i.done).length
+  const totalCount = checklist.length
+  const progressPct = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0
+
+  return (
+    <div className="fixed inset-0 z-50 flex">
+      {/* Overlay */}
+      <div className="flex-1 bg-black/50" onClick={onClose} />
+
+      {/* Panel */}
+      <div className="w-[420px] bg-zinc-950 border-l border-zinc-800 flex flex-col overflow-y-auto">
+
+        {/* Header */}
+        <div className="sticky top-0 z-10 flex items-start gap-3 p-4 border-b border-zinc-800 bg-zinc-950">
+          <div className="flex-1 min-w-0">
+            <p className="text-[10px] text-zinc-600 uppercase tracking-widest mb-1">Detalhe da Tarefa</p>
+            <h2 className="text-base font-semibold text-zinc-100 leading-snug">{task.title}</h2>
+            <div className="mt-2 flex gap-1.5 flex-wrap">
+              <PriorityBadge priority={task.priority} />
+              <StatusBadge status={task.status} />
+              {task.due_date && (
+                <span className="inline-flex items-center gap-1 text-[10px] text-zinc-600">
+                  <Clock className="h-2.5 w-2.5" />
+                  {new Date(task.due_date).toLocaleDateString('pt-BR', {
+                    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
+                  })}
+                </span>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="mt-0.5 shrink-0 rounded-lg p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Checklist section */}
+        <div className="p-4 border-b border-zinc-800">
+          <div className="flex items-center gap-2 mb-3">
+            <CheckSquare className="h-4 w-4 text-blue-400" />
+            <span className="text-sm font-medium text-zinc-200">Checklist de Metas</span>
+            {totalCount > 0 && (
+              <span className="text-xs text-zinc-500">{doneCount}/{totalCount}</span>
+            )}
+          </div>
+
+          {/* Progress bar */}
+          {totalCount > 0 && (
+            <div className="mb-3">
+              <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
+                <div
+                  className={cn(
+                    'h-full rounded-full transition-all duration-300',
+                    progressPct === 100 ? 'bg-emerald-500' : 'bg-blue-500',
+                  )}
+                  style={{ width: `${progressPct}%` }}
+                />
+              </div>
+              <p className="mt-1 text-[10px] text-zinc-600">{progressPct}% concluído</p>
+            </div>
+          )}
+
+          {/* Items */}
+          {loadingChecklist ? (
+            <div className="space-y-2">
+              {[1, 2].map(i => <div key={i} className="h-8 rounded-lg bg-zinc-900 animate-pulse" />)}
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {checklist.map(item => (
+                <div
+                  key={item.id}
+                  className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-zinc-900 transition-colors"
+                >
+                  <button
+                    onClick={() => toggleItemMut.mutate({ itemId: item.id, done: !item.done })}
+                    className="shrink-0 text-zinc-500 hover:text-blue-400 transition-colors"
+                  >
+                    {item.done
+                      ? <CheckSquare className="h-4 w-4 text-emerald-500" />
+                      : <Square className="h-4 w-4" />
+                    }
+                  </button>
+                  <span className={cn(
+                    'flex-1 text-sm leading-snug',
+                    item.done ? 'line-through text-zinc-600' : 'text-zinc-200',
+                  )}>
+                    {item.text}
+                  </span>
+                  <button
+                    onClick={() => deleteItemMut.mutate(item.id)}
+                    className="shrink-0 opacity-0 group-hover:opacity-100 text-zinc-700 hover:text-red-400 transition-all"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+              {checklist.length === 0 && (
+                <p className="text-xs text-zinc-700 py-2 px-2">Nenhuma meta adicionada ainda.</p>
+              )}
+            </div>
+          )}
+
+          {/* Add item */}
+          <div className="mt-2 flex gap-2">
+            <Input
+              value={newItem}
+              onChange={e => setNewItem(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && submitItem()}
+              placeholder="Adicionar meta..."
+              className="flex-1 h-8 text-xs bg-zinc-900 border-zinc-800 focus:border-zinc-600"
+            />
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={submitItem}
+              disabled={!newItem.trim() || addItemMut.isPending}
+              className="h-8 px-3 text-xs"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </div>
+
+        {/* Activity log section */}
+        <div className="p-4">
+          <div className="flex items-center gap-2 mb-3">
+            <ScrollText className="h-4 w-4 text-purple-400" />
+            <span className="text-sm font-medium text-zinc-200">Diário de Progresso</span>
+          </div>
+
+          {/* Add activity */}
+          <div className="space-y-2 mb-4">
+            <textarea
+              value={activityText}
+              onChange={e => setActivityText(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submitActivity() }}
+              placeholder="O que você fez nessa tarefa? (Ctrl+Enter para registrar)"
+              rows={3}
+              className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 outline-none resize-none focus:border-zinc-600 transition-colors"
+            />
+            <Button
+              size="sm"
+              onClick={submitActivity}
+              disabled={!activityText.trim() || addActivityMut.isPending}
+              className="w-full text-xs h-8"
+            >
+              Registrar progresso
+            </Button>
+          </div>
+
+          {/* Activity list */}
+          {loadingActivities ? (
+            <div className="space-y-2">
+              {[1, 2].map(i => <div key={i} className="h-14 rounded-lg bg-zinc-900 animate-pulse" />)}
+            </div>
+          ) : activities.length === 0 ? (
+            <p className="text-center text-xs text-zinc-700 py-4">Nenhum progresso registrado ainda.</p>
+          ) : (
+            <div className="space-y-2">
+              {activities.map(activity => (
+                <div
+                  key={activity.id}
+                  className="group relative rounded-lg border border-zinc-800/50 bg-zinc-900/50 px-3 py-2.5"
+                >
+                  <p className="text-xs text-zinc-300 leading-relaxed pr-6 whitespace-pre-wrap">{activity.text}</p>
+                  <p className="mt-1.5 text-[10px] text-zinc-700">
+                    {new Date(activity.created_at).toLocaleString('pt-BR', {
+                      day: '2-digit', month: 'short', year: 'numeric',
+                      hour: '2-digit', minute: '2-digit',
+                    })}
+                  </p>
+                  <button
+                    onClick={() => deleteActivityMut.mutate(activity.id)}
+                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-zinc-700 hover:text-red-400 transition-all"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -111,11 +388,13 @@ function TaskRow({
   onStatusChange,
   onEdit,
   onDelete,
+  onOpenDrawer,
 }: {
   task: TaskItem
   onStatusChange: (id: number, status: string) => void
   onEdit: (id: number, title: string, priority: string, due_date: string, status: string) => void
   onDelete: (id: number) => void
+  onOpenDrawer: (id: number) => void
 }) {
   const [editing, setEditing] = useState(false)
   const [editTitle, setEditTitle] = useState(task.title)
@@ -214,12 +493,15 @@ function TaskRow({
 
       {/* Content */}
       <div className="flex-1 min-w-0">
-        <p className={cn(
-          'text-sm font-medium text-zinc-100 leading-snug',
-          isDone && 'line-through text-zinc-500',
-        )}>
+        <button
+          onClick={() => onOpenDrawer(task.id)}
+          className={cn(
+            'text-left text-sm font-medium leading-snug hover:underline decoration-zinc-600 underline-offset-2 transition-colors',
+            isDone ? 'line-through text-zinc-500' : 'text-zinc-100 hover:text-zinc-50',
+          )}
+        >
           {task.title}
-        </p>
+        </button>
         {task.note && (
           <p className="mt-0.5 text-xs text-zinc-600 truncate">{task.note}</p>
         )}
@@ -241,6 +523,18 @@ function TaskRow({
           {isDoing && (
             <span className="inline-flex items-center gap-1 rounded-full border border-blue-800/50 bg-blue-950/20 px-1.5 py-0.5 text-[10px] text-blue-400">
               Em andamento
+            </span>
+          )}
+          {/* Checklist progress badge */}
+          {task.checklist_total > 0 && (
+            <span className={cn(
+              'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium',
+              task.checklist_done === task.checklist_total
+                ? 'text-emerald-400 border-emerald-800/50 bg-emerald-950/20'
+                : 'text-zinc-400 border-zinc-700 bg-zinc-900',
+            )}>
+              <CheckSquare className="h-2.5 w-2.5" />
+              {task.checklist_done}/{task.checklist_total}
             </span>
           )}
         </div>
@@ -272,11 +566,14 @@ type FilterTab = 'all' | 'pending' | 'doing' | 'done'
 export function Tasks() {
   const qc = useQueryClient()
   const [filter, setFilter] = useState<FilterTab>('all')
+  const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null)
 
   const { data: tasks = [], isLoading } = useQuery<TaskItem[]>({
     queryKey: ['tasks'],
     queryFn: apiClient.listTasks,
   })
+
+  const drawerTask = drawerTaskId != null ? tasks.find(t => t.id === drawerTaskId) ?? null : null
 
   const createMut = useMutation({
     mutationFn: ({ title, priority, due_date }: { title: string; priority: string; due_date?: string }) =>
@@ -342,70 +639,81 @@ export function Tasks() {
   ]
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-100">Tarefas</h1>
-          <p className="mt-0.5 text-sm text-zinc-500">
-            {counts.doing > 0 ? `${counts.doing} em andamento · ` : ''}
-            {counts.pending} pendentes
-          </p>
+    <>
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-zinc-100">Tarefas</h1>
+            <p className="mt-0.5 text-sm text-zinc-500">
+              {counts.doing > 0 ? `${counts.doing} em andamento · ` : ''}
+              {counts.pending} pendentes
+            </p>
+          </div>
         </div>
-      </div>
 
-      {/* Quick add */}
-      <QuickAddForm
-        onAdd={(title, priority, due) =>
-          createMut.mutate({ title, priority, due_date: due || undefined })
-        }
-      />
+        {/* Quick add */}
+        <QuickAddForm
+          onAdd={(title, priority, due) =>
+            createMut.mutate({ title, priority, due_date: due || undefined })
+          }
+        />
 
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-zinc-800">
-        {tabs.map(tab => (
-          <button
-            key={tab.key}
-            onClick={() => setFilter(tab.key)}
-            className={cn(
-              'px-3 py-2 text-xs font-medium transition-colors',
-              filter === tab.key
-                ? 'border-b-2 border-blue-500 text-blue-400'
-                : 'text-zinc-500 hover:text-zinc-300',
-            )}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+        {/* Tabs */}
+        <div className="flex gap-1 border-b border-zinc-800">
+          {tabs.map(tab => (
+            <button
+              key={tab.key}
+              onClick={() => setFilter(tab.key)}
+              className={cn(
+                'px-3 py-2 text-xs font-medium transition-colors',
+                filter === tab.key
+                  ? 'border-b-2 border-blue-500 text-blue-400'
+                  : 'text-zinc-500 hover:text-zinc-300',
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
 
-      {/* Task list */}
-      {isLoading && (
+        {/* Task list */}
+        {isLoading && (
+          <div className="space-y-2">
+            {[1, 2, 3].map(i => <div key={i} className="h-16 rounded-xl bg-zinc-900 animate-pulse" />)}
+          </div>
+        )}
+
+        {!isLoading && filtered.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <ListTodo className="h-10 w-10 text-zinc-800 mb-3" />
+            <p className="text-sm text-zinc-600">
+              {filter === 'all' ? 'Nenhuma tarefa ainda.' : `Nenhuma tarefa ${filter === 'done' ? 'concluída' : filter === 'doing' ? 'em andamento' : 'pendente'}.`}
+            </p>
+          </div>
+        )}
+
         <div className="space-y-2">
-          {[1, 2, 3].map(i => <div key={i} className="h-16 rounded-xl bg-zinc-900 animate-pulse" />)}
+          {filtered.map(task => (
+            <TaskRow
+              key={task.id}
+              task={task}
+              onStatusChange={(id, status) => updateMut.mutate({ id, status })}
+              onEdit={(id, title, priority, due_date, status) => editMut.mutate({ id, title, priority, due_date, status })}
+              onDelete={id => deleteMut.mutate(id)}
+              onOpenDrawer={id => setDrawerTaskId(id)}
+            />
+          ))}
         </div>
-      )}
-
-      {!isLoading && filtered.length === 0 && (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <ListTodo className="h-10 w-10 text-zinc-800 mb-3" />
-          <p className="text-sm text-zinc-600">
-            {filter === 'all' ? 'Nenhuma tarefa ainda.' : `Nenhuma tarefa ${filter === 'done' ? 'concluída' : filter === 'doing' ? 'em andamento' : 'pendente'}.`}
-          </p>
-        </div>
-      )}
-
-      <div className="space-y-2">
-        {filtered.map(task => (
-          <TaskRow
-            key={task.id}
-            task={task}
-            onStatusChange={(id, status) => updateMut.mutate({ id, status })}
-            onEdit={(id, title, priority, due_date, status) => editMut.mutate({ id, title, priority, due_date, status })}
-            onDelete={id => deleteMut.mutate(id)}
-          />
-        ))}
       </div>
-    </div>
+
+      {/* Task drawer */}
+      {drawerTask && (
+        <TaskDrawer
+          task={drawerTask}
+          onClose={() => setDrawerTaskId(null)}
+        />
+      )}
+    </>
   )
 }

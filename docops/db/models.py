@@ -170,6 +170,14 @@ class TaskRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
 
     owner: Mapped[User] = relationship(back_populates="tasks")
+    checklist_items: Mapped[list["TaskChecklistItem"]] = relationship(
+        back_populates="task", cascade="all, delete-orphan",
+        order_by="TaskChecklistItem.position, TaskChecklistItem.created_at",
+    )
+    activity_logs: Mapped[list["TaskActivityLog"]] = relationship(
+        back_populates="task", cascade="all, delete-orphan",
+        order_by="TaskActivityLog.created_at",
+    )
 
     __table_args__ = (
         Index("ix_task_user_status", "user_id", "status"),
@@ -177,6 +185,36 @@ class TaskRecord(Base):
 
     def __repr__(self) -> str:
         return f"<TaskRecord id={self.id} user={self.user_id} title={self.title!r} status={self.status!r}>"
+
+
+class TaskChecklistItem(Base):
+    __tablename__ = "task_checklist_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[int] = mapped_column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
+    text: Mapped[str] = mapped_column(String(512), nullable=False)
+    done: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    task: Mapped["TaskRecord"] = relationship(back_populates="checklist_items")
+
+    def __repr__(self) -> str:
+        return f"<TaskChecklistItem id={self.id} task={self.task_id} done={self.done}>"
+
+
+class TaskActivityLog(Base):
+    __tablename__ = "task_activity_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[int] = mapped_column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    task: Mapped["TaskRecord"] = relationship(back_populates="activity_logs")
+
+    def __repr__(self) -> str:
+        return f"<TaskActivityLog id={self.id} task={self.task_id}>"
 
 
 class FlashcardDeck(Base):

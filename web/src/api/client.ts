@@ -128,6 +128,24 @@ export interface TaskItem {
   completed_at: string | null
   created_at: string
   updated_at: string
+  checklist_done: number
+  checklist_total: number
+}
+
+export interface TaskChecklistItem {
+  id: number
+  task_id: number
+  text: string
+  done: boolean
+  position: number
+  created_at: string
+}
+
+export interface TaskActivityLog {
+  id: number
+  task_id: number
+  text: string
+  created_at: string
 }
 
 export interface BriefingTask {
@@ -373,6 +391,27 @@ export const apiClient = {
 
   deleteTask: (id: number): Promise<void> =>
     api.delete(`/api/tasks/${id}`).then(() => undefined),
+
+  listTaskChecklist: (taskId: number): Promise<TaskChecklistItem[]> =>
+    api.get(`/api/tasks/${taskId}/checklist`).then(r => r.data),
+
+  createChecklistItem: (taskId: number, text: string): Promise<TaskChecklistItem> =>
+    api.post(`/api/tasks/${taskId}/checklist`, { text }).then(r => r.data),
+
+  updateChecklistItem: (taskId: number, itemId: number, updates: { text?: string; done?: boolean }): Promise<TaskChecklistItem> =>
+    api.put(`/api/tasks/${taskId}/checklist/${itemId}`, updates).then(r => r.data),
+
+  deleteChecklistItem: (taskId: number, itemId: number): Promise<void> =>
+    api.delete(`/api/tasks/${taskId}/checklist/${itemId}`).then(() => undefined),
+
+  listTaskActivities: (taskId: number): Promise<TaskActivityLog[]> =>
+    api.get(`/api/tasks/${taskId}/activities`).then(r => r.data),
+
+  createTaskActivity: (taskId: number, text: string): Promise<TaskActivityLog> =>
+    api.post(`/api/tasks/${taskId}/activities`, { text }).then(r => r.data),
+
+  deleteTaskActivity: (taskId: number, logId: number): Promise<void> =>
+    api.delete(`/api/tasks/${taskId}/activities/${logId}`).then(() => undefined),
 
   // ── Briefing ───────────────────────────────────────────────────────────────
 

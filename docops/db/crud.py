@@ -507,6 +507,92 @@ def update_flashcard_difficulty(db: Session, card_id: int, difficulty: str, user
     return card
 
 
+# -- TaskChecklistItem --------------------------------------------------------
+
+def list_task_checklist_items(db: Session, task_id: int) -> "list[TaskChecklistItem]":
+    from docops.db.models import TaskChecklistItem
+    return (
+        db.query(TaskChecklistItem)
+        .filter(TaskChecklistItem.task_id == task_id)
+        .order_by(TaskChecklistItem.position.asc(), TaskChecklistItem.created_at.asc())
+        .all()
+    )
+
+
+def create_task_checklist_item(db: Session, *, task_id: int, text: str, position: int = 0) -> "TaskChecklistItem":
+    from docops.db.models import TaskChecklistItem
+    item = TaskChecklistItem(task_id=task_id, text=text, position=position)
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+def get_task_checklist_item(db: Session, item_id: int, task_id: int) -> "TaskChecklistItem | None":
+    from docops.db.models import TaskChecklistItem
+    return (
+        db.query(TaskChecklistItem)
+        .filter(TaskChecklistItem.id == item_id, TaskChecklistItem.task_id == task_id)
+        .first()
+    )
+
+
+def update_task_checklist_item(
+    db: Session,
+    item: "TaskChecklistItem",
+    *,
+    text: str | None = None,
+    done: bool | None = None,
+) -> "TaskChecklistItem":
+    if text is not None:
+        item.text = text
+    if done is not None:
+        item.done = done
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+def delete_task_checklist_item(db: Session, item: "TaskChecklistItem") -> None:
+    db.delete(item)
+    db.commit()
+
+
+# -- TaskActivityLog ----------------------------------------------------------
+
+def list_task_activities(db: Session, task_id: int) -> "list[TaskActivityLog]":
+    from docops.db.models import TaskActivityLog
+    return (
+        db.query(TaskActivityLog)
+        .filter(TaskActivityLog.task_id == task_id)
+        .order_by(TaskActivityLog.created_at.desc())
+        .all()
+    )
+
+
+def create_task_activity(db: Session, *, task_id: int, text: str) -> "TaskActivityLog":
+    from docops.db.models import TaskActivityLog
+    log = TaskActivityLog(task_id=task_id, text=text)
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    return log
+
+
+def get_task_activity(db: Session, activity_id: int, task_id: int) -> "TaskActivityLog | None":
+    from docops.db.models import TaskActivityLog
+    return (
+        db.query(TaskActivityLog)
+        .filter(TaskActivityLog.id == activity_id, TaskActivityLog.task_id == task_id)
+        .first()
+    )
+
+
+def delete_task_activity(db: Session, activity: "TaskActivityLog") -> None:
+    db.delete(activity)
+    db.commit()
+
+
 def update_flashcard_ease(db: Session, card_id: int, ease: int) -> "FlashcardItem | None":
     from docops.db.models import FlashcardItem
     from datetime import datetime, timezone, timedelta
