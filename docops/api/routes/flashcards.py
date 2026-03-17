@@ -276,9 +276,11 @@ def review_card(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    card = crud.update_flashcard_ease(db, payload.card_id, payload.ease)
-    if not card:
+    # Verifica ownership antes de atualizar
+    owned = crud.get_flashcard_item_by_user(db, payload.card_id, user_id=current_user.id)
+    if not owned:
         raise HTTPException(status_code=404, detail="Card não encontrado.")
+    card = crud.update_flashcard_ease(db, payload.card_id, payload.ease)
     return {"status": "ok", "next_review": card.next_review.isoformat() if card.next_review else None}
 
 

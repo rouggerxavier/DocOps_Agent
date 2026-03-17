@@ -1,17 +1,20 @@
-﻿"""Docs endpoint: list documents owned by the authenticated user."""
+﻿"""Docs endpoint: list/delete documents owned by the authenticated user."""
 
 from __future__ import annotations
 
 from typing import List
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from docops.api.schemas import DocItem
 from docops.auth.dependencies import get_current_user
-from docops.db.crud import list_documents_for_user
+from docops.db.crud import list_documents_for_user, get_document_by_user_and_doc_id, delete_document_record
 from docops.db.database import get_db
 from docops.db.models import User
+from docops.logging import get_logger
+
+logger = get_logger("docops.api.docs")
 
 router = APIRouter()
 
@@ -57,3 +60,34 @@ async def list_docs(
         )
         for item in rows
     ]
+
+
+@router.delete("/docs/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_doc(
+    doc_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """Delete a document and its vectors — ownership validated."""
+    doc = get_document_by_user_and_doc_id(db, current_user.id, doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento não encontrado.")
+
+    # Remove vetores do Chroma + manifest
+    try:
+        from docops.ingestion.indexer import delete_doc_from_index
+        delete_doc_from_index(doc_id=doc_id, user_id=current_user.id)
+    except Exception as exc:
+        logger.warning("Falha ao remover vetores do Chroma para doc %s: %s", doc_id, exc)
+
+    # Remove arquivo físico de upload (best-effort)
+    try:
+        from pathlib import Path as _P
+        src = _P(doc.source_path) if doc.source_path else None
+        if src and src.exists() and src.is_file():
+            src.unlink()
+    except Exception as exc:
+        logger.warning("Falha ao remover arquivo de upload %s: %s", doc.source_path, exc)
+
+    # Remove registro SQL
+    delete_document_record(db, current_user.id, doc_id)

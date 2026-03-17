@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from docops.api.schemas import ArtifactItem, ArtifactRequest, ArtifactResponse, JobCreateResponse
 from docops.auth.dependencies import get_current_user
 from docops.config import config  # kept for backward-compatible test patching
-from docops.db.crud import create_artifact_record, list_artifacts_for_user
+from docops.db.crud import create_artifact_record, list_artifacts_for_user, get_artifact_by_user_and_filename
 from docops.db.database import SessionLocal, get_db
 from docops.db.models import User
 from docops.logging import get_logger
@@ -223,6 +223,30 @@ async def download_artifact(
         filename=safe_name,
         media_type=media_type,
     )
+
+
+@router.delete("/artifacts/{filename}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_artifact(
+    filename: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """Delete an artifact file and its database record — ownership validated."""
+    from fastapi import status as http_status
+    artifact = get_artifact_by_user_and_filename(db, current_user.id, filename)
+    if not artifact:
+        raise HTTPException(status_code=404, detail="Artefato não encontrado.")
+
+    # Remove arquivo do disco (best-effort)
+    try:
+        artifact_path = Path(artifact.path)
+        if artifact_path.exists() and artifact_path.is_file():
+            artifact_path.unlink()
+    except Exception as exc:
+        logger.warning("Falha ao remover arquivo de artefato %s: %s", artifact.path, exc)
+
+    db.delete(artifact)
+    db.commit()
 
 
 @router.get("/artifacts/{filename}/pdf")

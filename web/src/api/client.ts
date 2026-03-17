@@ -205,6 +205,9 @@ export const apiClient = {
   listDocs: (): Promise<DocItem[]> =>
     api.get('/api/docs').then(r => r.data),
 
+  deleteDoc: (docId: string): Promise<void> =>
+    api.delete(`/api/docs/${encodeURIComponent(docId)}`).then(() => undefined),
+
   chat: (
     message: string,
     session_id?: string,
@@ -275,6 +278,9 @@ export const apiClient = {
 
   downloadArtifactPdfUrl: (filename: string): string =>
     `${BASE_URL}/api/artifacts/${encodeURIComponent(filename)}/pdf`,
+
+  deleteArtifact: (filename: string): Promise<void> =>
+    api.delete(`/api/artifacts/${encodeURIComponent(filename)}`).then(() => undefined),
 
   getJobStatus: (jobId: string): Promise<JobStatusResponse> =>
     api.get(`/api/jobs/${encodeURIComponent(jobId)}`).then(r => r.data),

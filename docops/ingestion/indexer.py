@@ -187,3 +187,29 @@ def list_indexed_docs_for_user(user_id: int, embeddings=None) -> List[dict]:
 def list_indexed_docs(embeddings=None) -> List[dict]:
     """Legacy global list — kept for CLI compatibility."""
     return list_indexed_docs_for_user(user_id=0, embeddings=embeddings)
+
+
+def delete_doc_from_index(doc_id: str, user_id: int, embeddings=None) -> int:
+    """Remove all chunks for a given doc_id from the user's Chroma collection.
+
+    Returns the number of chunks deleted.
+    """
+    vs = get_vectorstore_for_user(user_id, embeddings=embeddings)
+    collection = vs._collection
+
+    # Find IDs matching this doc_id
+    results = collection.get(where={"doc_id": doc_id}, include=[])
+    ids_to_delete = results.get("ids", [])
+
+    if ids_to_delete:
+        collection.delete(ids=ids_to_delete)
+        logger.info("Removidos %d chunks do Chroma para doc_id=%s user=%s", len(ids_to_delete), doc_id, user_id)
+
+    # Update manifest
+    manifest = _load_manifest(user_id)
+    before = len(manifest)
+    manifest = {k: v for k, v in manifest.items() if k not in set(ids_to_delete)}
+    if len(manifest) < before:
+        _save_manifest(user_id, manifest)
+
+    return len(ids_to_delete)

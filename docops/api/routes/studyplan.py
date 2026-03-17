@@ -62,12 +62,12 @@ def _generate_plan(topic: str, days: int, doc_names: list[str], user_id: int) ->
 
     context_section = ""
     if doc_names:
-        from docops.rag.retriever import retrieve
-        chunks = retrieve(
+        from docops.rag.retriever import retrieve_for_docs
+        chunks = retrieve_for_docs(
+            doc_names_or_ids=doc_names,
             query=topic,
             user_id=user_id,
             top_k=15,
-            doc_names=doc_names,
         )
         if chunks:
             texts = "\n\n".join(c.page_content[:600] for c in chunks[:10])

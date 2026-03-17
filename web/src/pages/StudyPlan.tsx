@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { GraduationCap, Loader2, BookOpen, Download } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
@@ -146,27 +147,16 @@ export function StudyPlan() {
 
           <Card className="border-zinc-800 bg-zinc-900">
             <CardContent className="p-6">
-              <div
-                className="prose prose-invert prose-sm max-w-none text-zinc-300"
-                style={{ userSelect: 'text' }}
+              <ReactMarkdown
+                className="prose prose-invert prose-sm max-w-none
+                  prose-headings:text-zinc-100 prose-h1:text-lg prose-h2:text-base prose-h3:text-sm
+                  prose-p:text-zinc-400 prose-li:text-zinc-400
+                  prose-strong:text-zinc-200 prose-em:text-zinc-300
+                  prose-code:text-blue-300 prose-code:bg-zinc-800 prose-code:px-1 prose-code:rounded
+                  prose-hr:border-zinc-800"
               >
-                {result.plan.split('\n').map((line, i) => {
-                  if (line.startsWith('# '))
-                    return <h1 key={i} className="text-lg font-bold text-zinc-100 mt-4 mb-2">{line.slice(2)}</h1>
-                  if (line.startsWith('## '))
-                    return <h2 key={i} className="text-base font-semibold text-zinc-200 mt-3 mb-1">{line.slice(3)}</h2>
-                  if (line.startsWith('### '))
-                    return <h3 key={i} className="text-sm font-semibold text-zinc-300 mt-2 mb-1">{line.slice(4)}</h3>
-                  if (line.startsWith('- ') || line.startsWith('* '))
-                    return <li key={i} className="text-sm text-zinc-400 ml-4">{line.slice(2)}</li>
-                  if (line.match(/^\d+\. /))
-                    return <li key={i} className="text-sm text-zinc-400 ml-4 list-decimal">{line.replace(/^\d+\.\s*/, '')}</li>
-                  if (line.startsWith('**') && line.endsWith('**'))
-                    return <p key={i} className="text-sm font-semibold text-zinc-200">{line.slice(2, -2)}</p>
-                  if (!line.trim()) return <br key={i} />
-                  return <p key={i} className="text-sm text-zinc-400">{line}</p>
-                })}
-              </div>
+                {result.plan}
+              </ReactMarkdown>
             </CardContent>
           </Card>
         </div>

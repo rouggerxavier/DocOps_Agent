@@ -103,7 +103,7 @@ export function Sidebar() {
             <LogOut className="h-3.5 w-3.5 shrink-0" />
             Sair
           </button>
-          <p className="px-1 text-xs text-zinc-700">v0.2.0 · Gemini + Chroma</p>
+          <p className="px-1 text-xs text-zinc-700">v0.1.0 · Gemini + Chroma</p>
         </div>
       </aside>
 

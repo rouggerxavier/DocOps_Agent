@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
   Plus, Trash2, CheckCircle2, Circle, Clock, ChevronDown, ChevronUp,
-  Flag, AlertTriangle, ListTodo,
+  Flag, AlertTriangle, ListTodo, Pencil, Check, X,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -109,18 +109,77 @@ function QuickAddForm({ onAdd }: { onAdd: (title: string, priority: string, due:
 function TaskRow({
   task,
   onStatusChange,
+  onEdit,
   onDelete,
 }: {
   task: TaskItem
   onStatusChange: (id: number, status: string) => void
+  onEdit: (id: number, title: string, priority: string, due_date: string) => void
   onDelete: (id: number) => void
 }) {
+  const [editing, setEditing] = useState(false)
+  const [editTitle, setEditTitle] = useState(task.title)
+  const [editPriority, setEditPriority] = useState(task.priority)
+  const [editDue, setEditDue] = useState(
+    task.due_date ? new Date(task.due_date).toISOString().slice(0, 16) : '',
+  )
+
   const isDone = task.status === 'done'
   const isDoing = task.status === 'doing'
-  const isOverdue =
-    task.due_date && !isDone && new Date(task.due_date) < new Date()
-
+  const isOverdue = task.due_date && !isDone && new Date(task.due_date) < new Date()
   const nextStatus = isDone ? 'pending' : isDoing ? 'done' : 'doing'
+
+  function saveEdit() {
+    if (!editTitle.trim()) return
+    onEdit(task.id, editTitle.trim(), editPriority, editDue)
+    setEditing(false)
+  }
+
+  function cancelEdit() {
+    setEditTitle(task.title)
+    setEditPriority(task.priority)
+    setEditDue(task.due_date ? new Date(task.due_date).toISOString().slice(0, 16) : '')
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <div className="rounded-xl border border-blue-800/50 bg-zinc-900 px-4 py-3 space-y-3">
+        <Input
+          autoFocus
+          value={editTitle}
+          onChange={e => setEditTitle(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') cancelEdit() }}
+          className="bg-zinc-800 border-zinc-700 text-sm"
+        />
+        <div className="flex gap-2">
+          <select
+            value={editPriority}
+            onChange={e => setEditPriority(e.target.value)}
+            className="flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-200 outline-none"
+          >
+            <option value="low">Baixa</option>
+            <option value="normal">Normal</option>
+            <option value="high">Alta</option>
+          </select>
+          <Input
+            type="datetime-local"
+            value={editDue}
+            onChange={e => setEditDue(e.target.value)}
+            className="flex-1 h-8 text-xs bg-zinc-800 border-zinc-700"
+          />
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button onClick={cancelEdit} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500 hover:text-zinc-300">
+            <X className="h-3 w-3" /> Cancelar
+          </button>
+          <button onClick={saveEdit} className="flex items-center gap-1 rounded-lg border border-emerald-800/50 bg-emerald-950/20 px-2.5 py-1.5 text-xs text-emerald-400 hover:bg-emerald-950/40">
+            <Check className="h-3 w-3" /> Salvar
+          </button>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className={cn(
@@ -176,13 +235,21 @@ function TaskRow({
         </div>
       </div>
 
-      {/* Delete */}
-      <button
-        onClick={() => onDelete(task.id)}
-        className="mt-0.5 shrink-0 opacity-0 group-hover:opacity-100 text-zinc-700 hover:text-red-400 transition-all"
-      >
-        <Trash2 className="h-4 w-4" />
-      </button>
+      {/* Edit + Delete */}
+      <div className="mt-0.5 flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-all">
+        <button
+          onClick={() => setEditing(true)}
+          className="text-zinc-600 hover:text-blue-400 transition-colors"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={() => onDelete(task.id)}
+          className="text-zinc-600 hover:text-red-400 transition-colors"
+        >
+          <Trash2 className="h-3.5 w-3.5" />
+        </button>
+      </div>
     </div>
   )
 }
@@ -216,6 +283,18 @@ export function Tasks() {
       return apiClient.updateTask(id, task.title, task.note ?? undefined, status, task.priority, task.due_date ?? undefined)
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
+    onError: () => toast.error('Erro ao atualizar tarefa.'),
+  })
+
+  const editMut = useMutation({
+    mutationFn: ({ id, title, priority, due_date }: { id: number; title: string; priority: string; due_date: string }) => {
+      const task = tasks.find(t => t.id === id)!
+      return apiClient.updateTask(id, title, task.note ?? undefined, task.status, priority, due_date ? new Date(due_date).toISOString() : undefined)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      toast.success('Tarefa atualizada.')
+    },
     onError: () => toast.error('Erro ao atualizar tarefa.'),
   })
 
@@ -311,6 +390,7 @@ export function Tasks() {
             key={task.id}
             task={task}
             onStatusChange={(id, status) => updateMut.mutate({ id, status })}
+            onEdit={(id, title, priority, due_date) => editMut.mutate({ id, title, priority, due_date })}
             onDelete={id => deleteMut.mutate(id)}
           />
         ))}

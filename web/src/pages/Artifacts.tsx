@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Archive, Download, Eye, FileText, Loader2, Plus, X } from 'lucide-react'
+import { Archive, Download, Eye, FileText, Loader2, Plus, Trash2, X } from 'lucide-react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import { Card, CardContent } from '@/components/ui/card'
@@ -333,6 +333,7 @@ function PreviewDialog({ filename, onClose }: { filename: string; onClose: () =>
 }
 
 export function Artifacts() {
+  const qc = useQueryClient()
   const [showCreate, setShowCreate] = useState(false)
   const [previewFile, setPreviewFile] = useState<string | null>(null)
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null)
@@ -341,6 +342,15 @@ export function Artifacts() {
     queryKey: ['artifacts'],
     queryFn: apiClient.listArtifacts,
     retry: 1,
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: (filename: string) => apiClient.deleteArtifact(filename),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['artifacts'] })
+      toast.success('Artefato removido.')
+    },
+    onError: () => toast.error('Erro ao remover artefato.'),
   })
 
   async function handleDownload(filename: string) {
@@ -465,6 +475,19 @@ export function Artifacts() {
                         {downloadingKey === `${artifact.filename}:pdf` ? 'Baixando...' : 'PDF'}
                       </Button>
                     )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        if (confirm(`Remover "${artifact.filename}"?`)) {
+                          deleteMut.mutate(artifact.filename)
+                        }
+                      }}
+                      disabled={deleteMut.isPending}
+                      className="text-zinc-600 hover:text-red-400"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </div>
                 </CardContent>
               </Card>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
-import { FileText, BookOpen, GitCompare, Loader2, Search, Download } from 'lucide-react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { FileText, BookOpen, GitCompare, Loader2, Search, Download, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import { Card, CardContent } from '@/components/ui/card'
@@ -300,6 +300,7 @@ function CompareDialog({
 }
 
 export function Docs() {
+  const qc = useQueryClient()
   const [search, setSearch] = useState('')
   const [summarizeDoc, setSummarizeDoc] = useState<string | null>(null)
   const [compareDoc, setCompareDoc] = useState<string | null>(null)
@@ -308,6 +309,15 @@ export function Docs() {
     queryKey: ['docs'],
     queryFn: apiClient.listDocs,
     retry: 1,
+  })
+
+  const deleteMut = useMutation({
+    mutationFn: (docId: string) => apiClient.deleteDoc(docId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['docs'] })
+      toast.success('Documento removido.')
+    },
+    onError: () => toast.error('Erro ao remover documento.'),
   })
 
   const filtered = docs?.filter(d =>
@@ -398,6 +408,19 @@ export function Docs() {
                       Comparar
                     </Button>
                   )}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => {
+                      if (confirm(`Remover "${doc.file_name}"? Esta ação não pode ser desfeita.`)) {
+                        deleteMut.mutate(doc.doc_id)
+                      }
+                    }}
+                    disabled={deleteMut.isPending}
+                    className="text-zinc-600 hover:text-red-400"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
                 </div>
               </CardContent>
             </Card>
