@@ -1,0 +1,37 @@
+services:
+  - type: web
+    name: docops-agent
+    runtime: docker
+    # Usa o Dockerfile unificado (front + back no mesmo container)
+    dockerfilePath: ./Dockerfile
+    # Disco persistente para dados do SQLite, ChromaDB, uploads, etc.
+    disk:
+      name: docops-data
+      mountPath: /app/data
+      sizeGB: 1
+    envVars:
+      # ── Obrigatórias ──────────────────────────────────────────────────────
+      - key: GEMINI_API_KEY
+        sync: false          # preencher manualmente no dashboard do Render
+      - key: JWT_SECRET_KEY
+        generateValue: true  # Render gera automaticamente um valor seguro
+      # ── Caminhos (mapeados para o disco persistente) ──────────────────────
+      - key: CHROMA_DIR
+        value: /app/data/chroma
+      - key: BM25_DIR
+        value: /app/data/bm25
+      - key: DATABASE_URL
+        value: sqlite:////app/data/app.db
+      - key: DOCS_DIR
+        value: /app/docs
+      - key: UPLOADS_DIR
+        value: /app/uploads
+      - key: ARTIFACTS_DIR
+        value: /app/artifacts
+      - key: INGEST_ALLOWED_DIRS
+        value: /app/docs
+      # ── CORS: aceita o próprio domínio do Render ──────────────────────────
+      # O Render injeta RENDER_EXTERNAL_URL automaticamente com a URL do serviço.
+      # Como front e back estão no mesmo container/URL, basta aceitar o host atual.
+      - key: CORS_ORIGINS
+        value: "*"
