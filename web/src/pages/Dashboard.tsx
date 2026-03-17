@@ -159,7 +159,7 @@ function QuickAction({
 
 function OnboardingSteps() {
   const steps = [
-    { n: 1, label: 'Ingira um documento', sub: 'PDF, Markdown ou TXT', to: '/ingest', cta: 'Ingerir' },
+    { n: 1, label: 'Insira um documento', sub: 'PDF, Markdown ou TXT', to: '/ingest', cta: 'Inserir' },
     { n: 2, label: 'Converse com o agente', sub: 'Faça perguntas sobre seus docs', to: '/chat', cta: 'Abrir chat' },
     { n: 3, label: 'Exporte artefatos', sub: 'Resumos e checklists salvos', to: '/artifacts', cta: 'Ver artefatos' },
   ]
@@ -257,7 +257,7 @@ export function Dashboard() {
       <div>
         <h2 className="mb-3 text-xs font-semibold uppercase tracking-wider text-zinc-500">Ações Rápidas</h2>
         <div className="grid gap-2 sm:grid-cols-2">
-          <QuickAction to="/ingest"    icon={FileText}       label="Ingerir Documentos" description="Adicionar PDFs, Markdown ou TXT"    color="bg-blue-600" />
+          <QuickAction to="/ingest"    icon={FileText}       label="Inserir Documentos" description="Adicionar PDFs, Markdown ou TXT"    color="bg-blue-600" />
           <QuickAction to="/chat"      icon={MessageSquare}  label="Iniciar Chat"        description="Conversar com seus documentos"     color="bg-violet-600" />
           <QuickAction to="/artifacts" icon={Layers}         label="Ver Artefatos"       description="Resumos e checklists salvos"       color="bg-amber-600" />
           <QuickAction to="/schedule"  icon={CalendarClock}  label="Calendário"          description="Cronograma e lembretes do dia"     color="bg-emerald-600" />

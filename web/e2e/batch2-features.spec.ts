@@ -39,7 +39,7 @@ test('ingest clip: switches to Clip tab, types text, and ingests successfully', 
   await registerAndLogin(page)
 
   await page.goto('/ingest')
-  await expect(page.getByRole('heading', { name: /Ingestão de Documentos/i })).toBeVisible()
+  await expect(page.getByRole('heading', { name: /Inserção de Documentos/i })).toBeVisible()
 
   // Switch to clip tab
   await page.getByRole('button', { name: /Clip de Texto/i }).click()
@@ -49,7 +49,7 @@ test('ingest clip: switches to Clip tab, types text, and ingests successfully', 
   await page.getByPlaceholder(/Anotações da aula/i).fill('Teste E2E Clip')
   await page.locator('textarea').fill(
     'Este é um texto de teste para o clip de texto do DocOps Agent. ' +
-    'O objetivo é verificar que a funcionalidade de ingestão de texto funciona corretamente ' +
+    'O objetivo é verificar que a funcionalidade de inserção de texto funciona corretamente ' +
     'quando o usuário cola um trecho longo de texto. ' +
     'Inteligência artificial e machine learning são temas importantes na computação moderna.'
   )
@@ -286,13 +286,13 @@ test('sidebar shows all links in correct order and navigates', async ({ page }) 
   await expect(nav.getByRole('link', { name: 'Plano de Estudos' })).toBeVisible()
   await expect(nav.getByRole('link', { name: 'Documentos', exact: true })).toBeVisible()
 
-  // Verify correct order: Chat before Calendário, Documentos before Ingestão
+  // Verify correct order: Chat before Calendário, Documentos before Inserção
   const navLinks = nav.locator('a')
   const texts = await navLinks.allInnerTexts()
   const chatIdx = texts.findIndex(t => t.includes('Chat'))
   const calIdx = texts.findIndex(t => t.includes('Calendário'))
   const docsIdx = texts.findIndex(t => t.includes('Documentos'))
-  const ingestIdx = texts.findIndex(t => t.includes('Ingestão'))
+  const ingestIdx = texts.findIndex(t => t.includes('Inserção'))
   expect(chatIdx).toBeLessThan(calIdx)
   expect(calIdx).toBeLessThan(docsIdx)
   expect(docsIdx).toBeLessThan(ingestIdx)

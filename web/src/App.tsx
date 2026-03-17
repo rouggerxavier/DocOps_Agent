@@ -19,7 +19,7 @@ import { Register } from '@/pages/Register'
 
 const PAGE_TITLES: Record<string, string> = {
   '/': 'Dashboard',
-  '/ingest': 'Ingestão',
+  '/ingest': 'Inserção',
   '/chat': 'Chat',
   '/docs': 'Documentos',
   '/artifacts': 'Artefatos',

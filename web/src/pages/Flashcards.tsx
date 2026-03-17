@@ -623,7 +623,7 @@ export function Flashcards() {
         <Card className="border-zinc-800 bg-zinc-900 mx-auto max-w-md">
           <CardContent className="p-6 text-center">
             <BookOpen className="mx-auto h-8 w-8 text-zinc-700 mb-2" />
-            <p className="text-sm text-zinc-500">Ingira documentos primeiro para gerar flashcards.</p>
+            <p className="text-sm text-zinc-500">Insira documentos primeiro para gerar flashcards.</p>
           </CardContent>
         </Card>
       )}

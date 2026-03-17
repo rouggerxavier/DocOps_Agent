@@ -127,7 +127,7 @@ export function Ingest() {
       toast.success(`${data.chunks_indexed} chunks indexados com sucesso!`)
     },
     onError: (err: any) => {
-      toast.error(err?.response?.data?.detail ?? 'Erro ao ingerir arquivos')
+      toast.error(err?.response?.data?.detail ?? 'Erro ao inserir arquivos')
     },
   })
 
@@ -145,7 +145,7 @@ export function Ingest() {
       toast.success(`${data.chunks_indexed} chunks indexados com sucesso!`)
     },
     onError: (err: any) => {
-      toast.error(err?.response?.data?.detail ?? 'Erro ao ingerir caminho')
+      toast.error(err?.response?.data?.detail ?? 'Erro ao inserir caminho')
     },
   })
 
@@ -159,7 +159,7 @@ export function Ingest() {
       toast.success(`${data.chunks_indexed} chunks indexados com sucesso!`)
     },
     onError: (err: any) => {
-      toast.error(err?.response?.data?.detail ?? 'Erro ao ingerir texto')
+      toast.error(err?.response?.data?.detail ?? 'Erro ao inserir texto')
     },
   })
 
@@ -232,7 +232,7 @@ export function Ingest() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-bold text-zinc-100">Ingestão de Documentos</h1>
+        <h1 className="text-2xl font-bold text-zinc-100">Inserção de Documentos</h1>
         <p className="mt-1 text-sm text-zinc-400">
           Indexe PDFs, Markdown, texto e planilhas (CSV/XLSX/XLS/ODS) no Chroma
         </p>
@@ -653,7 +653,7 @@ export function Ingest() {
             <div className="flex items-start gap-3">
               <CheckCircle className="mt-0.5 h-5 w-5 shrink-0 text-green-400" />
               <div>
-                <p className="font-medium text-green-300">Ingestão concluída!</p>
+                <p className="font-medium text-green-300">Inserção concluída!</p>
                 <p className="mt-1 text-sm text-green-500">
                   {result.files_loaded} documento(s) carregado(s),{' '}
                   {result.chunks_indexed} chunks indexados.

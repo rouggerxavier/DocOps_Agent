@@ -38,7 +38,7 @@ export function Sidebar() {
     { to: '/chat', label: 'Chat', icon: MessageSquare, end: false, badge: null },
     { to: '/schedule', label: 'Calendário', icon: CalendarDays, end: false, badge: todayReminders > 0 ? todayReminders : null },
     { to: '/docs', label: 'Documentos', icon: FileText, end: false, badge: null },
-    { to: '/ingest', label: 'Ingestão', icon: Upload, end: false, badge: null },
+    { to: '/ingest', label: 'Inserção', icon: Upload, end: false, badge: null },
     { to: '/notes', label: 'Notas', icon: StickyNote, end: false, badge: null },
     { to: '/tasks', label: 'Tarefas', icon: ListTodo, end: false, badge: null },
     { to: '/flashcards', label: 'Flashcards', icon: Layers, end: false, badge: null },

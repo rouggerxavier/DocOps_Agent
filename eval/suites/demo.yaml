@@ -25,9 +25,9 @@ cases:
     tags: [factual, numbers]
 
   - id: locate_ingest_01
-    question: "Onde o documento descreve o processo de ingestão?"
+    question: "Onde o documento descreve o processo de inserção?"
     expected: null
-    must_cite: ["ingest|ingestao|ingestão"]
+    must_cite: ["ingest|insercao|inserção"]
     tags: [locate]
 
   - id: locate_embeddings_01

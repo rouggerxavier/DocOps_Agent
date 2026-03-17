@@ -84,16 +84,22 @@ def create_app() -> FastAPI:
 
     if _frontend_dist.exists():
         # Arquivos estáticos (JS, CSS, imagens gerados pelo Vite em /assets)
-        app.mount(
-            "/assets",
-            StaticFiles(directory=str(_frontend_dist / "assets")),
-            name="assets",
-        )
+        _assets_dir = _frontend_dist / "assets"
+        if _assets_dir.exists():
+            app.mount(
+                "/assets",
+                StaticFiles(directory=str(_assets_dir)),
+                name="assets",
+            )
 
-        # Catch-all: qualquer rota que não seja /api/* serve o index.html
-        # para o React Router funcionar corretamente
+        # Catch-all: serve arquivos estáticos do dist/ ou index.html para SPA
         @app.get("/{full_path:path}", include_in_schema=False)
         async def serve_spa(full_path: str) -> FileResponse:
+            # Tenta servir arquivo estático (ex: vite.svg, favicon.ico)
+            file_path = (_frontend_dist / full_path).resolve()
+            if full_path and file_path.is_file() and str(file_path).startswith(str(_frontend_dist)):
+                return FileResponse(str(file_path))
+            # Fallback: index.html para React Router
             return FileResponse(str(_frontend_dist / "index.html"))
 
     return app

@@ -76,7 +76,7 @@ def verify_grounding(state: "AgentState") -> dict:
             "retry": retry_count < config.max_retries,
             "disclaimer": (
                 "\n\n> ⚠️ **Aviso:** Não foram encontrados trechos relevantes nos documentos "
-                "indexados. Verifique se os documentos corretos foram ingeridos e tente "
+                "indexados. Verifique se os documentos corretos foram inseridos e tente "
                 "reformular sua pergunta."
             ),
         }

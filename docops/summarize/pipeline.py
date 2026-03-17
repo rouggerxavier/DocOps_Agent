@@ -3915,7 +3915,7 @@ def run_deep_summary(
         result = {
             "answer": (
                 f"Não foram encontrados trechos indexados para o documento **{doc_name}**. "
-                "Verifique se o documento foi ingerido corretamente."
+                "Verifique se o documento foi inserido corretamente."
             ),
             "sources_section": "",
         }

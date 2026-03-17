@@ -368,7 +368,7 @@ export function Docs() {
             <p className="text-sm text-zinc-500">
               {search
                 ? 'Tente outro termo de busca'
-                : 'Use a página de Ingestão para adicionar documentos'}
+                : 'Use a página de Inserção para adicionar documentos'}
             </p>
           </CardContent>
         </Card>
