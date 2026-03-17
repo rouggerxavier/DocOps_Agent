@@ -28,6 +28,7 @@ class CardSchema(BaseModel):
     id: int
     front: str
     back: str
+    difficulty: str  # facil, media, dificil
     ease: int
     next_review: Optional[datetime]
 
@@ -57,6 +58,7 @@ class DeckListItem(BaseModel):
 class GenerateRequest(BaseModel):
     doc_name: str = Field(min_length=1)
     num_cards: int = Field(default=10, ge=3, le=30)
+    content_filter: str = Field(default="", description="Filtro opcional de conteúdo específico do documento")
 
 
 class ReviewRequest(BaseModel):
@@ -69,13 +71,14 @@ class ReviewRequest(BaseModel):
 FLASHCARD_PROMPT = """\
 Você é um especialista em criar flashcards para revisão espaçada.
 Com base no conteúdo abaixo, gere exatamente {num_cards} flashcards.
-Cada flashcard deve ter uma pergunta objetiva (front) e uma resposta concisa (back).
-
+Cada flashcard deve ter uma pergunta objetiva (front), uma resposta concisa (back) e uma classificação de dificuldade (difficulty).
+{filter_instruction}
 Regras:
 - As perguntas devem cobrir os conceitos mais importantes do texto.
 - Varie entre definições, fatos, relações e aplicações.
 - Respostas devem ser curtas (1-3 frases).
-- Retorne APENAS um JSON array no formato: [{{"front": "...", "back": "..."}}]
+- O campo "difficulty" deve ser: "facil" (fato direto/definição simples), "media" (requer compreensão/conexão) ou "dificil" (requer análise/aplicação avançada).
+- Retorne APENAS um JSON array no formato: [{{"front": "...", "back": "...", "difficulty": "facil|media|dificil"}}]
 - Sem markdown, sem texto extra, APENAS o JSON array.
 
 Conteúdo:
@@ -83,12 +86,13 @@ Conteúdo:
 """
 
 
-def _generate_cards(doc_name: str, doc_id: str, user_id: int, num_cards: int) -> list[dict]:
+def _generate_cards(doc_name: str, doc_id: str, user_id: int, num_cards: int, content_filter: str = "") -> list[dict]:
     from docops.rag.retriever import retrieve_for_doc
     from docops.config import config
     import google.generativeai as genai
 
-    chunks = retrieve_for_doc(doc_name, query="conteúdo principal do documento", doc_id=doc_id, user_id=user_id, top_k=30)
+    query = content_filter.strip() if content_filter.strip() else "conteúdo principal do documento"
+    chunks = retrieve_for_doc(doc_name, query=query, doc_id=doc_id, user_id=user_id, top_k=30)
     if not chunks:
         raise HTTPException(status_code=404, detail="Nenhum chunk encontrado para este documento.")
 
@@ -96,9 +100,17 @@ def _generate_cards(doc_name: str, doc_id: str, user_id: int, num_cards: int) ->
         c.page_content[:800] for c in chunks[:20]
     )
 
+    filter_instruction = ""
+    if content_filter.strip():
+        filter_instruction = f'\nFoco: gere flashcards APENAS sobre "{content_filter.strip()}". Ignore conteúdo não relacionado.\n'
+
     genai.configure(api_key=config.gemini_api_key)
     model = genai.GenerativeModel(config.gemini_model)
-    prompt = FLASHCARD_PROMPT.format(num_cards=num_cards, content=content[:12000])
+    prompt = FLASHCARD_PROMPT.format(
+        num_cards=num_cards,
+        content=content[:12000],
+        filter_instruction=filter_instruction,
+    )
 
     response = model.generate_content(prompt)
     text = response.text.strip()
@@ -116,7 +128,16 @@ def _generate_cards(doc_name: str, doc_id: str, user_id: int, num_cards: int) ->
     if not isinstance(cards, list):
         raise HTTPException(status_code=500, detail="Formato de resposta inesperado.")
 
-    return [{"front": c["front"], "back": c["back"]} for c in cards if "front" in c and "back" in c]
+    valid_difficulties = {"facil", "media", "dificil"}
+    return [
+        {
+            "front": c["front"],
+            "back": c["back"],
+            "difficulty": c.get("difficulty", "media") if c.get("difficulty", "media") in valid_difficulties else "media",
+        }
+        for c in cards
+        if "front" in c and "back" in c
+    ]
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -166,6 +187,7 @@ async def generate_deck(
         doc_record.doc_id,
         current_user.id,
         payload.num_cards,
+        payload.content_filter,
     )
 
     deck = crud.create_flashcard_deck(

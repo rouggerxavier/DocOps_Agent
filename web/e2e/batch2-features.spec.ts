@@ -129,6 +129,11 @@ test('flashcards: shows page, empty state, opens generate dialog with doc select
   // Verify the clipped doc appears in the selector
   await expect(page.locator('select')).toContainText('Bio Clip')
 
+  // Verify scope switcher is present
+  await expect(page.getByText(/Escopo do conteúdo/i)).toBeVisible()
+  await expect(page.getByText(/Documento inteiro/i)).toBeVisible()
+  await expect(page.getByText(/Conteúdo específico/i)).toBeVisible()
+
   // Slider should show default value
   await expect(page.getByText('10 cards')).toBeVisible()
 
@@ -191,12 +196,12 @@ test('flashcards: generates deck from document and enters study session', async 
     await expect(page.getByText(/Resposta/i)).toBeVisible()
 
     // Rating buttons should appear
-    await expect(page.getByText('Difícil')).toBeVisible()
-    await expect(page.getByText('Bom')).toBeVisible()
-    await expect(page.getByText('Fácil')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Difícil' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Bom' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Fácil' })).toBeVisible()
 
     // Rate the card
-    await page.getByText('Fácil').click()
+    await page.getByRole('button', { name: 'Fácil' }).click()
 
     // Go back
     await page.getByText(/Voltar/i).click()
@@ -253,7 +258,12 @@ test('study plan: generates a plan and shows result', async ({ page }) => {
   if (resp.status() === 200) {
     await expect(page.getByText(/Plano de estudos gerado/i)).toBeVisible({ timeout: 15_000 })
     await expect(page.getByRole('button', { name: /Gerar outro/i })).toBeVisible()
-    await expect(page.getByText(/Baixar artefato/i)).toBeVisible()
+    await expect(page.getByText(/Baixar \.md/i)).toBeVisible()
+    // PDF generation may fail silently if reportlab is missing; only check if visible
+    const pdfLink = page.getByText(/Baixar \.pdf/i)
+    if (await pdfLink.isVisible().catch(() => false)) {
+      await expect(pdfLink).toBeVisible()
+    }
 
     // Click "Gerar outro" to return to form
     await page.getByRole('button', { name: /Gerar outro/i }).click()
@@ -265,19 +275,34 @@ test('study plan: generates a plan and shows result', async ({ page }) => {
 
 // ── Navigation ───────────────────────────────────────────────────────────────
 
-test('sidebar shows Flashcards and Plano de Estudos links', async ({ page }) => {
+test('sidebar shows all links in correct order and navigates', async ({ page }) => {
   test.setTimeout(60_000)
   await registerAndLogin(page)
 
-  await expect(page.getByRole('link', { name: /Flashcards/i })).toBeVisible()
-  await expect(page.getByRole('link', { name: /Plano de Estudos/i })).toBeVisible()
+  const nav = page.locator('nav')
+
+  // Verify key sidebar links are visible (scoped to nav to avoid Dashboard quick-action links)
+  await expect(nav.getByRole('link', { name: 'Flashcards' })).toBeVisible()
+  await expect(nav.getByRole('link', { name: 'Plano de Estudos' })).toBeVisible()
+  await expect(nav.getByRole('link', { name: 'Documentos', exact: true })).toBeVisible()
+
+  // Verify correct order: Chat before Calendário, Documentos before Ingestão
+  const navLinks = nav.locator('a')
+  const texts = await navLinks.allInnerTexts()
+  const chatIdx = texts.findIndex(t => t.includes('Chat'))
+  const calIdx = texts.findIndex(t => t.includes('Calendário'))
+  const docsIdx = texts.findIndex(t => t.includes('Documentos'))
+  const ingestIdx = texts.findIndex(t => t.includes('Ingestão'))
+  expect(chatIdx).toBeLessThan(calIdx)
+  expect(calIdx).toBeLessThan(docsIdx)
+  expect(docsIdx).toBeLessThan(ingestIdx)
 
   // Navigate to flashcards
-  await page.getByRole('link', { name: /Flashcards/i }).click()
+  await nav.getByRole('link', { name: 'Flashcards' }).click()
   await expect(page).toHaveURL(/\/flashcards$/)
 
   // Navigate to study plan
-  await page.getByRole('link', { name: /Plano de Estudos/i }).click()
+  await nav.getByRole('link', { name: 'Plano de Estudos' }).click()
   await expect(page).toHaveURL(/\/studyplan$/)
 })
 

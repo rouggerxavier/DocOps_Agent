@@ -451,7 +451,7 @@ def create_flashcard_deck(
     db.add(deck)
     db.flush()
     for c in cards:
-        db.add(FlashcardItem(deck_id=deck.id, front=c["front"], back=c["back"]))
+        db.add(FlashcardItem(deck_id=deck.id, front=c["front"], back=c["back"], difficulty=c.get("difficulty", "media")))
     db.commit()
     db.refresh(deck)
     return deck

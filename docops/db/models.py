@@ -202,6 +202,7 @@ class FlashcardItem(Base):
     deck_id: Mapped[int] = mapped_column(Integer, ForeignKey("flashcard_decks.id"), nullable=False, index=True)
     front: Mapped[str] = mapped_column(Text, nullable=False)
     back: Mapped[str] = mapped_column(Text, nullable=False)
+    difficulty: Mapped[str] = mapped_column(String(16), default="media", nullable=False)  # facil, media, dificil
     ease: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # 0=new, 1=hard, 2=good, 3=easy
     next_review: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

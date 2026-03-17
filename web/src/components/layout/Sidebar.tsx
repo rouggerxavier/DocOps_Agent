@@ -35,14 +35,14 @@ export function Sidebar() {
 
   const links = [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true, badge: null },
-    { to: '/ingest', label: 'Ingestão', icon: Upload, end: false, badge: null },
     { to: '/chat', label: 'Chat', icon: MessageSquare, end: false, badge: null },
     { to: '/schedule', label: 'Calendário', icon: CalendarDays, end: false, badge: todayReminders > 0 ? todayReminders : null },
+    { to: '/docs', label: 'Documentos', icon: FileText, end: false, badge: null },
+    { to: '/ingest', label: 'Ingestão', icon: Upload, end: false, badge: null },
     { to: '/notes', label: 'Notas', icon: StickyNote, end: false, badge: null },
     { to: '/tasks', label: 'Tarefas', icon: ListTodo, end: false, badge: null },
     { to: '/flashcards', label: 'Flashcards', icon: Layers, end: false, badge: null },
     { to: '/studyplan', label: 'Plano de Estudos', icon: GraduationCap, end: false, badge: null },
-    { to: '/docs', label: 'Documentos', icon: FileText, end: false, badge: null },
     { to: '/artifacts', label: 'Artefatos', icon: Archive, end: false, badge: null },
   ]
 

@@ -12,7 +12,7 @@ export function StudyPlan() {
   const [topic, setTopic] = useState('')
   const [days, setDays] = useState(7)
   const [selectedDocs, setSelectedDocs] = useState<string[]>([])
-  const [result, setResult] = useState<{ plan: string; filename: string | null } | null>(null)
+  const [result, setResult] = useState<{ plan: string; filename: string | null; pdfFilename: string | null } | null>(null)
 
   const { data: docs = [] } = useQuery<DocItem[]>({
     queryKey: ['docs'],
@@ -22,7 +22,7 @@ export function StudyPlan() {
   const generateMut = useMutation({
     mutationFn: () => apiClient.createStudyPlan(topic, days, selectedDocs),
     onSuccess: data => {
-      setResult({ plan: data.plan, filename: data.artifact_filename })
+      setResult({ plan: data.plan, filename: data.artifact_filename, pdfFilename: data.pdf_filename ?? null })
       toast.success('Plano de estudos gerado!')
     },
     onError: () => toast.error('Erro ao gerar plano de estudos.'),
@@ -120,16 +120,28 @@ export function StudyPlan() {
             <Button variant="ghost" size="sm" onClick={() => setResult(null)}>
               Gerar outro
             </Button>
-            {result.filename && (
-              <a
-                href={apiClient.downloadArtifactUrl(result.filename)}
-                target="_blank"
-                rel="noopener"
-                className="flex items-center gap-1 text-xs text-blue-400 hover:underline"
-              >
-                <Download className="h-3 w-3" /> Baixar artefato
-              </a>
-            )}
+            <div className="flex items-center gap-3">
+              {result.filename && (
+                <a
+                  href={apiClient.downloadArtifactUrl(result.filename)}
+                  target="_blank"
+                  rel="noopener"
+                  className="flex items-center gap-1 text-xs text-blue-400 hover:underline"
+                >
+                  <Download className="h-3 w-3" /> Baixar .md
+                </a>
+              )}
+              {result.pdfFilename && (
+                <a
+                  href={apiClient.downloadArtifactUrl(result.pdfFilename)}
+                  target="_blank"
+                  rel="noopener"
+                  className="flex items-center gap-1 text-xs text-emerald-400 hover:underline"
+                >
+                  <Download className="h-3 w-3" /> Baixar .pdf
+                </a>
+              )}
+            </div>
           </div>
 
           <Card className="border-zinc-800 bg-zinc-900">

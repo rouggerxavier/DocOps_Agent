@@ -168,6 +168,7 @@ export interface FlashcardCard {
   id: number
   front: string
   back: string
+  difficulty: string  // facil, media, dificil
   ease: number
   next_review: string | null
 }
@@ -193,6 +194,7 @@ export interface FlashcardDeckListItem {
 export interface StudyPlanResponse {
   plan: string
   artifact_filename: string | null
+  pdf_filename: string | null
 }
 
 // ── API functions ─────────────────────────────────────────────────────────────
@@ -379,8 +381,8 @@ export const apiClient = {
   getFlashcardDeck: (id: number): Promise<FlashcardDeck> =>
     api.get(`/api/flashcards/${id}`).then(r => r.data),
 
-  generateFlashcards: (docName: string, numCards: number): Promise<FlashcardDeck> =>
-    api.post('/api/flashcards/generate', { doc_name: docName, num_cards: numCards }).then(r => r.data),
+  generateFlashcards: (docName: string, numCards: number, contentFilter = ''): Promise<FlashcardDeck> =>
+    api.post('/api/flashcards/generate', { doc_name: docName, num_cards: numCards, content_filter: contentFilter }).then(r => r.data),
 
   reviewFlashcard: (cardId: number, ease: number): Promise<{ status: string }> =>
     api.post('/api/flashcards/review', { card_id: cardId, ease }).then(r => r.data),

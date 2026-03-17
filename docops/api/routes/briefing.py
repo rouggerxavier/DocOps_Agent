@@ -50,10 +50,17 @@ class BriefingResponse(BaseModel):
 
 def _greeting(now: datetime) -> str:
     h = now.hour
+    m = now.minute
+    # 00:00–03:59 → Boa noite
+    if h < 4:
+        return "Boa noite"
+    # 04:00–11:59 → Bom dia
     if h < 12:
         return "Bom dia"
-    if h < 18:
+    # 12:00–17:29 → Boa tarde
+    if h < 17 or (h == 17 and m < 30):
         return "Boa tarde"
+    # 17:30+ → Boa noite
     return "Boa noite"
 
 

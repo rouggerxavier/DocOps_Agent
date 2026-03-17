@@ -2,13 +2,28 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
-  Plus, Trash2, ChevronLeft, ChevronRight, RotateCcw,
-  Layers, BookOpen, Loader2, Eye, EyeOff,
+  Plus, Trash2, ChevronLeft,
+  Layers, BookOpen, Loader2, Eye, EyeOff, ThumbsUp, ThumbsDown,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
 import { apiClient, type FlashcardDeck, type FlashcardDeckListItem, type DocItem } from '@/api/client'
 import { cn } from '@/lib/utils'
+
+// ── Difficulty helpers ──────────────────────────────────────────────────────
+
+const DIFFICULTY_LABELS: Record<string, string> = {
+  facil: 'Fácil',
+  media: 'Média',
+  dificil: 'Difícil',
+}
+
+const DIFFICULTY_STYLES: Record<string, string> = {
+  facil: 'border-emerald-800/50 bg-emerald-950/20 text-emerald-400',
+  media: 'border-yellow-800/50 bg-yellow-950/20 text-yellow-400',
+  dificil: 'border-red-800/50 bg-red-950/20 text-red-400',
+}
 
 // ── Generate dialog ──────────────────────────────────────────────────────────
 
@@ -19,12 +34,14 @@ function GenerateDialog({
   onClose,
 }: {
   docs: DocItem[]
-  onGenerate: (docName: string, numCards: number) => void
+  onGenerate: (docName: string, numCards: number, contentFilter: string) => void
   generating: boolean
   onClose: () => void
 }) {
   const [selectedDoc, setSelectedDoc] = useState(docs[0]?.file_name ?? '')
   const [numCards, setNumCards] = useState(10)
+  const [scope, setScope] = useState<'full' | 'specific'>('full')
+  const [contentFilter, setContentFilter] = useState('')
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -43,6 +60,40 @@ function GenerateDialog({
                 <option key={d.file_name} value={d.file_name}>{d.file_name}</option>
               ))}
             </select>
+          </div>
+
+          {/* Scope: full doc vs specific content */}
+          <div className="space-y-1">
+            <label className="text-xs text-zinc-400">Escopo do conteúdo</label>
+            <div className="flex rounded-lg border border-zinc-800 bg-zinc-900 p-0.5">
+              <button
+                onClick={() => { setScope('full'); setContentFilter('') }}
+                className={cn(
+                  'flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  scope === 'full' ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300',
+                )}
+              >
+                Documento inteiro
+              </button>
+              <button
+                onClick={() => setScope('specific')}
+                className={cn(
+                  'flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
+                  scope === 'specific' ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300',
+                )}
+              >
+                Conteúdo específico
+              </button>
+            </div>
+            {scope === 'specific' && (
+              <Input
+                autoFocus
+                value={contentFilter}
+                onChange={e => setContentFilter(e.target.value)}
+                placeholder="Ex: fotossíntese, capítulo 3, mitose..."
+                className="mt-2 bg-zinc-900 border-zinc-800 text-sm"
+              />
+            )}
           </div>
 
           <div className="space-y-1">
@@ -65,8 +116,8 @@ function GenerateDialog({
           </Button>
           <Button
             size="sm"
-            onClick={() => onGenerate(selectedDoc, numCards)}
-            disabled={generating || !selectedDoc}
+            onClick={() => onGenerate(selectedDoc, numCards, scope === 'specific' ? contentFilter : '')}
+            disabled={generating || !selectedDoc || (scope === 'specific' && !contentFilter.trim())}
           >
             {generating && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
             Gerar
@@ -108,6 +159,8 @@ function StudySession({
 
   const card = cards[idx]
   const isLast = idx === cards.length - 1
+  const diffLabel = DIFFICULTY_LABELS[card.difficulty] ?? 'Média'
+  const diffStyle = DIFFICULTY_STYLES[card.difficulty] ?? DIFFICULTY_STYLES.media
 
   function handleRate(ease: number) {
     reviewMut.mutate({ cardId: card.id, ease })
@@ -121,7 +174,7 @@ function StudySession({
   }
 
   return (
-    <div className="mx-auto max-w-xl space-y-6">
+    <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between">
         <button onClick={onBack} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300">
@@ -148,6 +201,12 @@ function StudySession({
             : 'border-zinc-800 bg-zinc-900 hover:border-zinc-700',
         )}
       >
+        {/* Difficulty badge */}
+        <div className="absolute top-3 left-3">
+          <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', diffStyle)}>
+            {diffLabel}
+          </span>
+        </div>
         <div className="absolute top-3 right-3">
           {flipped
             ? <Eye className="h-3.5 w-3.5 text-emerald-500" />
@@ -169,27 +228,41 @@ function StudySession({
         )}
       </div>
 
-      {/* Rating buttons */}
+      {/* Rating buttons — shown after flipping */}
       {flipped && (
-        <div className="flex gap-2">
-          <button
-            onClick={() => handleRate(1)}
-            className="flex-1 rounded-xl border border-red-800/50 bg-red-950/20 py-3 text-xs font-medium text-red-400 hover:bg-red-950/40 transition-colors"
-          >
-            Difícil
-          </button>
-          <button
-            onClick={() => handleRate(2)}
-            className="flex-1 rounded-xl border border-yellow-800/50 bg-yellow-950/20 py-3 text-xs font-medium text-yellow-400 hover:bg-yellow-950/40 transition-colors"
-          >
-            Bom
-          </button>
-          <button
-            onClick={() => handleRate(3)}
-            className="flex-1 rounded-xl border border-emerald-800/50 bg-emerald-950/20 py-3 text-xs font-medium text-emerald-400 hover:bg-emerald-950/40 transition-colors"
-          >
-            Fácil
-          </button>
+        <div className="space-y-3">
+          {/* LLM difficulty assessment */}
+          <div className="flex items-center justify-center gap-2 text-xs text-zinc-500">
+            <span>A IA classificou como <span className={cn('font-semibold', diffStyle.split(' ').pop())}>{diffLabel}</span>. Concorda?</span>
+            <button className="p-1 rounded hover:bg-zinc-800 text-emerald-500 hover:text-emerald-400" title="Concordo">
+              <ThumbsUp className="h-3.5 w-3.5" />
+            </button>
+            <button className="p-1 rounded hover:bg-zinc-800 text-red-500 hover:text-red-400" title="Discordo">
+              <ThumbsDown className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          {/* Ease rating */}
+          <div className="flex gap-2">
+            <button
+              onClick={() => handleRate(1)}
+              className="flex-1 rounded-xl border border-red-800/50 bg-red-950/20 py-3 text-xs font-medium text-red-400 hover:bg-red-950/40 transition-colors"
+            >
+              Difícil
+            </button>
+            <button
+              onClick={() => handleRate(2)}
+              className="flex-1 rounded-xl border border-yellow-800/50 bg-yellow-950/20 py-3 text-xs font-medium text-yellow-400 hover:bg-yellow-950/40 transition-colors"
+            >
+              Bom
+            </button>
+            <button
+              onClick={() => handleRate(3)}
+              className="flex-1 rounded-xl border border-emerald-800/50 bg-emerald-950/20 py-3 text-xs font-medium text-emerald-400 hover:bg-emerald-950/40 transition-colors"
+            >
+              Fácil
+            </button>
+          </div>
         </div>
       )}
     </div>
@@ -220,8 +293,8 @@ export function Flashcards() {
   })
 
   const generateMut = useMutation({
-    mutationFn: ({ docName, numCards }: { docName: string; numCards: number }) =>
-      apiClient.generateFlashcards(docName, numCards),
+    mutationFn: ({ docName, numCards, contentFilter }: { docName: string; numCards: number; contentFilter: string }) =>
+      apiClient.generateFlashcards(docName, numCards, contentFilter),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['flashcard-decks'] })
       setShowGenerate(false)
@@ -238,19 +311,19 @@ export function Flashcards() {
     },
   })
 
-  // Study mode
+  // Study mode — centralized
   if (studyDeckId !== null && studyDeck) {
     return (
-      <div className="mx-auto max-w-6xl px-8 py-8">
+      <div className="mx-auto max-w-xl">
         <StudySession deck={studyDeck} onBack={() => setStudyDeckId(null)} />
       </div>
     )
   }
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-3xl space-y-6">
       <div className="flex items-center justify-between">
-        <div>
+        <div className="text-center flex-1">
           <h1 className="text-2xl font-bold text-zinc-100">Flashcards</h1>
           <p className="mt-0.5 text-sm text-zinc-500">Revisão espaçada a partir dos seus documentos</p>
         </div>
@@ -265,7 +338,7 @@ export function Flashcards() {
       </div>
 
       {docs.length === 0 && (
-        <Card className="border-zinc-800 bg-zinc-900">
+        <Card className="border-zinc-800 bg-zinc-900 mx-auto max-w-md">
           <CardContent className="p-6 text-center">
             <BookOpen className="mx-auto h-8 w-8 text-zinc-700 mb-2" />
             <p className="text-sm text-zinc-500">Ingira documentos primeiro para gerar flashcards.</p>
@@ -274,13 +347,13 @@ export function Flashcards() {
       )}
 
       {isLoading && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           {[1, 2, 3].map(i => <div key={i} className="h-28 rounded-xl bg-zinc-900 animate-pulse" />)}
         </div>
       )}
 
       {!isLoading && decks.length === 0 && docs.length > 0 && (
-        <Card className="border-zinc-800 bg-zinc-900">
+        <Card className="border-zinc-800 bg-zinc-900 mx-auto max-w-md">
           <CardContent className="p-6 text-center">
             <Layers className="mx-auto h-8 w-8 text-zinc-700 mb-2" />
             <p className="text-sm text-zinc-500">Nenhum deck ainda. Gere flashcards a partir de um documento!</p>
@@ -288,7 +361,7 @@ export function Flashcards() {
         </Card>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2">
         {decks.map(deck => (
           <div
             key={deck.id}
@@ -315,7 +388,7 @@ export function Flashcards() {
       {showGenerate && (
         <GenerateDialog
           docs={docs}
-          onGenerate={(docName, numCards) => generateMut.mutate({ docName, numCards })}
+          onGenerate={(docName, numCards, contentFilter) => generateMut.mutate({ docName, numCards, contentFilter })}
           generating={generateMut.isPending}
           onClose={() => setShowGenerate(false)}
         />

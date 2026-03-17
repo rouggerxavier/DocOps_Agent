@@ -55,7 +55,7 @@ function MorningBriefing({ data, loading }: { data: BriefingResponse | undefined
               {hasSchedule && (
                 <span className="flex items-center gap-1">
                   <Clock className="h-3 w-3 text-zinc-500" />
-                  {data.today_schedule.length} item{data.today_schedule.length > 1 ? 'ns' : ''} no cronograma
+                  {data.today_schedule.length} programaç{data.today_schedule.length > 1 ? 'ões' : 'ão'} para hoje
                 </span>
               )}
               {hasTasks && (

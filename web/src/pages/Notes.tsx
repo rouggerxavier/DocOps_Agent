@@ -213,7 +213,7 @@ export function Notes() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-0px)] overflow-hidden -mx-8 -my-8">
+    <div className="flex h-screen overflow-hidden">
       {/* Sidebar de notas */}
       <aside className="flex w-72 flex-col border-r border-zinc-800 bg-zinc-950">
         {/* Header */}
