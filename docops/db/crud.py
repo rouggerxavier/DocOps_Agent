@@ -481,6 +481,32 @@ def delete_flashcard_deck(db: Session, deck: "FlashcardDeck") -> None:
     db.commit()
 
 
+def get_flashcard_item_by_user(db: Session, card_id: int, user_id: int) -> "FlashcardItem | None":
+    from docops.db.models import FlashcardItem, FlashcardDeck
+    return (
+        db.query(FlashcardItem)
+        .join(FlashcardDeck, FlashcardItem.deck_id == FlashcardDeck.id)
+        .filter(FlashcardItem.id == card_id, FlashcardDeck.user_id == user_id)
+        .first()
+    )
+
+
+def update_flashcard_difficulty(db: Session, card_id: int, difficulty: str, user_id: int) -> "FlashcardItem | None":
+    from docops.db.models import FlashcardItem, FlashcardDeck
+    card = (
+        db.query(FlashcardItem)
+        .join(FlashcardDeck, FlashcardItem.deck_id == FlashcardDeck.id)
+        .filter(FlashcardItem.id == card_id, FlashcardDeck.user_id == user_id)
+        .first()
+    )
+    if not card:
+        return None
+    card.difficulty = difficulty
+    db.commit()
+    db.refresh(card)
+    return card
+
+
 def update_flashcard_ease(db: Session, card_id: int, ease: int) -> "FlashcardItem | None":
     from docops.db.models import FlashcardItem
     from datetime import datetime, timezone, timedelta

@@ -58,7 +58,7 @@ Cada dia deve ser uma seção ## separada.
 
 def _generate_plan(topic: str, days: int, doc_names: list[str], user_id: int) -> str:
     from docops.config import config
-    import google.generativeai as genai
+    from google import genai
 
     context_section = ""
     if doc_names:
@@ -73,15 +73,14 @@ def _generate_plan(topic: str, days: int, doc_names: list[str], user_id: int) ->
             texts = "\n\n".join(c.page_content[:600] for c in chunks[:10])
             context_section = f"Use o seguinte conteúdo dos documentos como base:\n\n{texts}\n\n"
 
-    genai.configure(api_key=config.gemini_api_key)
-    model = genai.GenerativeModel(config.gemini_model)
+    client = genai.Client(api_key=config.gemini_api_key)
     prompt = STUDY_PLAN_PROMPT.format(
         topic=topic,
         days=days,
         context_section=context_section,
     )
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(model=config.gemini_model, contents=prompt)
     return response.text.strip()
 
 

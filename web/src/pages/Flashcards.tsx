@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
   Plus, Trash2, ChevronLeft,
-  Layers, BookOpen, Loader2, Eye, EyeOff, ThumbsUp, ThumbsDown,
+  Layers, BookOpen, Loader2, Eye, EyeOff, ThumbsUp, ThumbsDown, Send,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -25,6 +25,8 @@ const DIFFICULTY_STYLES: Record<string, string> = {
   dificil: 'border-red-800/50 bg-red-950/20 text-red-400',
 }
 
+type DiffMode = 'any' | 'only_facil' | 'only_media' | 'only_dificil' | 'custom'
+
 // ── Generate dialog ──────────────────────────────────────────────────────────
 
 function GenerateDialog({
@@ -34,7 +36,13 @@ function GenerateDialog({
   onClose,
 }: {
   docs: DocItem[]
-  onGenerate: (docName: string, numCards: number, contentFilter: string) => void
+  onGenerate: (
+    docName: string,
+    numCards: number,
+    contentFilter: string,
+    difficultyMode: DiffMode,
+    difficultyCustom: { facil: number; media: number; dificil: number } | null,
+  ) => void
   generating: boolean
   onClose: () => void
 }) {
@@ -42,6 +50,34 @@ function GenerateDialog({
   const [numCards, setNumCards] = useState(10)
   const [scope, setScope] = useState<'full' | 'specific'>('full')
   const [contentFilter, setContentFilter] = useState('')
+  const [diffMode, setDiffMode] = useState<DiffMode>('any')
+  const [custom, setCustom] = useState({ facil: 4, media: 4, dificil: 2 })
+
+  const customTotal = custom.facil + custom.media + custom.dificil
+  const effectiveTotal = diffMode === 'custom' ? customTotal : numCards
+
+  function handleSubmit() {
+    onGenerate(
+      selectedDoc,
+      effectiveTotal,
+      scope === 'specific' ? contentFilter : '',
+      diffMode,
+      diffMode === 'custom' ? custom : null,
+    )
+  }
+
+  const canSubmit =
+    !!selectedDoc &&
+    !(scope === 'specific' && !contentFilter.trim()) &&
+    !(diffMode === 'custom' && customTotal < 1)
+
+  const DIFF_MODE_OPTIONS: { value: DiffMode; label: string }[] = [
+    { value: 'any', label: 'Misto' },
+    { value: 'only_facil', label: 'Só Fáceis' },
+    { value: 'only_media', label: 'Só Médias' },
+    { value: 'only_dificil', label: 'Só Difíceis' },
+    { value: 'custom', label: 'Personalizado' },
+  ]
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
@@ -49,6 +85,7 @@ function GenerateDialog({
         <h2 className="text-base font-semibold text-zinc-100 mb-4">Gerar Flashcards</h2>
 
         <div className="space-y-4">
+          {/* Documento */}
           <div className="space-y-1">
             <label className="text-xs text-zinc-400">Documento fonte</label>
             <select
@@ -62,7 +99,7 @@ function GenerateDialog({
             </select>
           </div>
 
-          {/* Scope: full doc vs specific content */}
+          {/* Escopo */}
           <div className="space-y-1">
             <label className="text-xs text-zinc-400">Escopo do conteúdo</label>
             <div className="flex rounded-lg border border-zinc-800 bg-zinc-900 p-0.5">
@@ -96,37 +133,113 @@ function GenerateDialog({
             )}
           </div>
 
-          <div className="space-y-1">
-            <label className="text-xs text-zinc-400">Quantidade de cards</label>
-            <input
-              type="range"
-              min={3}
-              max={30}
-              value={numCards}
-              onChange={e => setNumCards(Number(e.target.value))}
-              className="w-full"
-            />
-            <p className="text-xs text-zinc-500 text-right">{numCards} cards</p>
+          {/* Dificuldade */}
+          <div className="space-y-2">
+            <label className="text-xs text-zinc-400">Dificuldade dos cards</label>
+            <div className="flex flex-wrap gap-1.5">
+              {DIFF_MODE_OPTIONS.map(opt => (
+                <button
+                  key={opt.value}
+                  onClick={() => setDiffMode(opt.value)}
+                  className={cn(
+                    'rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                    diffMode === opt.value
+                      ? 'border-blue-600 bg-blue-600/20 text-blue-300'
+                      : 'border-zinc-700 bg-zinc-900 text-zinc-500 hover:text-zinc-300',
+                  )}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Custom distribution */}
+            {diffMode === 'custom' && (
+              <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-3 space-y-2">
+                {(['facil', 'media', 'dificil'] as const).map(key => (
+                  <div key={key} className="flex items-center gap-3">
+                    <span className={cn(
+                      'w-16 text-xs font-medium',
+                      key === 'facil' ? 'text-emerald-400' : key === 'media' ? 'text-yellow-400' : 'text-red-400',
+                    )}>
+                      {DIFFICULTY_LABELS[key]}
+                    </span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={20}
+                      value={custom[key]}
+                      onChange={e => setCustom(prev => ({ ...prev, [key]: Number(e.target.value) }))}
+                      className="flex-1 accent-current"
+                    />
+                    <span className="w-6 text-right text-xs text-zinc-300 font-mono">{custom[key]}</span>
+                  </div>
+                ))}
+                <p className="text-right text-[10px] text-zinc-500 pt-1">
+                  Total: <span className="text-zinc-300 font-semibold">{customTotal}</span> cards
+                </p>
+              </div>
+            )}
           </div>
+
+          {/* Quantidade (só quando não é custom) */}
+          {diffMode !== 'custom' && (
+            <div className="space-y-1">
+              <label className="text-xs text-zinc-400">Quantidade de cards</label>
+              <input
+                type="range"
+                min={3}
+                max={30}
+                value={numCards}
+                onChange={e => setNumCards(Number(e.target.value))}
+                className="w-full"
+              />
+              <p className="text-xs text-zinc-500 text-right">{numCards} cards</p>
+            </div>
+          )}
         </div>
 
         <div className="mt-6 flex gap-2 justify-end">
           <Button variant="ghost" size="sm" onClick={onClose} disabled={generating}>
             Cancelar
           </Button>
-          <Button
-            size="sm"
-            onClick={() => onGenerate(selectedDoc, numCards, scope === 'specific' ? contentFilter : '')}
-            disabled={generating || !selectedDoc || (scope === 'specific' && !contentFilter.trim())}
-          >
+          <Button size="sm" onClick={handleSubmit} disabled={generating || !canSubmit}>
             {generating && <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />}
-            Gerar
+            Gerar {effectiveTotal > 0 ? `(${effectiveTotal})` : ''}
           </Button>
         </div>
       </div>
     </div>
   )
 }
+
+// ── Evaluation result config ─────────────────────────────────────────────────
+
+const VERDICT_CONFIG = {
+  correta: {
+    label: 'Correta!',
+    color: 'text-emerald-400',
+    border: 'border-emerald-800/50',
+    bg: 'bg-emerald-950/30',
+    icon: '✓',
+  },
+  parcial: {
+    label: 'Parcialmente correta',
+    color: 'text-yellow-400',
+    border: 'border-yellow-800/50',
+    bg: 'bg-yellow-950/30',
+    icon: '◑',
+  },
+  incorreta: {
+    label: 'Incorreta',
+    color: 'text-red-400',
+    border: 'border-red-800/50',
+    bg: 'bg-red-950/30',
+    icon: '✗',
+  },
+} as const
+
+type Evaluation = { verdict: string; feedback: string; highlight: string }
 
 // ── Study session ────────────────────────────────────────────────────────────
 
@@ -140,12 +253,37 @@ function StudySession({
   const qc = useQueryClient()
   const [idx, setIdx] = useState(0)
   const [flipped, setFlipped] = useState(false)
+  const [diffVote, setDiffVote] = useState<'agree' | 'disagree' | null>(null)
+  const [correctedDiff, setCorrectedDiff] = useState<string | null>(null)
+  // resposta do usuário e resultado da avaliação
+  const [userAnswer, setUserAnswer] = useState('')
+  const [evaluation, setEvaluation] = useState<Evaluation | null>(null)
   const cards = deck.cards
 
   const reviewMut = useMutation({
     mutationFn: ({ cardId, ease }: { cardId: number; ease: number }) =>
       apiClient.reviewFlashcard(cardId, ease),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['flashcard-deck', deck.id] }),
+  })
+
+  const difficultyMut = useMutation({
+    mutationFn: ({ cardId, difficulty }: { cardId: number; difficulty: string }) =>
+      apiClient.updateFlashcardDifficulty(cardId, difficulty),
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: ['flashcard-deck', deck.id] })
+      toast.success(`Dificuldade atualizada para ${DIFFICULTY_LABELS[data.difficulty] ?? data.difficulty}!`)
+    },
+    onError: () => toast.error('Erro ao atualizar dificuldade.'),
+  })
+
+  const evaluateMut = useMutation({
+    mutationFn: ({ cardId, answer }: { cardId: number; answer: string }) =>
+      apiClient.evaluateFlashcard(cardId, answer),
+    onSuccess: (data) => {
+      setEvaluation(data)
+      setFlipped(true)
+    },
+    onError: () => toast.error('Erro ao avaliar resposta.'),
   })
 
   if (!cards.length) {
@@ -159,12 +297,16 @@ function StudySession({
 
   const card = cards[idx]
   const isLast = idx === cards.length - 1
-  const diffLabel = DIFFICULTY_LABELS[card.difficulty] ?? 'Média'
-  const diffStyle = DIFFICULTY_STYLES[card.difficulty] ?? DIFFICULTY_STYLES.media
+  const activeDiff = correctedDiff ?? card.difficulty
+  const diffLabel = DIFFICULTY_LABELS[activeDiff] ?? 'Média'
+  const diffStyle = DIFFICULTY_STYLES[activeDiff] ?? DIFFICULTY_STYLES.media
 
-  function handleRate(ease: number) {
-    reviewMut.mutate({ cardId: card.id, ease })
+  function advanceCard() {
     setFlipped(false)
+    setDiffVote(null)
+    setCorrectedDiff(null)
+    setUserAnswer('')
+    setEvaluation(null)
     if (!isLast) {
       setIdx(i => i + 1)
     } else {
@@ -173,8 +315,32 @@ function StudySession({
     }
   }
 
+  function handleRate(ease: number) {
+    reviewMut.mutate({ cardId: card.id, ease })
+    advanceCard()
+  }
+
+  function handleAgree() {
+    setDiffVote('agree')
+    toast.success(`Dificuldade "${diffLabel}" confirmada.`)
+  }
+
+  function handleDisagree() {
+    setDiffVote('disagree')
+  }
+
+  function handleCorrectDiff(newDiff: string) {
+    setCorrectedDiff(newDiff)
+    setDiffVote('agree')
+    difficultyMut.mutate({ cardId: card.id, difficulty: newDiff })
+  }
+
+  const verdictCfg = evaluation
+    ? (VERDICT_CONFIG[evaluation.verdict as keyof typeof VERDICT_CONFIG] ?? VERDICT_CONFIG.parcial)
+    : null
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between">
         <button onClick={onBack} className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300">
@@ -193,15 +359,14 @@ function StudySession({
 
       {/* Card */}
       <div
-        onClick={() => setFlipped(f => !f)}
+        onClick={() => !flipped && !evaluateMut.isPending && setFlipped(true)}
         className={cn(
-          'relative cursor-pointer rounded-2xl border p-8 min-h-[250px] flex flex-col items-center justify-center text-center transition-all',
+          'relative rounded-2xl border p-8 min-h-[200px] flex flex-col items-center justify-center text-center transition-all',
           flipped
             ? 'border-emerald-800/50 bg-emerald-950/20'
-            : 'border-zinc-800 bg-zinc-900 hover:border-zinc-700',
+            : 'border-zinc-800 bg-zinc-900 cursor-pointer hover:border-zinc-700',
         )}
       >
-        {/* Difficulty badge */}
         <div className="absolute top-3 left-3">
           <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', diffStyle)}>
             {diffLabel}
@@ -218,28 +383,134 @@ function StudySession({
           <>
             <p className="text-xs text-zinc-600 mb-3 uppercase tracking-wider">Pergunta</p>
             <p className="text-base font-medium text-zinc-100 leading-relaxed">{card.front}</p>
-            <p className="mt-4 text-[10px] text-zinc-700">Clique para ver a resposta</p>
+            <p className="mt-4 text-[10px] text-zinc-700">Clique para ver a resposta diretamente</p>
           </>
         ) : (
           <>
-            <p className="text-xs text-emerald-600 mb-3 uppercase tracking-wider">Resposta</p>
+            <p className="text-xs text-emerald-600 mb-3 uppercase tracking-wider">Resposta oficial</p>
             <p className="text-base text-zinc-200 leading-relaxed">{card.back}</p>
           </>
         )}
       </div>
 
-      {/* Rating buttons — shown after flipping */}
+      {/* ── Aba de resposta do estudante (antes de virar) ─────────────────── */}
+      {!flipped && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-2">
+          <p className="text-xs text-zinc-500">Sua resposta <span className="text-zinc-700">(opcional — ou clique no card para ver direto)</span></p>
+          <textarea
+            value={userAnswer}
+            onChange={e => setUserAnswer(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && userAnswer.trim()) {
+                e.preventDefault()
+                evaluateMut.mutate({ cardId: card.id, answer: userAnswer.trim() })
+              }
+            }}
+            placeholder="Digite sua resposta aqui..."
+            rows={3}
+            className="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-700 outline-none focus:border-zinc-500 transition-colors"
+          />
+          <div className="flex justify-end">
+            <button
+              onClick={() => evaluateMut.mutate({ cardId: card.id, answer: userAnswer.trim() })}
+              disabled={!userAnswer.trim() || evaluateMut.isPending}
+              className="flex items-center gap-1.5 rounded-lg border border-blue-800/50 bg-blue-950/20 px-3 py-1.5 text-xs font-medium text-blue-400 hover:bg-blue-950/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+            >
+              {evaluateMut.isPending
+                ? <><Loader2 className="h-3 w-3 animate-spin" /> Avaliando...</>
+                : <><Send className="h-3 w-3" /> Avaliar <span className="text-zinc-600 ml-1">Ctrl+Enter</span></>
+              }
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Resultado da avaliação (após avaliar) ────────────────────────── */}
+      {flipped && evaluation && verdictCfg && (
+        <div className={cn('rounded-xl border p-4 space-y-3', verdictCfg.border, verdictCfg.bg)}>
+          {/* Verdict */}
+          <div className="flex items-center gap-2">
+            <span className={cn('text-lg font-bold', verdictCfg.color)}>{verdictCfg.icon}</span>
+            <span className={cn('text-sm font-semibold', verdictCfg.color)}>{verdictCfg.label}</span>
+          </div>
+
+          {/* Resposta do usuário */}
+          <div className="rounded-lg border border-zinc-700/50 bg-zinc-900/50 px-3 py-2">
+            <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1">Sua resposta</p>
+            <p className="text-xs text-zinc-400 italic">"{userAnswer}"</p>
+          </div>
+
+          {/* Feedback */}
+          <div>
+            <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">Avaliação</p>
+            <p className="text-xs text-zinc-300 leading-relaxed">{evaluation.feedback}</p>
+          </div>
+
+          {/* Highlight */}
+          {evaluation.highlight && (
+            <div className="flex items-start gap-2 rounded-lg border border-zinc-700/40 bg-zinc-800/40 px-3 py-2">
+              <span className="text-yellow-500 text-xs mt-0.5">💡</span>
+              <p className="text-xs text-zinc-400">{evaluation.highlight}</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Seção de dificuldade + ease (após virar) ─────────────────────── */}
       {flipped && (
         <div className="space-y-3">
-          {/* LLM difficulty assessment */}
-          <div className="flex items-center justify-center gap-2 text-xs text-zinc-500">
-            <span>A IA classificou como <span className={cn('font-semibold', diffStyle.split(' ').pop())}>{diffLabel}</span>. Concorda?</span>
-            <button className="p-1 rounded hover:bg-zinc-800 text-emerald-500 hover:text-emerald-400" title="Concordo">
-              <ThumbsUp className="h-3.5 w-3.5" />
-            </button>
-            <button className="p-1 rounded hover:bg-zinc-800 text-red-500 hover:text-red-400" title="Discordo">
-              <ThumbsDown className="h-3.5 w-3.5" />
-            </button>
+          {/* LLM difficulty vote */}
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
+            {diffVote === null && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-zinc-400">
+                  A IA classificou como{' '}
+                  <span className={cn('font-semibold', diffStyle.split(' ').pop())}>{diffLabel}</span>.
+                  {' '}Você concorda?
+                </span>
+                <div className="flex gap-1 ml-3 shrink-0">
+                  <button
+                    onClick={handleAgree}
+                    className="flex items-center gap-1 rounded-lg border border-emerald-800/50 bg-emerald-950/20 px-2.5 py-1.5 text-xs font-medium text-emerald-400 hover:bg-emerald-950/40 transition-colors"
+                  >
+                    <ThumbsUp className="h-3 w-3" /> Sim
+                  </button>
+                  <button
+                    onClick={handleDisagree}
+                    className="flex items-center gap-1 rounded-lg border border-red-800/50 bg-red-950/20 px-2.5 py-1.5 text-xs font-medium text-red-400 hover:bg-red-950/40 transition-colors"
+                  >
+                    <ThumbsDown className="h-3 w-3" /> Não
+                  </button>
+                </div>
+              </div>
+            )}
+            {diffVote === 'agree' && (
+              <p className="text-xs text-zinc-500 text-center">
+                ✓ Dificuldade <span className={cn('font-semibold', (DIFFICULTY_STYLES[activeDiff] ?? DIFFICULTY_STYLES.media).split(' ').pop())}>{DIFFICULTY_LABELS[activeDiff]}</span> confirmada.
+              </p>
+            )}
+            {diffVote === 'disagree' && (
+              <div className="space-y-2">
+                <p className="text-xs text-zinc-400 text-center">Qual é a dificuldade correta?</p>
+                <div className="flex gap-2 justify-center">
+                  {(['facil', 'media', 'dificil'] as const).map(d => (
+                    <button
+                      key={d}
+                      onClick={() => handleCorrectDiff(d)}
+                      disabled={difficultyMut.isPending}
+                      className={cn(
+                        'rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
+                        DIFFICULTY_STYLES[d],
+                        d === card.difficulty && 'opacity-40 cursor-default',
+                        d !== card.difficulty && 'hover:opacity-80',
+                      )}
+                    >
+                      {DIFFICULTY_LABELS[d]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Ease rating */}
@@ -293,8 +564,19 @@ export function Flashcards() {
   })
 
   const generateMut = useMutation({
-    mutationFn: ({ docName, numCards, contentFilter }: { docName: string; numCards: number; contentFilter: string }) =>
-      apiClient.generateFlashcards(docName, numCards, contentFilter),
+    mutationFn: ({
+      docName,
+      numCards,
+      contentFilter,
+      difficultyMode,
+      difficultyCustom,
+    }: {
+      docName: string
+      numCards: number
+      contentFilter: string
+      difficultyMode: DiffMode
+      difficultyCustom: { facil: number; media: number; dificil: number } | null
+    }) => apiClient.generateFlashcards(docName, numCards, contentFilter, difficultyMode, difficultyCustom),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['flashcard-decks'] })
       setShowGenerate(false)
@@ -388,7 +670,9 @@ export function Flashcards() {
       {showGenerate && (
         <GenerateDialog
           docs={docs}
-          onGenerate={(docName, numCards, contentFilter) => generateMut.mutate({ docName, numCards, contentFilter })}
+          onGenerate={(docName, numCards, contentFilter, difficultyMode, difficultyCustom) =>
+            generateMut.mutate({ docName, numCards, contentFilter, difficultyMode, difficultyCustom })
+          }
           generating={generateMut.isPending}
           onClose={() => setShowGenerate(false)}
         />

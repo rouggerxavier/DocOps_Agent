@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -13,6 +14,8 @@ from docops.auth.dependencies import get_current_user
 from docops.db import crud
 from docops.db.database import get_db
 from docops.db.models import User
+
+_BRASILIA = ZoneInfo("America/Sao_Paulo")
 
 router = APIRouter()
 
@@ -49,19 +52,15 @@ class BriefingResponse(BaseModel):
 
 
 def _greeting(now: datetime) -> str:
+    """now deve estar em horário de Brasília."""
     h = now.hour
-    m = now.minute
-    # 00:00–03:59 → Boa noite
-    if h < 4:
+    if h < 4:    # 00:00–03:59
         return "Boa noite"
-    # 04:00–11:59 → Bom dia
-    if h < 12:
+    if h < 12:   # 04:00–11:59
         return "Bom dia"
-    # 12:00–17:29 → Boa tarde
-    if h < 17 or (h == 17 and m < 30):
+    if h < 18:   # 12:00–17:59
         return "Boa tarde"
-    # 17:30+ → Boa noite
-    return "Boa noite"
+    return "Boa noite"  # 18:00–23:59
 
 
 # ── Endpoint ──────────────────────────────────────────────────────────────────
@@ -71,7 +70,7 @@ def get_briefing(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).astimezone(_BRASILIA)
     today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     today_end = today_start + timedelta(days=1)
 

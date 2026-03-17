@@ -268,20 +268,23 @@ async def ingest_photo(
 
 def _ocr_with_gemini(image_bytes: bytes, ext: str) -> str:
     """Use Gemini Vision to extract text from an image."""
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types
 
-    genai.configure(api_key=config.gemini_api_key)
-    model = genai.GenerativeModel(config.gemini_model)
     mime_map = {
         ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
         ".png": "image/png", ".webp": "image/webp", ".heic": "image/heic",
     }
     mime = mime_map.get(ext, "image/jpeg")
 
-    response = model.generate_content([
-        "Extraia TODO o texto visivel nesta imagem. "
-        "Transcreva fielmente mantendo a estrutura (paragrafos, listas, titulos). "
-        "Retorne APENAS o texto extraido, sem comentarios.",
-        {"mime_type": mime, "data": image_bytes},
-    ])
+    client = genai.Client(api_key=config.gemini_api_key)
+    response = client.models.generate_content(
+        model=config.gemini_model,
+        contents=[
+            types.Part.from_bytes(data=image_bytes, mime_type=mime),
+            "Extraia TODO o texto visivel nesta imagem. "
+            "Transcreva fielmente mantendo a estrutura (paragrafos, listas, titulos). "
+            "Retorne APENAS o texto extraido, sem comentarios.",
+        ],
+    )
     return response.text.strip()

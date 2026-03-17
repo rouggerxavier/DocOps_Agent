@@ -381,11 +381,29 @@ export const apiClient = {
   getFlashcardDeck: (id: number): Promise<FlashcardDeck> =>
     api.get(`/api/flashcards/${id}`).then(r => r.data),
 
-  generateFlashcards: (docName: string, numCards: number, contentFilter = ''): Promise<FlashcardDeck> =>
-    api.post('/api/flashcards/generate', { doc_name: docName, num_cards: numCards, content_filter: contentFilter }).then(r => r.data),
+  generateFlashcards: (
+    docName: string,
+    numCards: number,
+    contentFilter = '',
+    difficultyMode = 'any',
+    difficultyCustom: { facil: number; media: number; dificil: number } | null = null,
+  ): Promise<FlashcardDeck> =>
+    api.post('/api/flashcards/generate', {
+      doc_name: docName,
+      num_cards: numCards,
+      content_filter: contentFilter,
+      difficulty_mode: difficultyMode,
+      difficulty_custom: difficultyCustom,
+    }).then(r => r.data),
 
   reviewFlashcard: (cardId: number, ease: number): Promise<{ status: string }> =>
     api.post('/api/flashcards/review', { card_id: cardId, ease }).then(r => r.data),
+
+  updateFlashcardDifficulty: (cardId: number, difficulty: string): Promise<{ status: string; difficulty: string }> =>
+    api.put(`/api/flashcards/card/${cardId}/difficulty`, { difficulty }).then(r => r.data),
+
+  evaluateFlashcard: (cardId: number, userAnswer: string): Promise<{ verdict: string; feedback: string; highlight: string }> =>
+    api.post(`/api/flashcards/card/${cardId}/evaluate`, { user_answer: userAnswer }).then(r => r.data),
 
   deleteFlashcardDeck: (id: number): Promise<void> =>
     api.delete(`/api/flashcards/${id}`).then(() => undefined),
