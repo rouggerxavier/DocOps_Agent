@@ -570,7 +570,7 @@ export function Tasks() {
 
   const { data: tasks = [], isLoading } = useQuery<TaskItem[]>({
     queryKey: ['tasks'],
-    queryFn: apiClient.listTasks,
+    queryFn: () => apiClient.listTasks(),
   })
 
   const drawerTask = drawerTaskId != null ? tasks.find(t => t.id === drawerTaskId) ?? null : null
