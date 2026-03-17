@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from docops.api.routes import (
     artifact,
@@ -74,6 +77,24 @@ def create_app() -> FastAPI:
     app.include_router(briefing.router, prefix=prefix, tags=["briefing"], dependencies=_auth)
     app.include_router(flashcards.router, prefix=prefix, tags=["flashcards"], dependencies=_auth)
     app.include_router(studyplan.router, prefix=prefix, tags=["studyplan"], dependencies=_auth)
+
+    # ── Servir frontend React (web/dist/) ────────────────────────────────────
+    # Resolve relativo à raiz do projeto (dois níveis acima de docops/api/)
+    _frontend_dist = Path(__file__).resolve().parent.parent.parent / "web" / "dist"
+
+    if _frontend_dist.exists():
+        # Arquivos estáticos (JS, CSS, imagens gerados pelo Vite em /assets)
+        app.mount(
+            "/assets",
+            StaticFiles(directory=str(_frontend_dist / "assets")),
+            name="assets",
+        )
+
+        # Catch-all: qualquer rota que não seja /api/* serve o index.html
+        # para o React Router funcionar corretamente
+        @app.get("/{full_path:path}", include_in_schema=False)
+        async def serve_spa(full_path: str) -> FileResponse:
+            return FileResponse(str(_frontend_dist / "index.html"))
 
     return app
 
