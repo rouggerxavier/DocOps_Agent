@@ -114,12 +114,13 @@ function TaskRow({
 }: {
   task: TaskItem
   onStatusChange: (id: number, status: string) => void
-  onEdit: (id: number, title: string, priority: string, due_date: string) => void
+  onEdit: (id: number, title: string, priority: string, due_date: string, status: string) => void
   onDelete: (id: number) => void
 }) {
   const [editing, setEditing] = useState(false)
   const [editTitle, setEditTitle] = useState(task.title)
   const [editPriority, setEditPriority] = useState(task.priority)
+  const [editStatus, setEditStatus] = useState(task.status)
   const [editDue, setEditDue] = useState(
     task.due_date ? new Date(task.due_date).toISOString().slice(0, 16) : '',
   )
@@ -131,13 +132,14 @@ function TaskRow({
 
   function saveEdit() {
     if (!editTitle.trim()) return
-    onEdit(task.id, editTitle.trim(), editPriority, editDue)
+    onEdit(task.id, editTitle.trim(), editPriority, editDue, editStatus)
     setEditing(false)
   }
 
   function cancelEdit() {
     setEditTitle(task.title)
     setEditPriority(task.priority)
+    setEditStatus(task.status)
     setEditDue(task.due_date ? new Date(task.due_date).toISOString().slice(0, 16) : '')
     setEditing(false)
   }
@@ -161,6 +163,15 @@ function TaskRow({
             <option value="low">Baixa</option>
             <option value="normal">Normal</option>
             <option value="high">Alta</option>
+          </select>
+          <select
+            value={editStatus}
+            onChange={e => setEditStatus(e.target.value)}
+            className="flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-200 outline-none"
+          >
+            <option value="pending">Pendente</option>
+            <option value="doing">Em andamento</option>
+            <option value="done">Concluída</option>
           </select>
           <Input
             type="datetime-local"
@@ -287,9 +298,9 @@ export function Tasks() {
   })
 
   const editMut = useMutation({
-    mutationFn: ({ id, title, priority, due_date }: { id: number; title: string; priority: string; due_date: string }) => {
+    mutationFn: ({ id, title, priority, due_date, status }: { id: number; title: string; priority: string; due_date: string; status: string }) => {
       const task = tasks.find(t => t.id === id)!
-      return apiClient.updateTask(id, title, task.note ?? undefined, task.status, priority, due_date ? new Date(due_date).toISOString() : undefined)
+      return apiClient.updateTask(id, title, task.note ?? undefined, status, priority, due_date ? new Date(due_date).toISOString() : undefined)
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tasks'] })
@@ -390,7 +401,7 @@ export function Tasks() {
             key={task.id}
             task={task}
             onStatusChange={(id, status) => updateMut.mutate({ id, status })}
-            onEdit={(id, title, priority, due_date) => editMut.mutate({ id, title, priority, due_date })}
+            onEdit={(id, title, priority, due_date, status) => editMut.mutate({ id, title, priority, due_date, status })}
             onDelete={id => deleteMut.mutate(id)}
           />
         ))}
