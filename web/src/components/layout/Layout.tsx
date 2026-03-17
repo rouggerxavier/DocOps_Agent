@@ -2,7 +2,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 
 // These routes use a full-height layout without inner padding/max-width
-const FULL_HEIGHT_ROUTES = ['/chat', '/schedule']
+const FULL_HEIGHT_ROUTES = ['/chat', '/schedule', '/notes', '/flashcards']
 
 export function Layout() {
   const { pathname } = useLocation()

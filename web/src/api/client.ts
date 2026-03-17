@@ -109,6 +109,92 @@ export interface CalendarOverview {
   next_schedule_item: ScheduleItem | null
 }
 
+export interface NoteItem {
+  id: number
+  title: string
+  content: string
+  pinned: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskItem {
+  id: number
+  title: string
+  note: string | null
+  status: string
+  priority: string
+  due_date: string | null
+  completed_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface BriefingTask {
+  id: number
+  title: string
+  priority: string
+  due_date: string | null
+}
+
+export interface BriefingReminder {
+  id: number
+  title: string
+  starts_at: string
+  all_day: boolean
+  note: string | null
+}
+
+export interface BriefingScheduleItem {
+  title: string
+  start_time: string
+  end_time: string
+}
+
+export interface BriefingResponse {
+  date: string
+  greeting: string
+  today_reminders: BriefingReminder[]
+  today_schedule: BriefingScheduleItem[]
+  pending_tasks: BriefingTask[]
+  overdue_tasks: BriefingTask[]
+  docs_count: number
+  notes_count: number
+}
+
+// ── Flashcards ────────────────────────────────────────────────────────────────
+
+export interface FlashcardCard {
+  id: number
+  front: string
+  back: string
+  ease: number
+  next_review: string | null
+}
+
+export interface FlashcardDeck {
+  id: number
+  title: string
+  source_doc: string | null
+  created_at: string
+  cards: FlashcardCard[]
+}
+
+export interface FlashcardDeckListItem {
+  id: number
+  title: string
+  source_doc: string | null
+  card_count: number
+  created_at: string
+}
+
+// ── Study Plan ────────────────────────────────────────────────────────────────
+
+export interface StudyPlanResponse {
+  plan: string
+  artifact_filename: string | null
+}
+
 // ── API functions ─────────────────────────────────────────────────────────────
 
 export const apiClient = {
@@ -239,4 +325,85 @@ export const apiClient = {
 
   getCalendarOverview: (date?: string): Promise<CalendarOverview> =>
     api.get('/api/calendar/overview', { params: { date } }).then(r => r.data),
+
+  // ── Notes ──────────────────────────────────────────────────────────────────
+
+  listNotes: (): Promise<NoteItem[]> =>
+    api.get('/api/notes').then(r => r.data),
+
+  createNote: (title: string, content: string, pinned = false): Promise<NoteItem> =>
+    api.post('/api/notes', { title, content, pinned }).then(r => r.data),
+
+  updateNote: (id: number, title: string, content: string, pinned: boolean): Promise<NoteItem> =>
+    api.put(`/api/notes/${id}`, { title, content, pinned }).then(r => r.data),
+
+  deleteNote: (id: number): Promise<void> =>
+    api.delete(`/api/notes/${id}`).then(() => undefined),
+
+  // ── Tasks ──────────────────────────────────────────────────────────────────
+
+  listTasks: (status?: string): Promise<TaskItem[]> =>
+    api.get('/api/tasks', { params: { status } }).then(r => r.data),
+
+  createTask: (
+    title: string,
+    note?: string,
+    priority = 'normal',
+    due_date?: string,
+  ): Promise<TaskItem> =>
+    api.post('/api/tasks', { title, note, priority, due_date }).then(r => r.data),
+
+  updateTask: (
+    id: number,
+    title: string,
+    note?: string,
+    status = 'pending',
+    priority = 'normal',
+    due_date?: string,
+  ): Promise<TaskItem> =>
+    api.put(`/api/tasks/${id}`, { title, note, status, priority, due_date }).then(r => r.data),
+
+  deleteTask: (id: number): Promise<void> =>
+    api.delete(`/api/tasks/${id}`).then(() => undefined),
+
+  // ── Briefing ───────────────────────────────────────────────────────────────
+
+  getBriefing: (): Promise<BriefingResponse> =>
+    api.get('/api/briefing').then(r => r.data),
+
+  // ── Flashcards ──────────────────────────────────────────────────────────────
+
+  listFlashcardDecks: (): Promise<FlashcardDeckListItem[]> =>
+    api.get('/api/flashcards').then(r => r.data),
+
+  getFlashcardDeck: (id: number): Promise<FlashcardDeck> =>
+    api.get(`/api/flashcards/${id}`).then(r => r.data),
+
+  generateFlashcards: (docName: string, numCards: number): Promise<FlashcardDeck> =>
+    api.post('/api/flashcards/generate', { doc_name: docName, num_cards: numCards }).then(r => r.data),
+
+  reviewFlashcard: (cardId: number, ease: number): Promise<{ status: string }> =>
+    api.post('/api/flashcards/review', { card_id: cardId, ease }).then(r => r.data),
+
+  deleteFlashcardDeck: (id: number): Promise<void> =>
+    api.delete(`/api/flashcards/${id}`).then(() => undefined),
+
+  // ── Study Plan ──────────────────────────────────────────────────────────────
+
+  createStudyPlan: (topic: string, days: number, docNames: string[]): Promise<StudyPlanResponse> =>
+    api.post('/api/studyplan', { topic, days, doc_names: docNames }).then(r => r.data),
+
+  // ── Ingest Clip & Photo ─────────────────────────────────────────────────────
+
+  ingestClip: (text: string, title: string): Promise<IngestResponse> =>
+    api.post('/api/ingest/clip', { text, title }).then(r => r.data),
+
+  ingestPhoto: (file: File, title: string): Promise<IngestResponse> => {
+    const form = new FormData()
+    form.append('file', file)
+    form.append('title', title)
+    return api.post('/api/ingest/photo', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }).then(r => r.data)
+  },
 }

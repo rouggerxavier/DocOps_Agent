@@ -1,8 +1,8 @@
-import { useMemo, useState, useRef } from 'react'
+import { useMemo, useState, useRef, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  CalendarDays, Clock, Plus, Trash2, Sparkles, ChevronLeft, ChevronRight,
-  Bell, AlignJustify, Calendar, Check, X
+  Clock, Plus, Sparkles, ChevronLeft, ChevronRight,
+  Bell, AlignJustify, Calendar, Check, X, Pencil, Trash2,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -29,21 +29,21 @@ const MONTH_NAMES = [
 ]
 
 const EVENT_COLORS = [
-  'bg-blue-500/20 text-blue-300 border-blue-500/30',
-  'bg-emerald-500/20 text-emerald-300 border-emerald-500/30',
-  'bg-violet-500/20 text-violet-300 border-violet-500/30',
-  'bg-amber-500/20 text-amber-300 border-amber-500/30',
-  'bg-rose-500/20 text-rose-300 border-rose-500/30',
-  'bg-cyan-500/20 text-cyan-300 border-cyan-500/30',
+  'bg-blue-500/30 text-blue-200 border-blue-400/50',
+  'bg-emerald-500/30 text-emerald-200 border-emerald-400/50',
+  'bg-violet-500/30 text-violet-200 border-violet-400/50',
+  'bg-amber-500/30 text-amber-200 border-amber-400/50',
+  'bg-rose-500/30 text-rose-200 border-rose-400/50',
+  'bg-cyan-500/30 text-cyan-200 border-cyan-400/50',
 ]
 
 const EVENT_BG_COLORS = [
-  'bg-blue-500/15 border-blue-500/40 text-blue-200',
-  'bg-emerald-500/15 border-emerald-500/40 text-emerald-200',
-  'bg-violet-500/15 border-violet-500/40 text-violet-200',
-  'bg-amber-500/15 border-amber-500/40 text-amber-200',
-  'bg-rose-500/15 border-rose-500/40 text-rose-200',
-  'bg-cyan-500/15 border-cyan-500/40 text-cyan-200',
+  'bg-blue-500/25 border-blue-400/60 text-blue-100',
+  'bg-emerald-500/25 border-emerald-400/60 text-emerald-100',
+  'bg-violet-500/25 border-violet-400/60 text-violet-100',
+  'bg-amber-500/25 border-amber-400/60 text-amber-100',
+  'bg-rose-500/25 border-rose-400/60 text-rose-100',
+  'bg-cyan-500/25 border-cyan-400/60 text-cyan-100',
 ]
 
 // Hora de início do grid semanal (6h da manhã)
@@ -220,6 +220,181 @@ function CollapsibleForm({
   )
 }
 
+// ── Tipo de item selecionado no grid ──────────────────────────────────────
+type SelectedBlock =
+  | { kind: 'schedule'; item: ScheduleItem; colorIdx: number; x: number; y: number }
+  | { kind: 'reminder'; item: ReminderItem; x: number; y: number }
+
+// ── Popover de edição de bloco ────────────────────────────────────────────
+function BlockPopover({
+  block,
+  onClose,
+  onDeleteSchedule,
+  onDeleteReminder,
+  onUpdateSchedule,
+  onUpdateReminder,
+}: {
+  block: SelectedBlock
+  onClose: () => void
+  onDeleteSchedule: (id: number) => void
+  onDeleteReminder: (id: number) => void
+  onUpdateSchedule: (id: number, payload: { title: string; start_time: string; end_time: string; note?: string | null }) => void
+  onUpdateReminder: (id: number, payload: { title: string; starts_at: string; ends_at?: string | null; note?: string | null }) => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [editing, setEditing] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+
+  // Campos editáveis
+  const [title, setTitle] = useState(block.kind === 'schedule' ? block.item.title : block.item.title)
+  const [startTime, setStartTime] = useState(
+    block.kind === 'schedule'
+      ? block.item.start_time
+      : new Date(block.item.starts_at).toTimeString().slice(0, 5)
+  )
+  const [endTime, setEndTime] = useState(
+    block.kind === 'schedule'
+      ? block.item.end_time
+      : block.item.ends_at
+        ? new Date(block.item.ends_at).toTimeString().slice(0, 5)
+        : new Date(new Date(block.item.starts_at).getTime() + 3600000).toTimeString().slice(0, 5)
+  )
+  const [note, setNote] = useState(
+    block.kind === 'schedule' ? (block.item.note ?? '') : (block.item.note ?? '')
+  )
+
+  // Fecha ao clicar fora
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  // Posição: garante que não saia da tela
+  const style: React.CSSProperties = {
+    position: 'fixed',
+    zIndex: 50,
+    top: Math.min(block.y, window.innerHeight - 320),
+    left: Math.min(block.x, window.innerWidth - 260),
+  }
+
+  const colorCls = block.kind === 'schedule'
+    ? EVENT_BG_COLORS[block.colorIdx % EVENT_BG_COLORS.length]
+    : 'bg-blue-500/15 border-blue-500/40 text-blue-200'
+
+  function handleSave() {
+    if (block.kind === 'schedule') {
+      onUpdateSchedule(block.item.id, { title, start_time: startTime, end_time: endTime, note: note || null })
+    } else {
+      const dateStr = new Date(block.item.starts_at).toISOString().slice(0, 10)
+      onUpdateReminder(block.item.id, {
+        title,
+        starts_at: new Date(`${dateStr}T${startTime}:00`).toISOString(),
+        ends_at: new Date(`${dateStr}T${endTime}:00`).toISOString(),
+        note: note || null,
+      })
+    }
+    setEditing(false)
+  }
+
+  return (
+    <div ref={ref} style={style} className="w-56 rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/60 overflow-hidden">
+      {/* Cabeçalho colorido */}
+      <div className={cn('px-3 py-2 border-b border-zinc-800 flex items-center justify-between', colorCls.split(' ').slice(0, 1).join(' '), 'bg-opacity-30')}>
+        <span className="text-xs font-semibold truncate max-w-[160px]">
+          {block.kind === 'schedule' ? 'Bloco fixo' : 'Lembrete'}
+        </span>
+        <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300 ml-1">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {!editing ? (
+        <div className="p-3 space-y-2">
+          <p className="text-sm font-semibold text-zinc-100 leading-tight">
+            {block.kind === 'schedule' ? block.item.title : block.item.title}
+          </p>
+          <p className="text-xs text-zinc-400">
+            {block.kind === 'schedule'
+              ? `${block.item.start_time} – ${block.item.end_time}`
+              : `${startTime} – ${endTime}`}
+          </p>
+          {(block.kind === 'schedule' ? block.item.note : block.item.note) && (
+            <p className="text-xs text-zinc-500">{block.kind === 'schedule' ? block.item.note : block.item.note}</p>
+          )}
+          <div className="flex gap-2 pt-1">
+            <button
+              onClick={() => setEditing(true)}
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 py-1.5 text-xs text-zinc-300 hover:border-zinc-600 hover:text-zinc-100 transition-colors"
+            >
+              <Pencil className="h-3 w-3" /> Editar
+            </button>
+            {!confirming ? (
+              <button
+                onClick={() => setConfirming(true)}
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-red-800/50 bg-red-950/30 py-1.5 text-xs text-red-400 hover:bg-red-950/60 transition-colors"
+              >
+                <Trash2 className="h-3 w-3" /> Excluir
+              </button>
+            ) : (
+              <div className="flex flex-1 gap-1">
+                <button
+                  onClick={() => {
+                    if (block.kind === 'schedule') onDeleteSchedule(block.item.id)
+                    else onDeleteReminder(block.item.id)
+                    onClose()
+                  }}
+                  className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-red-600 bg-red-600 py-1.5 text-xs font-semibold text-white hover:bg-red-700 transition-colors"
+                >
+                  <Trash2 className="h-3 w-3" /> Confirmar
+                </button>
+                <button
+                  onClick={() => setConfirming(false)}
+                  className="flex items-center justify-center rounded-lg border border-zinc-700 px-2 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+                >
+                  Cancelar
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="p-3 space-y-2">
+          <Input
+            value={title}
+            onChange={e => setTitle(e.target.value)}
+            placeholder="Título"
+            className="h-7 text-xs bg-zinc-800 border-zinc-700"
+          />
+          <div className="grid grid-cols-2 gap-1.5">
+            <Input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="h-7 text-xs bg-zinc-800 border-zinc-700" />
+            <Input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="h-7 text-xs bg-zinc-800 border-zinc-700" />
+          </div>
+          <Input
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            placeholder="Observação (opcional)"
+            className="h-7 text-xs bg-zinc-800 border-zinc-700"
+          />
+          <div className="flex gap-2">
+            <Button size="sm" className="flex-1 h-7 text-xs" onClick={handleSave} disabled={!title.trim()}>
+              Salvar
+            </Button>
+            <button
+              onClick={() => setEditing(false)}
+              className="flex items-center justify-center rounded-lg border border-zinc-700 px-2 text-xs text-zinc-400 hover:text-zinc-200"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── View Semanal ───────────────────────────────────────────────────────────
 function WeekView({
   weekStart,
@@ -227,12 +402,14 @@ function WeekView({
   schedules,
   selectedDate,
   onSelectDate,
+  onBlockClick,
 }: {
   weekStart: Date
   reminders: ReminderItem[] | undefined
   schedules: ScheduleItem[] | undefined
   selectedDate: string
   onSelectDate: (key: string) => void
+  onBlockClick: (block: SelectedBlock) => void
 }) {
   const hours = Array.from({ length: WEEK_END_HOUR - WEEK_START_HOUR + 1 }, (_, i) => WEEK_START_HOUR + i)
 
@@ -378,10 +555,13 @@ function WeekView({
                 return (
                   <div
                     key={`sched-${s.id}`}
-                    onClick={e => e.stopPropagation()}
+                    onClick={e => {
+                      e.stopPropagation()
+                      onBlockClick({ kind: 'schedule', item: s, colorIdx, x: e.clientX + 8, y: e.clientY - 8 })
+                    }}
                     style={{ top, height: Math.max(height, 24), left: 2, right: 2 }}
                     className={cn(
-                      'absolute z-10 rounded-md border px-1.5 py-1 overflow-hidden',
+                      'absolute z-10 rounded-md border px-1.5 py-1 overflow-hidden cursor-pointer transition-opacity hover:opacity-80',
                       cls
                     )}
                   >
@@ -392,7 +572,7 @@ function WeekView({
               })}
 
               {/* Lembretes */}
-              {dayReminders.map((r, i) => {
+              {dayReminders.map((r) => {
                 const startIso = r.starts_at
                 const startMin = new Date(startIso).getHours() * 60 + new Date(startIso).getMinutes()
                 const endIso = r.ends_at
@@ -405,9 +585,12 @@ function WeekView({
                 return (
                   <div
                     key={`rem-${r.id}`}
-                    onClick={e => e.stopPropagation()}
+                    onClick={e => {
+                      e.stopPropagation()
+                      onBlockClick({ kind: 'reminder', item: r, x: e.clientX + 8, y: e.clientY - 8 })
+                    }}
                     style={{ top, height: Math.max(height, 24), left: 2, right: 2 }}
-                    className="absolute z-10 rounded-md border border-blue-500/50 bg-blue-500/20 px-1.5 py-1 overflow-hidden"
+                    className="absolute z-10 rounded-md border border-blue-500/50 bg-blue-500/20 px-1.5 py-1 overflow-hidden cursor-pointer transition-opacity hover:opacity-80"
                   >
                     <p className="truncate text-[11px] font-semibold text-blue-200 leading-tight">{r.title}</p>
                     <p className="text-[10px] text-blue-300/70 leading-tight">{formatTime(r.starts_at)}</p>
@@ -428,6 +611,7 @@ export function Schedule() {
   const [monthCursor, setMonthCursor] = useState(() => startOfMonth(new Date()))
   const [selectedDate, setSelectedDate] = useState(() => toDateKey(new Date()))
   const [view, setView] = useState<'month' | 'week'>('month')
+  const [selectedBlock, setSelectedBlock] = useState<SelectedBlock | null>(null)
 
   // Cursor de semana: segunda-feira da semana que contém selectedDate
   const weekCursor = useMemo(() => startOfWeek(new Date(`${selectedDate}T00:00:00`)), [selectedDate])
@@ -556,10 +740,35 @@ export function Schedule() {
     mutationFn: (id: number) => apiClient.deleteSchedule(id),
     onSuccess: () => {
       toast.success('Bloco removido')
+      setSelectedBlock(null)
       qc.invalidateQueries({ queryKey: ['calendar-schedules'] })
       qc.invalidateQueries({ queryKey: ['calendar-overview'] })
     },
     onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao remover'),
+  })
+
+  const updateSchedule = useMutation({
+    mutationFn: ({ id, payload }: { id: number; payload: { title: string; start_time: string; end_time: string; note?: string | null } }) =>
+      apiClient.updateSchedule(id, { ...payload, active: true }),
+    onSuccess: () => {
+      toast.success('Bloco atualizado')
+      setSelectedBlock(null)
+      qc.invalidateQueries({ queryKey: ['calendar-schedules'] })
+      qc.invalidateQueries({ queryKey: ['calendar-overview'] })
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao atualizar'),
+  })
+
+  const updateReminder = useMutation({
+    mutationFn: ({ id, payload }: { id: number; payload: { title: string; starts_at: string; ends_at?: string | null; note?: string | null } }) =>
+      apiClient.updateReminder(id, { ...payload, all_day: false }),
+    onSuccess: () => {
+      toast.success('Lembrete atualizado')
+      setSelectedBlock(null)
+      qc.invalidateQueries({ queryKey: ['calendar-reminders'] })
+      qc.invalidateQueries({ queryKey: ['calendar-overview'] })
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao atualizar'),
   })
 
   const monthGrid = useMemo(() => buildMonthGrid(monthCursor), [monthCursor])
@@ -786,6 +995,7 @@ export function Schedule() {
             schedules={schedules}
             selectedDate={selectedDate}
             onSelectDate={handleSelectDate}
+            onBlockClick={setSelectedBlock}
           />
         )}
       </div>
@@ -994,6 +1204,17 @@ export function Schedule() {
           </CollapsibleForm>
         </div>
       </div>
+
+      {selectedBlock && (
+        <BlockPopover
+          block={selectedBlock}
+          onClose={() => setSelectedBlock(null)}
+          onDeleteSchedule={id => removeSchedule.mutate(id)}
+          onDeleteReminder={id => removeReminder.mutate(id)}
+          onUpdateSchedule={(id, payload) => updateSchedule.mutate({ id, payload })}
+          onUpdateReminder={(id, payload) => updateReminder.mutate({ id, payload })}
+        />
+      )}
     </div>
   )
 }

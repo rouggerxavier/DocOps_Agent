@@ -1,8 +1,9 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Send, Bot, User, FileText, ChevronRight, Loader2, X,
-  Plus, MessageSquare, Clock, CalendarCheck, Trash2
+  Plus, MessageSquare, Clock, CalendarCheck, Trash2,
+  SlidersHorizontal, ChevronDown,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
@@ -19,6 +20,7 @@ interface Message {
   sources?: SourceItem[]
   intent?: string
   calendar_action?: Record<string, any> | null
+  streaming?: boolean
 }
 
 interface ChatSession {
@@ -55,6 +57,27 @@ function newSession(): ChatSession {
     createdAt: new Date(),
   }
 }
+
+// ── Typing indicator ──────────────────────────────────────────────────────
+
+function TypingIndicator() {
+  return (
+    <div className="flex gap-3">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-700">
+        <Bot className="h-4 w-4 text-zinc-300" />
+      </div>
+      <div className="flex items-center rounded-2xl rounded-tl-sm bg-zinc-800 px-4 py-3">
+        <span className="flex gap-1">
+          <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:0ms]" />
+          <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:150ms]" />
+          <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:300ms]" />
+        </span>
+      </div>
+    </div>
+  )
+}
+
+// ── Source panel ──────────────────────────────────────────────────────────
 
 function SourcePanel({
   sources, selected, onSelect,
@@ -94,6 +117,8 @@ function SourcePanel({
   )
 }
 
+// ── Calendar action badge ─────────────────────────────────────────────────
+
 function CalendarActionBadge({ action }: { action: Record<string, any> }) {
   if (action.type === 'reminder_created') {
     return (
@@ -114,6 +139,8 @@ function CalendarActionBadge({ action }: { action: Record<string, any> }) {
   }
   return null
 }
+
+// ── Message bubble ────────────────────────────────────────────────────────
 
 function MessageBubble({
   message, onSourceClick, onCitationClick,
@@ -154,16 +181,17 @@ function MessageBubble({
           ) : (
             <div className="prose prose-invert prose-sm max-w-none" style={{ userSelect: 'text' }}>
               <ReactMarkdown>{message.content}</ReactMarkdown>
+              {message.streaming && (
+                <span className="inline-block h-4 w-0.5 animate-pulse bg-zinc-400 ml-0.5 align-text-bottom" />
+              )}
             </div>
           )}
         </div>
 
-        {/* Calendar action badge */}
         {!isUser && message.calendar_action && (
           <CalendarActionBadge action={message.calendar_action} />
         )}
 
-        {/* Sources chip */}
         {!isUser && message.sources && message.sources.length > 0 && (
           <div className="space-y-2">
             <button
@@ -188,7 +216,7 @@ function MessageBubble({
           </div>
         )}
 
-        {!isUser && message.intent && !['qa', 'calendar', 'calendar_create_reminder', 'calendar_create_schedule'].includes(message.intent) && (
+        {!isUser && message.intent && !['qa', 'calendar', 'calendar_create_reminder', 'calendar_create_schedule', 'calendar_clarification'].includes(message.intent) && (
           <Badge variant="secondary" className="text-xs">
             {message.intent}
           </Badge>
@@ -197,6 +225,8 @@ function MessageBubble({
     </div>
   )
 }
+
+// ── Main component ────────────────────────────────────────────────────────
 
 export function Chat() {
   const qc = useQueryClient()
@@ -215,12 +245,13 @@ export function Chat() {
   const [activeSources, setActiveSources] = useState<SourceItem[]>([])
   const [selectedSource, setSelectedSource] = useState<SourceItem | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const streamTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const activeSession = sessions.find(s => s.id === activeSessionId) ?? sessions[0]
   const messages = activeSession?.messages ?? []
 
-  // Persist sessions to localStorage
   useEffect(() => {
     saveSessions(sessions)
   }, [sessions])
@@ -230,6 +261,56 @@ export function Chat() {
     queryFn: apiClient.listDocs,
     retry: 1,
   })
+
+  // Pseudo-streaming: reveals text char by char after response arrives
+  const streamMessage = useCallback((fullText: string, sources: SourceItem[], intent: string, calendarAction: any) => {
+    const charsPerTick = 6
+    const intervalMs = 16
+    let pos = 0
+
+    // Add placeholder streaming message
+    setSessions(prev =>
+      prev.map(s =>
+        s.id === activeSessionId
+          ? { ...s, messages: [...s.messages, { role: 'assistant', content: '', streaming: true, sources: [], intent }] }
+          : s
+      )
+    )
+
+    function tick() {
+      pos = Math.min(pos + charsPerTick, fullText.length)
+      const chunk = fullText.slice(0, pos)
+      const done = pos >= fullText.length
+
+      setSessions(prev =>
+        prev.map(s => {
+          if (s.id !== activeSessionId) return s
+          const msgs = [...s.messages]
+          const last = msgs[msgs.length - 1]
+          if (!last || last.role !== 'assistant') return s
+          msgs[msgs.length - 1] = {
+            ...last,
+            content: chunk,
+            streaming: !done,
+            sources: done ? sources : [],
+            calendar_action: done ? calendarAction : null,
+          }
+          return { ...s, messages: msgs }
+        })
+      )
+
+      if (!done) {
+        streamTimerRef.current = setTimeout(tick, intervalMs)
+      } else {
+        if (sources.length > 0) {
+          setActiveSources(sources)
+          setSelectedSource(null)
+        }
+      }
+    }
+
+    tick()
+  }, [activeSessionId])
 
   const mutation = useMutation({
     mutationFn: (message: string) =>
@@ -241,25 +322,8 @@ export function Chat() {
         strictGrounding
       ),
     onSuccess: (data: ChatResponse) => {
-      const botMsg: Message = {
-        role: 'assistant',
-        content: data.answer,
-        sources: data.sources,
-        intent: data.intent,
-        calendar_action: data.calendar_action,
-      }
-      setSessions(prev =>
-        prev.map(s =>
-          s.id === activeSessionId
-            ? { ...s, messages: [...s.messages, botMsg] }
-            : s
-        )
-      )
-      if (data.sources.length > 0) {
-        setActiveSources(data.sources)
-        setSelectedSource(null)
-      }
-      // Invalidate calendar queries if a calendar action was performed
+      if (streamTimerRef.current) clearTimeout(streamTimerRef.current)
+      streamMessage(data.answer, data.sources, data.intent, data.calendar_action ?? null)
       if (data.calendar_action) {
         qc.invalidateQueries({ queryKey: ['calendar-reminders'] })
         qc.invalidateQueries({ queryKey: ['calendar-schedules'] })
@@ -271,13 +335,7 @@ export function Chat() {
       setSessions(prev =>
         prev.map(s =>
           s.id === activeSessionId
-            ? {
-                ...s,
-                messages: [
-                  ...s.messages,
-                  { role: 'assistant', content: 'Ocorreu um erro ao processar sua mensagem.' },
-                ],
-              }
+            ? { ...s, messages: [...s.messages, { role: 'assistant', content: 'Ocorreu um erro ao processar sua mensagem.' }] }
             : s
         )
       )
@@ -288,6 +346,9 @@ export function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, mutation.isPending])
 
+  // Cleanup stream on unmount
+  useEffect(() => () => { if (streamTimerRef.current) clearTimeout(streamTimerRef.current) }, [])
+
   function handleSend() {
     const text = input.trim()
     if (!text || mutation.isPending) return
@@ -297,7 +358,6 @@ export function Chat() {
       prev.map(s => {
         if (s.id !== activeSessionId) return s
         const updated = { ...s, messages: [...s.messages, userMsg] }
-        // Auto-title the session from first message
         if (s.messages.length === 0) {
           updated.title = text.length > 40 ? text.slice(0, 40) + '…' : text
         }
@@ -332,18 +392,18 @@ export function Chat() {
         setActiveSessionId(fresh.id)
         return [fresh]
       }
-      if (id === activeSessionId) {
-        setActiveSessionId(next[0].id)
-      }
+      if (id === activeSessionId) setActiveSessionId(next[0].id)
       return next
     })
   }
 
   const hasSources = activeSources.length > 0
+  const isStreaming = messages.some(m => m.streaming)
+  const isPending = mutation.isPending
 
   return (
     <div className="flex h-[calc(100vh-4rem)] gap-0 overflow-hidden">
-      {/* ── Sidebar: histórico de sessões ─────────────────────────────────── */}
+      {/* ── Sidebar de sessões ────────────────────────────────────────────── */}
       {sidebarOpen && (
         <div className="flex w-56 shrink-0 flex-col border-r border-zinc-800 bg-zinc-950">
           <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-3">
@@ -392,7 +452,7 @@ export function Chat() {
         </div>
       )}
 
-      {/* ── Área principal do chat ────────────────────────────────────────── */}
+      {/* ── Área principal ────────────────────────────────────────────────── */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center gap-3 border-b border-zinc-800 bg-zinc-950 px-4 py-3">
@@ -411,7 +471,7 @@ export function Chat() {
           </div>
           {messages.length > 0 && (
             <Badge variant="secondary" className="text-xs">
-              {messages.length} msgs
+              {messages.filter(m => !m.streaming).length} msgs
             </Badge>
           )}
         </div>
@@ -445,104 +505,107 @@ export function Chat() {
             />
           ))}
 
-          {mutation.isPending && (
-            <div className="flex gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-zinc-700">
-                <Bot className="h-4 w-4 text-zinc-300" />
-              </div>
-              <div className="flex items-center gap-2 rounded-2xl rounded-tl-sm bg-zinc-800 px-4 py-3">
-                <Loader2 className="h-4 w-4 animate-spin text-zinc-400" />
-                <span className="text-sm text-zinc-400">Processando...</span>
-              </div>
-            </div>
-          )}
+          {isPending && !isStreaming && <TypingIndicator />}
 
           <div ref={bottomRef} />
         </div>
 
-        {/* Input */}
-        <div className="border-t border-zinc-800 bg-zinc-950 p-4">
-          <div className="mb-3 space-y-2">
-            <div className="flex gap-2">
-              <select
-                value={selectedDoc}
-                onChange={e => setSelectedDoc(e.target.value)}
-                disabled={mutation.isPending}
-                className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 min-w-0"
-              >
-                <option value="">Filtrar por documento (opcional)</option>
-                {(docs ?? [])
-                  .filter(doc => !selectedDocs.some(item => item.doc_id === doc.doc_id))
-                  .map(doc => (
-                    <option key={doc.doc_id} value={doc.doc_id}>
-                      {doc.file_name} ({doc.chunk_count} chunks)
-                    </option>
-                  ))}
-              </select>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={!selectedDoc || mutation.isPending}
-                onClick={() => {
-                  const docToAdd = (docs ?? []).find(doc => doc.doc_id === selectedDoc)
-                  if (!docToAdd || selectedDocs.some(item => item.doc_id === docToAdd.doc_id)) return
-                  setSelectedDocs(prev => [...prev, docToAdd])
-                  setSelectedDoc('')
-                }}
-              >
-                Adicionar
-              </Button>
-            </div>
-            {selectedDocs.length > 0 && (
-              <div className="flex flex-wrap gap-2">
-                {selectedDocs.map(doc => (
-                  <span
-                    key={doc.doc_id}
-                    className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs text-zinc-200"
-                    title={`${doc.file_name} · ${doc.chunk_count} chunks`}
-                  >
-                    <FileText className="h-3 w-3 text-zinc-500" />
-                    {doc.file_name}
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setSelectedDocs(prev => prev.filter(item => item.doc_id !== doc.doc_id))
-                      }
-                      className="text-zinc-400 hover:text-red-400"
-                    >
-                      <X className="h-3 w-3" />
-                    </button>
-                  </span>
-                ))}
-              </div>
+        {/* Input area */}
+        <div className="border-t border-zinc-800 bg-zinc-950 p-4 space-y-2">
+          {/* Filtros colapsáveis */}
+          <button
+            onClick={() => setFiltersOpen(v => !v)}
+            className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+          >
+            <SlidersHorizontal className="h-3 w-3" />
+            Opções avançadas
+            <ChevronDown className={cn('h-3 w-3 transition-transform', filtersOpen && 'rotate-180')} />
+            {(selectedDocs.length > 0 || strictGrounding) && (
+              <span className="ml-1 h-1.5 w-1.5 rounded-full bg-blue-500" />
             )}
-            <label className="flex items-center gap-2 text-xs text-zinc-500 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={strictGrounding}
-                onChange={e => setStrictGrounding(e.target.checked)}
-                disabled={mutation.isPending}
-                className="accent-blue-600"
-              />
-              Modo strict grounding (respostas só com evidência forte)
-            </label>
-          </div>
+          </button>
+
+          {filtersOpen && (
+            <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
+              <div className="flex gap-2">
+                <select
+                  value={selectedDoc}
+                  onChange={e => setSelectedDoc(e.target.value)}
+                  disabled={isPending}
+                  className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 min-w-0"
+                >
+                  <option value="">Filtrar por documento (opcional)</option>
+                  {(docs ?? [])
+                    .filter(doc => !selectedDocs.some(item => item.doc_id === doc.doc_id))
+                    .map(doc => (
+                      <option key={doc.doc_id} value={doc.doc_id}>
+                        {doc.file_name} ({doc.chunk_count} chunks)
+                      </option>
+                    ))}
+                </select>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={!selectedDoc || isPending}
+                  onClick={() => {
+                    const docToAdd = (docs ?? []).find(doc => doc.doc_id === selectedDoc)
+                    if (!docToAdd || selectedDocs.some(item => item.doc_id === docToAdd.doc_id)) return
+                    setSelectedDocs(prev => [...prev, docToAdd])
+                    setSelectedDoc('')
+                  }}
+                >
+                  Adicionar
+                </Button>
+              </div>
+              {selectedDocs.length > 0 && (
+                <div className="flex flex-wrap gap-2">
+                  {selectedDocs.map(doc => (
+                    <span
+                      key={doc.doc_id}
+                      className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs text-zinc-200"
+                    >
+                      <FileText className="h-3 w-3 text-zinc-500" />
+                      {doc.file_name}
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDocs(prev => prev.filter(item => item.doc_id !== doc.doc_id))}
+                        className="text-zinc-400 hover:text-red-400"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+              <label className="flex items-center gap-2 text-xs text-zinc-500 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={strictGrounding}
+                  onChange={e => setStrictGrounding(e.target.checked)}
+                  disabled={isPending}
+                  className="accent-blue-600"
+                />
+                Modo strict grounding (respostas só com evidência forte)
+              </label>
+            </div>
+          )}
+
           <div className="flex gap-2">
             <Input
               placeholder="Faça uma pergunta sobre seus documentos ou crie um lembrete..."
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              disabled={mutation.isPending}
+              disabled={isPending || isStreaming}
               className="flex-1 bg-zinc-900 border-zinc-700"
             />
             <Button
               onClick={handleSend}
-              disabled={!input.trim() || mutation.isPending}
+              disabled={!input.trim() || isPending || isStreaming}
               size="icon"
             >
-              {mutation.isPending ? (
+              {isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Send className="h-4 w-4" />
@@ -552,45 +615,27 @@ export function Chat() {
         </div>
       </div>
 
-      {/* ── Painel de fontes ─────────────────────────────────────────────── */}
-      <div
-        className={cn(
-          'w-56 shrink-0 border-l border-zinc-800 bg-zinc-950 transition-all duration-300',
-          hasSources ? 'opacity-100' : 'opacity-40'
-        )}
-      >
-        <CardHeader className="border-b border-zinc-800 py-3">
-          <CardTitle className="flex items-center gap-2 text-sm">
-            <FileText className="h-4 w-4 text-blue-400" />
-            Fontes Citadas
-            {hasSources && (
+      {/* ── Painel de fontes — só aparece quando há fontes ────────────────── */}
+      {hasSources && (
+        <div className="w-56 shrink-0 border-l border-zinc-800 bg-zinc-950 flex flex-col">
+          <CardHeader className="border-b border-zinc-800 py-3">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <FileText className="h-4 w-4 text-blue-400" />
+              Fontes Citadas
               <Badge variant="secondary" className="ml-auto">
                 {activeSources.length}
               </Badge>
-            )}
-          </CardTitle>
-        </CardHeader>
-        <div className="p-3 overflow-y-auto" style={{ maxHeight: 'calc(100% - 4rem)' }}>
-          {!hasSources ? (
-            <div className="flex flex-col items-center gap-2 py-8 text-center">
-              <FileText className="h-8 w-8 text-zinc-700" />
-              <p className="text-xs text-zinc-600">
-                As fontes aparecem aqui após o chat
-              </p>
-            </div>
-          ) : (
+            </CardTitle>
+          </CardHeader>
+          <div className="p-3 overflow-y-auto flex-1">
             <SourcePanel
               sources={activeSources}
               selected={selectedSource}
-              onSelect={s =>
-                setSelectedSource(prev =>
-                  prev?.fonte_n === s.fonte_n ? null : s
-                )
-              }
+              onSelect={s => setSelectedSource(prev => prev?.fonte_n === s.fonte_n ? null : s)}
             />
-          )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

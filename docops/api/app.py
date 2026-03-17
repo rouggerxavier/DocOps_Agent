@@ -8,14 +8,19 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from docops.api.routes import (
     artifact,
+    briefing,
     calendar,
     chat,
     compare,
     docs,
+    flashcards,
     health,
     ingest,
     jobs,
+    notes,
+    studyplan,
     summarize,
+    tasks,
 )
 from docops.api.routes import auth as auth_routes
 from docops.auth.dependencies import get_current_user
@@ -64,6 +69,11 @@ def create_app() -> FastAPI:
     app.include_router(artifact.router, prefix=prefix, tags=["artifacts"], dependencies=_auth)
     app.include_router(calendar.router, prefix=prefix, tags=["calendar"], dependencies=_auth)
     app.include_router(jobs.router, prefix=prefix, tags=["jobs"], dependencies=_auth)
+    app.include_router(notes.router, prefix=prefix, tags=["notes"], dependencies=_auth)
+    app.include_router(tasks.router, prefix=prefix, tags=["tasks"], dependencies=_auth)
+    app.include_router(briefing.router, prefix=prefix, tags=["briefing"], dependencies=_auth)
+    app.include_router(flashcards.router, prefix=prefix, tags=["flashcards"], dependencies=_auth)
+    app.include_router(studyplan.router, prefix=prefix, tags=["studyplan"], dependencies=_auth)
 
     return app
 

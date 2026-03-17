@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from docops.db.database import Base
@@ -32,6 +32,9 @@ class User(Base):
     artifacts: Mapped[list[ArtifactRecord]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     reminders: Mapped[list[ReminderRecord]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     schedules: Mapped[list[ScheduleRecord]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    notes: Mapped[list[NoteRecord]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    tasks: Mapped[list[TaskRecord]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    flashcard_decks: Mapped[list[FlashcardDeck]] = relationship(back_populates="owner", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<User id={self.id} email={self.email!r}>"
@@ -129,3 +132,80 @@ class ScheduleRecord(Base):
 
     def __repr__(self) -> str:
         return f"<ScheduleRecord id={self.id} user={self.user_id} title={self.title!r}>"
+
+
+class NoteRecord(Base):
+    __tablename__ = "notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    pinned: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    owner: Mapped[User] = relationship(back_populates="notes")
+
+    __table_args__ = (
+        Index("ix_note_user_updated", "user_id", "updated_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<NoteRecord id={self.id} user={self.user_id} title={self.title!r}>"
+
+
+class TaskRecord(Base):
+    __tablename__ = "tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    note: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")  # pending | doing | done
+    priority: Mapped[str] = mapped_column(String(16), nullable=False, default="normal")  # low | normal | high
+    due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    owner: Mapped[User] = relationship(back_populates="tasks")
+
+    __table_args__ = (
+        Index("ix_task_user_status", "user_id", "status"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<TaskRecord id={self.id} user={self.user_id} title={self.title!r} status={self.status!r}>"
+
+
+class FlashcardDeck(Base):
+    __tablename__ = "flashcard_decks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    source_doc: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    owner: Mapped[User] = relationship(back_populates="flashcard_decks")
+    cards: Mapped[list["FlashcardItem"]] = relationship(back_populates="deck", cascade="all, delete-orphan")
+
+    def __repr__(self) -> str:
+        return f"<FlashcardDeck id={self.id} title={self.title!r}>"
+
+
+class FlashcardItem(Base):
+    __tablename__ = "flashcard_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    deck_id: Mapped[int] = mapped_column(Integer, ForeignKey("flashcard_decks.id"), nullable=False, index=True)
+    front: Mapped[str] = mapped_column(Text, nullable=False)
+    back: Mapped[str] = mapped_column(Text, nullable=False)
+    ease: Mapped[int] = mapped_column(Integer, default=0, nullable=False)  # 0=new, 1=hard, 2=good, 3=easy
+    next_review: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    deck: Mapped[FlashcardDeck] = relationship(back_populates="cards")
+
+    def __repr__(self) -> str:
+        return f"<FlashcardItem id={self.id} deck={self.deck_id} front={self.front[:30]!r}>"

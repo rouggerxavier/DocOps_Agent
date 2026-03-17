@@ -303,3 +303,194 @@ def update_schedule_record(
 def delete_schedule_record(db: Session, item: ScheduleRecord) -> None:
     db.delete(item)
     db.commit()
+
+
+# -- NoteRecord ----------------------------------------------------------------
+
+def create_note_record(
+    db: Session,
+    *,
+    user_id: int,
+    title: str,
+    content: str = "",
+    pinned: bool = False,
+) -> "NoteRecord":
+    from docops.db.models import NoteRecord
+    note = NoteRecord(user_id=user_id, title=title, content=content, pinned=pinned)
+    db.add(note)
+    db.commit()
+    db.refresh(note)
+    return note
+
+
+def get_note_by_user_and_id(db: Session, user_id: int, note_id: int) -> "NoteRecord | None":
+    from docops.db.models import NoteRecord
+    return (
+        db.query(NoteRecord)
+        .filter(NoteRecord.user_id == user_id, NoteRecord.id == note_id)
+        .first()
+    )
+
+
+def list_notes_for_user(db: Session, user_id: int) -> "list[NoteRecord]":
+    from docops.db.models import NoteRecord
+    return (
+        db.query(NoteRecord)
+        .filter(NoteRecord.user_id == user_id)
+        .order_by(NoteRecord.pinned.desc(), NoteRecord.updated_at.desc())
+        .all()
+    )
+
+
+def update_note_record(
+    db: Session,
+    note: "NoteRecord",
+    *,
+    title: str,
+    content: str,
+    pinned: bool,
+) -> "NoteRecord":
+    note.title = title
+    note.content = content
+    note.pinned = pinned
+    db.commit()
+    db.refresh(note)
+    return note
+
+
+def delete_note_record(db: Session, note: "NoteRecord") -> None:
+    db.delete(note)
+    db.commit()
+
+
+# -- TaskRecord ----------------------------------------------------------------
+
+def create_task_record(
+    db: Session,
+    *,
+    user_id: int,
+    title: str,
+    note: str | None = None,
+    priority: str = "normal",
+    due_date: "datetime | None" = None,
+) -> "TaskRecord":
+    from docops.db.models import TaskRecord
+    task = TaskRecord(
+        user_id=user_id,
+        title=title,
+        note=note,
+        priority=priority,
+        due_date=due_date,
+        status="pending",
+    )
+    db.add(task)
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+def get_task_by_user_and_id(db: Session, user_id: int, task_id: int) -> "TaskRecord | None":
+    from docops.db.models import TaskRecord
+    return (
+        db.query(TaskRecord)
+        .filter(TaskRecord.user_id == user_id, TaskRecord.id == task_id)
+        .first()
+    )
+
+
+def list_tasks_for_user(db: Session, user_id: int, *, status: str | None = None) -> "list[TaskRecord]":
+    from docops.db.models import TaskRecord
+    query = db.query(TaskRecord).filter(TaskRecord.user_id == user_id)
+    if status:
+        query = query.filter(TaskRecord.status == status)
+    return query.order_by(TaskRecord.created_at.desc()).all()
+
+
+def update_task_record(
+    db: Session,
+    task: "TaskRecord",
+    *,
+    title: str,
+    note: str | None,
+    status: str,
+    priority: str,
+    due_date: "datetime | None",
+) -> "TaskRecord":
+    from datetime import datetime, timezone
+    task.title = title
+    task.note = note
+    task.status = status
+    task.priority = priority
+    task.due_date = due_date
+    if status == "done" and task.completed_at is None:
+        task.completed_at = datetime.now(timezone.utc)
+    elif status != "done":
+        task.completed_at = None
+    db.commit()
+    db.refresh(task)
+    return task
+
+
+def delete_task_record(db: Session, task: "TaskRecord") -> None:
+    db.delete(task)
+    db.commit()
+
+
+# -- FlashcardDeck / FlashcardItem --------------------------------------------
+
+def create_flashcard_deck(
+    db: Session,
+    *,
+    user_id: int,
+    title: str,
+    source_doc: str | None = None,
+    cards: list[dict],
+) -> "FlashcardDeck":
+    from docops.db.models import FlashcardDeck, FlashcardItem
+    deck = FlashcardDeck(user_id=user_id, title=title, source_doc=source_doc)
+    db.add(deck)
+    db.flush()
+    for c in cards:
+        db.add(FlashcardItem(deck_id=deck.id, front=c["front"], back=c["back"]))
+    db.commit()
+    db.refresh(deck)
+    return deck
+
+
+def list_flashcard_decks_for_user(db: Session, user_id: int) -> "list[FlashcardDeck]":
+    from docops.db.models import FlashcardDeck
+    return (
+        db.query(FlashcardDeck)
+        .filter(FlashcardDeck.user_id == user_id)
+        .order_by(FlashcardDeck.created_at.desc())
+        .all()
+    )
+
+
+def get_flashcard_deck_by_user_and_id(db: Session, user_id: int, deck_id: int) -> "FlashcardDeck | None":
+    from docops.db.models import FlashcardDeck
+    return (
+        db.query(FlashcardDeck)
+        .filter(FlashcardDeck.user_id == user_id, FlashcardDeck.id == deck_id)
+        .first()
+    )
+
+
+def delete_flashcard_deck(db: Session, deck: "FlashcardDeck") -> None:
+    db.delete(deck)
+    db.commit()
+
+
+def update_flashcard_ease(db: Session, card_id: int, ease: int) -> "FlashcardItem | None":
+    from docops.db.models import FlashcardItem
+    from datetime import datetime, timezone, timedelta
+    card = db.get(FlashcardItem, card_id)
+    if not card:
+        return None
+    card.ease = ease
+    intervals = {0: 0, 1: 1, 2: 3, 3: 7}
+    days = intervals.get(ease, 1)
+    card.next_review = datetime.now(timezone.utc) + timedelta(days=days) if days else None
+    db.commit()
+    db.refresh(card)
+    return card

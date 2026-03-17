@@ -1,13 +1,15 @@
-﻿"""Ingest endpoints: ingest from path or upload, scoped per user."""
+﻿"""Ingest endpoints: ingest from path, upload, clip text, or photo OCR."""
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import tempfile
 from pathlib import Path
 from typing import List
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from docops.api.schemas import IngestPathRequest, IngestResponse
@@ -22,6 +24,13 @@ from docops.storage.paths import get_user_upload_dir
 
 logger = get_logger("docops.api.ingest")
 router = APIRouter()
+
+
+# ── Schemas para clip ─────────────────────────────────────────────────────────
+
+class ClipRequest(BaseModel):
+    text: str = Field(min_length=10, max_length=50000)
+    title: str = Field(default="clip", min_length=1, max_length=255)
 
 
 def _file_sha256(path: Path) -> str | None:
@@ -196,3 +205,83 @@ async def ingest_upload(
         create_document_record(db, **record)
 
     return result
+
+
+@router.post("/ingest/clip", response_model=IngestResponse)
+async def ingest_clip(
+    body: ClipRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> IngestResponse:
+    """Ingest raw text (clipboard, URL content, etc.) as a .txt file."""
+    upload_dir = get_user_upload_dir(current_user.id)
+    safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in body.title)[:100]
+    filename = f"{safe_title}.txt"
+    destination = upload_dir / filename
+    destination.write_text(body.text, encoding="utf-8")
+
+    logger.info("Ingest clip for user %s: %s (%d chars)", current_user.id, filename, len(body.text))
+    result, records = await asyncio.to_thread(
+        _run_ingest, current_user.id, [destination], 0, 0,
+    )
+    for record in records:
+        create_document_record(db, **record)
+    return result
+
+
+@router.post("/ingest/photo", response_model=IngestResponse)
+async def ingest_photo(
+    file: UploadFile = File(...),
+    title: str = Form(default="foto"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> IngestResponse:
+    """Upload a photo, extract text via OCR (Gemini Vision), and ingest."""
+    allowed_types = {".jpg", ".jpeg", ".png", ".webp", ".heic"}
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in allowed_types:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Tipo de imagem nao suportado: {ext}. Use: {sorted(allowed_types)}",
+        )
+
+    image_bytes = await file.read()
+    extracted = await asyncio.to_thread(_ocr_with_gemini, image_bytes, ext)
+
+    if not extracted or len(extracted.strip()) < 10:
+        raise HTTPException(status_code=422, detail="Nao foi possivel extrair texto da imagem.")
+
+    upload_dir = get_user_upload_dir(current_user.id)
+    safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in title)[:100]
+    filename = f"{safe_title}_ocr.txt"
+    destination = upload_dir / filename
+    destination.write_text(extracted, encoding="utf-8")
+
+    logger.info("Ingest photo OCR for user %s: %s (%d chars)", current_user.id, filename, len(extracted))
+    result, records = await asyncio.to_thread(
+        _run_ingest, current_user.id, [destination], 0, 0,
+    )
+    for record in records:
+        create_document_record(db, **record)
+    return result
+
+
+def _ocr_with_gemini(image_bytes: bytes, ext: str) -> str:
+    """Use Gemini Vision to extract text from an image."""
+    import google.generativeai as genai
+
+    genai.configure(api_key=config.gemini_api_key)
+    model = genai.GenerativeModel(config.gemini_model)
+    mime_map = {
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+        ".png": "image/png", ".webp": "image/webp", ".heic": "image/heic",
+    }
+    mime = mime_map.get(ext, "image/jpeg")
+
+    response = model.generate_content([
+        "Extraia TODO o texto visivel nesta imagem. "
+        "Transcreva fielmente mantendo a estrutura (paragrafos, listas, titulos). "
+        "Retorne APENAS o texto extraido, sem comentarios.",
+        {"mime_type": mime, "data": image_bytes},
+    ])
+    return response.text.strip()

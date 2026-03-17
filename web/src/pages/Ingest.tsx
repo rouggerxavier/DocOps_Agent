@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Upload, FolderOpen, CheckCircle, X, FileText, Loader2, Layers } from 'lucide-react'
+import { Upload, FolderOpen, CheckCircle, X, FileText, Loader2, Layers, ChevronDown, ClipboardPaste, Camera } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -97,9 +97,19 @@ export function Ingest() {
   // Advanced
   const [chunkSize, setChunkSize] = useState('')
   const [chunkOverlap, setChunkOverlap] = useState('')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
+
+  // Clip tab state
+  const [clipText, setClipText] = useState('')
+  const [clipTitle, setClipTitle] = useState('')
+
+  // Photo tab state
+  const [photoFile, setPhotoFile] = useState<File | null>(null)
+  const [photoTitle, setPhotoTitle] = useState('')
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null)
 
   // Active tab
-  const [tab, setTab] = useState<'upload' | 'path'>('upload')
+  const [tab, setTab] = useState<'upload' | 'path' | 'clip' | 'photo'>('upload')
 
   const [result, setResult] = useState<IngestResponse | null>(null)
 
@@ -139,7 +149,36 @@ export function Ingest() {
     },
   })
 
-  const isLoading = uploadMutation.isPending || pathMutation.isPending
+  const clipMutation = useMutation({
+    mutationFn: () => apiClient.ingestClip(clipText, clipTitle || 'clip'),
+    onSuccess: data => {
+      setResult(data)
+      setClipText('')
+      setClipTitle('')
+      qc.invalidateQueries({ queryKey: ['docs'] })
+      toast.success(`${data.chunks_indexed} chunks indexados com sucesso!`)
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.detail ?? 'Erro ao ingerir texto')
+    },
+  })
+
+  const photoMutation = useMutation({
+    mutationFn: () => apiClient.ingestPhoto(photoFile!, photoTitle || 'foto'),
+    onSuccess: data => {
+      setResult(data)
+      setPhotoFile(null)
+      setPhotoTitle('')
+      setPhotoPreview(null)
+      qc.invalidateQueries({ queryKey: ['docs'] })
+      toast.success(`${data.chunks_indexed} chunks indexados com sucesso!`)
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.detail ?? 'Erro ao processar foto')
+    },
+  })
+
+  const isLoading = uploadMutation.isPending || pathMutation.isPending || clipMutation.isPending || photoMutation.isPending
   const { stageLabel, pct } = useIngestProgress(isLoading)
 
   function handleDrop(e: React.DragEvent) {
@@ -201,18 +240,23 @@ export function Ingest() {
 
       {/* Tab switcher */}
       <div className="flex rounded-lg border border-zinc-800 bg-zinc-900 p-1 w-fit">
-        {(['upload', 'path'] as const).map(t => (
+        {([
+          { key: 'upload', label: 'Upload' },
+          { key: 'path', label: 'Caminho' },
+          { key: 'clip', label: 'Clip de Texto' },
+          { key: 'photo', label: 'Foto / OCR' },
+        ] as const).map(t => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
+            key={t.key}
+            onClick={() => setTab(t.key)}
             className={cn(
               'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
-              tab === t
+              tab === t.key
                 ? 'bg-zinc-700 text-zinc-100'
                 : 'text-zinc-400 hover:text-zinc-200'
             )}
           >
-            {t === 'upload' ? 'Upload de Arquivo' : 'Caminho do Servidor'}
+            {t.label}
           </button>
         ))}
       </div>
@@ -360,7 +404,7 @@ export function Ingest() {
             <Button
               onClick={() => uploadMutation.mutate()}
               disabled={selectedFiles.length === 0 || isLoading}
-              className="w-full"
+              className={cn('w-full', (selectedFiles.length === 0 || isLoading) && 'opacity-50 cursor-not-allowed')}
             >
               {isLoading ? (
                 <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Indexando...</>
@@ -425,36 +469,182 @@ export function Ingest() {
         </Card>
       )}
 
-      {/* Advanced settings */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm text-zinc-400">Configurações Avançadas</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-zinc-400">
-              Chunk Size (padrão: 900)
-            </label>
-            <Input
-              type="number"
-              placeholder="900"
-              value={chunkSize}
-              onChange={e => setChunkSize(e.target.value)}
-            />
+      {/* Clip tab */}
+      {tab === 'clip' && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ClipboardPaste className="h-5 w-5 text-blue-400" />
+              Clip de Texto
+            </CardTitle>
+            <CardDescription>
+              Cole texto da área de transferência, URLs ou anotações rápidas para indexar.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-zinc-300">
+                Título (opcional)
+              </label>
+              <Input
+                placeholder="Ex: Anotações da aula, Trecho do artigo..."
+                value={clipTitle}
+                onChange={e => setClipTitle(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-zinc-300">
+                Texto
+              </label>
+              <textarea
+                value={clipText}
+                onChange={e => setClipText(e.target.value)}
+                placeholder="Cole ou digite o texto aqui (mínimo 10 caracteres)..."
+                rows={8}
+                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-zinc-500 resize-y"
+              />
+              <p className="mt-1 text-xs text-zinc-600">{clipText.length} caracteres</p>
+            </div>
+            <Button
+              onClick={() => clipMutation.mutate()}
+              disabled={clipText.trim().length < 10 || isLoading}
+              className="w-full"
+            >
+              {clipMutation.isPending ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Indexando...</>
+              ) : (
+                <><ClipboardPaste className="mr-2 h-4 w-4" />Indexar Texto</>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Photo tab */}
+      {tab === 'photo' && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Camera className="h-5 w-5 text-blue-400" />
+              Foto / OCR
+            </CardTitle>
+            <CardDescription>
+              Envie uma foto e o texto será extraído automaticamente via IA (Gemini Vision).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-zinc-300">
+                Título (opcional)
+              </label>
+              <Input
+                placeholder="Ex: Página do livro, Quadro branco..."
+                value={photoTitle}
+                onChange={e => setPhotoTitle(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-zinc-300">
+                Imagem
+              </label>
+              <div
+                onClick={() => document.getElementById('photo-input')?.click()}
+                className={cn(
+                  'cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition-colors',
+                  photoFile
+                    ? 'border-blue-500/50 bg-blue-500/5'
+                    : 'border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800/50'
+                )}
+              >
+                {photoPreview ? (
+                  <div className="space-y-3">
+                    <img
+                      src={photoPreview}
+                      alt="Preview"
+                      className="mx-auto max-h-48 rounded-lg object-contain"
+                    />
+                    <p className="text-xs text-zinc-400">{photoFile?.name}</p>
+                    <p className="text-[10px] text-zinc-600">Clique para trocar</p>
+                  </div>
+                ) : (
+                  <>
+                    <Camera className="mx-auto mb-3 h-10 w-10 text-zinc-500" />
+                    <p className="text-sm font-medium text-zinc-300">
+                      Clique para selecionar uma imagem
+                    </p>
+                    <p className="mt-1 text-xs text-zinc-500">JPG, PNG, WebP, HEIC</p>
+                  </>
+                )}
+                <input
+                  id="photo-input"
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.webp,.heic"
+                  className="hidden"
+                  onChange={e => {
+                    const file = e.target.files?.[0] ?? null
+                    setPhotoFile(file)
+                    if (file) {
+                      const reader = new FileReader()
+                      reader.onload = ev => setPhotoPreview(ev.target?.result as string)
+                      reader.readAsDataURL(file)
+                    } else {
+                      setPhotoPreview(null)
+                    }
+                  }}
+                />
+              </div>
+            </div>
+            <Button
+              onClick={() => photoMutation.mutate()}
+              disabled={!photoFile || isLoading}
+              className="w-full"
+            >
+              {photoMutation.isPending ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Extraindo texto...</>
+              ) : (
+                <><Camera className="mr-2 h-4 w-4" />Extrair e Indexar</>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Advanced settings — colapsável */}
+      <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 overflow-hidden">
+        <button
+          onClick={() => setAdvancedOpen(v => !v)}
+          className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-zinc-800/40 transition-colors"
+        >
+          <span className="text-sm font-medium text-zinc-400">Configurações Avançadas</span>
+          <ChevronDown className={cn('h-4 w-4 text-zinc-500 transition-transform', advancedOpen && 'rotate-180')} />
+        </button>
+        {advancedOpen && (
+          <div className="border-t border-zinc-800/60 px-4 pb-4 pt-3 grid gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-zinc-400">
+                Chunk Size (padrão: 900)
+              </label>
+              <Input
+                type="number"
+                placeholder="900"
+                value={chunkSize}
+                onChange={e => setChunkSize(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-zinc-400">
+                Chunk Overlap (padrão: 150)
+              </label>
+              <Input
+                type="number"
+                placeholder="150"
+                value={chunkOverlap}
+                onChange={e => setChunkOverlap(e.target.value)}
+              />
+            </div>
           </div>
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-zinc-400">
-              Chunk Overlap (padrão: 150)
-            </label>
-            <Input
-              type="number"
-              placeholder="150"
-              value={chunkOverlap}
-              onChange={e => setChunkOverlap(e.target.value)}
-            />
-          </div>
-        </CardContent>
-      </Card>
+        )}
+      </div>
 
       {/* Result */}
       {result && (
