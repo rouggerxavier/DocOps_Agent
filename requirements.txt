@@ -5,6 +5,7 @@
 langchain>=1.0.0
 langchain-text-splitters>=1.0.0
 langchain-google-genai>=4.0.0
+google-genai>=1.0.0
 langchain-chroma>=0.1.0
 langgraph>=1.0.0
 # Vector store — Chroma persistent backend
@@ -22,6 +23,8 @@ uvicorn[standard]>=0.29.0
 python-multipart>=0.0.9
 rank-bm25>=0.2.2
 fpdf2>=2.7.0
+pyyaml>=6.0.0
+tzdata>=2024.1
 
 # Auth
 SQLAlchemy>=2.0.0

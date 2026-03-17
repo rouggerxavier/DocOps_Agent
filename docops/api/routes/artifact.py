@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -232,7 +232,6 @@ async def delete_artifact(
     db: Session = Depends(get_db),
 ) -> None:
     """Delete an artifact file and its database record — ownership validated."""
-    from fastapi import status as http_status
     artifact = get_artifact_by_user_and_filename(db, current_user.id, filename)
     if not artifact:
         raise HTTPException(status_code=404, detail="Artefato não encontrado.")
