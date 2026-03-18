@@ -708,8 +708,13 @@ export function Schedule() {
 
   const removeReminder = useMutation({
     mutationFn: (id: number) => apiClient.deleteReminder(id),
-    onSuccess: () => {
+    onSuccess: (_, id) => {
       toast.success('Lembrete removido')
+      // Remove imediatamente do cache para evitar re-aparecer enquanto o refetch não chega
+      qc.setQueriesData<ReminderItem[]>(
+        { queryKey: ['calendar-reminders'] },
+        old => old?.filter(r => r.id !== id),
+      )
       qc.invalidateQueries({ queryKey: ['calendar-reminders'] })
       qc.invalidateQueries({ queryKey: ['calendar-overview'] })
     },

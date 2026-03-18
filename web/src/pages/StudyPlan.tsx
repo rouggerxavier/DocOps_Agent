@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
   AlertTriangle, BookOpen, CalendarDays, CheckSquare, GraduationCap,
-  Plus, Trash2, X, ChevronDown, ChevronUp, Brain,
+  Plus, Trash2, X, Brain, FileText,
 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
@@ -46,6 +46,7 @@ function CreateStudyPlanDialog({ onClose, onCreated }: { onClose: () => void; on
   const today = new Date().toISOString().slice(0, 10)
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
       <div className="w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4 shrink-0">
@@ -203,24 +204,53 @@ function CreateStudyPlanDialog({ onClose, onCreated }: { onClose: () => void; on
               )}
 
               {/* Plan preview */}
-              <div>
-                <button
-                  onClick={() => setExpandPlan(p => !p)}
-                  className="flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200 mb-2"
-                >
-                  {expandPlan ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                  {expandPlan ? 'Ocultar plano' : 'Ver plano completo'}
-                </button>
-                {expandPlan && (
-                  <div className="prose prose-invert prose-xs max-w-none max-h-80 overflow-y-auto rounded-lg bg-zinc-800 p-4">
-                    <ReactMarkdown>{result.plan_text}</ReactMarkdown>
-                  </div>
-                )}
-              </div>
+              <Button
+                variant="outline" size="sm"
+                onClick={() => setExpandPlan(true)}
+                className="w-full border-zinc-700 text-zinc-300"
+              >
+                <FileText className="mr-2 h-3.5 w-3.5" />
+                Ver plano completo
+              </Button>
 
               <Button variant="outline" size="sm" onClick={onClose} className="w-full">Fechar</Button>
             </div>
           )}
+        </div>
+      </div>
+    </div>
+    {expandPlan && result && (
+      <PlanTextModal
+        titulo={result.titulo ?? 'Plano de Estudos'}
+        planText={result.plan_text}
+        onClose={() => setExpandPlan(false)}
+      />
+    )}
+    </>
+  )
+}
+
+// ── Plan Text Modal ────────────────────────────────────────────────────────────
+
+function PlanTextModal({ titulo, planText, onClose }: { titulo: string; planText: string; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 p-4">
+      <div className="w-full max-w-3xl rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <FileText className="h-4 w-4 text-emerald-400 shrink-0" />
+            <h2 className="font-semibold text-zinc-100 truncate">{titulo}</h2>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
+        </div>
+        <div className="overflow-y-auto flex-1 p-6">
+          <div className="prose prose-invert prose-sm max-w-none
+            prose-headings:text-zinc-100 prose-h1:text-xl prose-h2:text-base prose-h3:text-sm
+            prose-p:text-zinc-300 prose-li:text-zinc-300
+            prose-strong:text-zinc-100 prose-em:text-zinc-400
+            prose-hr:border-zinc-700">
+            <ReactMarkdown>{planText}</ReactMarkdown>
+          </div>
         </div>
       </div>
     </div>
@@ -230,12 +260,13 @@ function CreateStudyPlanDialog({ onClose, onCreated }: { onClose: () => void; on
 // ── Plan Card ─────────────────────────────────────────────────────────────────
 
 function PlanCard({ plan, onDelete }: { plan: StudyPlanItem; onDelete: (id: number) => void }) {
-  const [expanded, setExpanded] = useState(false)
+  const [showPlan, setShowPlan] = useState(false)
 
   const deadline = plan.deadline_date
   const isExpired = deadline < new Date().toISOString().slice(0, 10)
 
   return (
+    <>
     <Card className="border-zinc-800 hover:border-zinc-700 transition-colors">
       <CardContent className="p-4 space-y-3">
         <div className="flex items-start justify-between gap-3">
@@ -271,22 +302,19 @@ function PlanCard({ plan, onDelete }: { plan: StudyPlanItem; onDelete: (id: numb
           )}
         </div>
 
-        {/* Expand plan */}
-        <button
-          onClick={() => setExpanded(p => !p)}
-          className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300"
+        <Button
+          variant="ghost" size="sm"
+          onClick={() => setShowPlan(true)}
+          className="w-full justify-start text-xs text-zinc-500 hover:text-zinc-300 h-7 px-2"
         >
-          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-          {expanded ? 'Ocultar plano' : 'Ver plano'}
-        </button>
-
-        {expanded && (
-          <div className="prose prose-invert prose-xs max-w-none max-h-80 overflow-y-auto rounded-lg bg-zinc-800/60 p-3 border border-zinc-700">
-            <ReactMarkdown>{plan.plan_text}</ReactMarkdown>
-          </div>
-        )}
+          <FileText className="mr-1.5 h-3 w-3" />Ver plano completo
+        </Button>
       </CardContent>
     </Card>
+    {showPlan && (
+      <PlanTextModal titulo={plan.titulo} planText={plan.plan_text} onClose={() => setShowPlan(false)} />
+    )}
+    </>
   )
 }
 

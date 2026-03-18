@@ -291,6 +291,10 @@ def generate_study_plan(
             extra={"doc_name": doc_name, "doc_id": doc_id, "summary_mode": "brief"},
         )
         brief_summary = state.get("answer", "")
+        # Remove aviso de grounding (não relevante num resumo interno do plano)
+        brief_summary = re.sub(
+            r"\n*⚠️\s*Aviso de baixa evidência[^\n]*\n?", "", brief_summary
+        ).strip()
         logger.info("Study plan: resumo breve gerado (%d chars)", len(brief_summary))
     except Exception as exc:
         logger.warning("Falha ao gerar resumo breve no plano: %s", exc)
