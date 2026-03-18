@@ -235,6 +235,23 @@ class ExtractTasksResponse(BaseModel):
     titles: list[str]
 
 
+class StudyPlanRequest(BaseModel):
+    doc_name: str = Field(min_length=1)
+    hours_per_day: float = Field(default=2.0, ge=0.5, le=12.0)
+    deadline_date: str  # ISO YYYY-MM-DD
+    generate_flashcards: bool = True
+    num_cards: int = Field(default=15, ge=5, le=30)
+
+
+class StudyPlanResponse(BaseModel):
+    plan_text: str
+    tasks_created: int
+    reminders_created: int
+    sessions_count: int
+    deck_id: Optional[int]
+    titulo: str
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/pipeline/digest", response_model=DigestResponse)
@@ -307,3 +324,43 @@ async def extract_tasks_from_doc(
         len(titles), current_user.id, payload.doc_name,
     )
     return ExtractTasksResponse(tasks_created=len(titles), titles=titles)
+
+
+@router.post("/pipeline/study-plan", response_model=StudyPlanResponse)
+async def create_study_plan(
+    payload: StudyPlanRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Gera um plano de estudos completo: tópicos + sessões no calendário + tarefas + flashcards."""
+    from datetime import date as _date
+
+    doc_record = require_user_document(db, current_user.id, payload.doc_name)
+
+    try:
+        deadline = _date.fromisoformat(payload.deadline_date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="deadline_date deve ser YYYY-MM-DD")
+
+    if deadline <= _date.today():
+        raise HTTPException(status_code=422, detail="deadline_date deve ser uma data futura")
+
+    logger.info(
+        "Study plan solicitado por user=%d para doc='%s', %gh/dia, prazo=%s",
+        current_user.id, payload.doc_name, payload.hours_per_day, payload.deadline_date,
+    )
+
+    from docops.services import study_plan_generator
+
+    result = await asyncio.to_thread(
+        study_plan_generator.generate_study_plan,
+        doc_record.file_name,
+        doc_record.doc_id,
+        current_user.id,
+        payload.hours_per_day,
+        deadline,
+        db,
+        payload.generate_flashcards,
+        payload.num_cards,
+    )
+    return StudyPlanResponse(**result)

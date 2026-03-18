@@ -42,6 +42,7 @@ Analise a mensagem do usuário e retorne APENAS um JSON válido (sem markdown, s
 
 Intents possíveis:
 - "cascade_study_event"  → usuário menciona prova, exame, avaliação com prazo/data
+- "cascade_study_plan"   → usuário quer criar um plano de estudos para um documento/tema
 - "cascade_doc_review"   → usuário quer revisar/estudar um documento específico com flashcards
 - "cascade_task_deadline"→ usuário menciona entrega, deadline, prazo de um trabalho/projeto
 - "schedule_fc_reviews"  → usuário quer agendar revisões de flashcards já existentes
@@ -53,6 +54,7 @@ Intents possíveis:
 Regras:
 - Se a mensagem for uma pergunta factual ou pedir informação de documento → "rag"
 - Se mencionar prova/exame/teste + data → "cascade_study_event"
+- Se mencionar "plano de estudos", "cronograma de estudos", "me ajuda a estudar [doc]", "estudar [doc] até [data]" → "cascade_study_plan"
 - Se mencionar entrega/prazo/deadline de projeto/trabalho + data → "cascade_task_deadline"
 - Datas relativas: "amanhã"=+1d, "depois de amanhã"=+2d, "semana que vem"=+7d, "próxima semana"=+7d
 - Se não houver data clara, deadline_iso = null
@@ -60,6 +62,7 @@ Regras:
 - topic: assunto principal (ex: "física", "cálculo diferencial"), null se não mencionado
 - task_title: título limpo da tarefa (começa com verbo), null se não aplicável
 - deck_hint: parte do nome do deck/documento para flashcards
+- hours_per_day: horas por dia de estudo mencionadas (número float), null se não mencionado
 
 Formato de resposta:
 {{
@@ -70,7 +73,8 @@ Formato de resposta:
     "doc_hint": "<string ou null>",
     "deck_hint": "<string ou null>",
     "deadline_iso": "<YYYY-MM-DD ou null>",
-    "deadline_label": "<descrição legível da data ou null>"
+    "deadline_label": "<descrição legível da data ou null>",
+    "hours_per_day": "<float ou null>"
   }}
 }}
 
@@ -82,10 +86,51 @@ Mensagem do usuário: {{MESSAGE}}
 # Funções auxiliares de data
 # ---------------------------------------------------------------------------
 
+_MONTH_MAP = {
+    "janeiro": 1, "fevereiro": 2, "março": 3, "abril": 4,
+    "maio": 5, "junho": 6, "julho": 7, "agosto": 8,
+    "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12,
+}
+
+
 def _parse_date_from_text(text: str) -> datetime | None:
     """Tenta parsear datas relativas comuns em português."""
     now = datetime.now(timezone.utc)
     t = text.lower()
+
+    # "DD de Mês" ou "dia DD de Mês" (ex: "10 de abril", "dia 5 de maio")
+    m = re.search(
+        r"(?:dia\s+)?(\d{1,2})\s+de\s+(janeiro|fevereiro|mar[çc]o|abril|maio|junho|"
+        r"julho|agosto|setembro|outubro|novembro|dezembro)(?:\s+de\s+(\d{4}))?",
+        t,
+    )
+    if m:
+        day = int(m.group(1))
+        month_raw = m.group(2).replace("março", "março").replace("marco", "março")
+        month = _MONTH_MAP.get(month_raw)
+        year = int(m.group(3)) if m.group(3) else now.year
+        if month:
+            try:
+                candidate = datetime(year, month, day, tzinfo=timezone.utc)
+                # Se a data já passou neste ano, avança para o próximo
+                if candidate < now and not m.group(3):
+                    candidate = datetime(year + 1, month, day, tzinfo=timezone.utc)
+                return candidate
+            except ValueError:
+                pass
+
+    # "DD/MM" ou "DD/MM/YYYY"
+    m2 = re.search(r"(\d{1,2})/(\d{1,2})(?:/(\d{4}))?", t)
+    if m2:
+        day, month = int(m2.group(1)), int(m2.group(2))
+        year = int(m2.group(3)) if m2.group(3) else now.year
+        try:
+            candidate = datetime(year, month, day, tzinfo=timezone.utc)
+            if candidate < now and not m2.group(3):
+                candidate = datetime(year + 1, month, day, tzinfo=timezone.utc)
+            return candidate
+        except ValueError:
+            pass
 
     patterns = [
         (r"hoje", 0),
@@ -94,6 +139,8 @@ def _parse_date_from_text(text: str) -> datetime | None:
         (r"em (\d+) dias?", None),
         (r"daqui a (\d+) dias?", None),
         (r"próxima semana|semana que vem|próximas? semana", 7),
+        (r"em (\d+) semanas?", None),
+        (r"daqui a (\d+) semanas?", None),
         (r"próximas? (\d+) dias?", None),
         (r"sexta(?:-feira)?", None),
         (r"quinta(?:-feira)?", None),
@@ -110,22 +157,23 @@ def _parse_date_from_text(text: str) -> datetime | None:
     }
 
     for pattern, delta in patterns:
-        m = re.search(pattern, t)
-        if m:
+        m3 = re.search(pattern, t)
+        if m3:
             if delta is not None:
                 return now + timedelta(days=delta)
-            # Grupos numéricos
-            if m.lastindex and m.lastindex >= 1:
+            if m3.lastindex and m3.lastindex >= 1:
                 try:
-                    return now + timedelta(days=int(m.group(1)))
+                    val = int(m3.group(1))
+                    # semanas → dias
+                    mult = 7 if "semana" in pattern else 1
+                    return now + timedelta(days=val * mult)
                 except (ValueError, IndexError):
                     pass
-            # Dias da semana
             for name, wd in weekday_map.items():
                 if name in pattern:
                     days_ahead = (wd - now.weekday()) % 7
                     if days_ahead == 0:
-                        days_ahead = 7  # próxima ocorrência
+                        days_ahead = 7
                     return now + timedelta(days=days_ahead)
 
     # ISO date YYYY-MM-DD
@@ -451,6 +499,161 @@ def _exec_schedule_fc_reviews(entities: dict, user_id: int, db: Session) -> dict
 
 
 # ---------------------------------------------------------------------------
+# Cascade: Plano de Estudos (multi-turn)
+# ---------------------------------------------------------------------------
+
+# Pendências de plano de estudos por user_id (em memória — suficiente para 1 sessão)
+_pending_study_plans: dict[int, dict] = {}
+
+
+def _extract_followup_info(message: str) -> dict:
+    """Extrai horas/dia e prazo de uma resposta de follow-up simples."""
+    result: dict = {}
+
+    # Horas: "2h", "2 horas", "1.5h por dia", "3 horas diárias"
+    h_match = re.search(
+        r"(\d+(?:[.,]\d+)?)\s*(?:h(?:oras?)?|hrs?)(?:\s*(?:por|ao|\/)\s*dia)?",
+        message,
+        re.IGNORECASE,
+    )
+    if h_match:
+        try:
+            result["hours_per_day"] = float(h_match.group(1).replace(",", "."))
+        except ValueError:
+            pass
+
+    # Prazo: usa o parser de datas existente
+    dt = _parse_date_from_text(message)
+    if dt:
+        result["deadline_iso"] = dt.strftime("%Y-%m-%d")
+        result["deadline_label"] = dt.strftime("%d/%m/%Y")
+
+    return result
+
+
+def _exec_cascade_study_plan(entities: dict, user_id: int, db: Session) -> dict:
+    """Cria plano de estudos completo: tarefas + sessões no calendário + flashcards."""
+    from docops.db import crud
+    from datetime import date as _date
+
+    doc_hint = entities.get("doc_hint") or entities.get("topic") or ""
+    hours_raw = entities.get("hours_per_day")
+    deadline_iso = entities.get("deadline_iso")
+
+    # Resolve horas (pode vir como string "2.0" do LLM)
+    hours_per_day: float | None = None
+    if hours_raw is not None:
+        try:
+            hours_per_day = float(hours_raw)
+        except (ValueError, TypeError):
+            pass
+
+    # Verifica se faltam informações → pergunta ao usuário
+    missing = []
+    if not hours_per_day:
+        missing.append("quantas horas por dia você pode dedicar (ex: 2h)")
+    if not deadline_iso:
+        missing.append("até quando quer concluir o estudo (ex: 20/04, em 2 semanas)")
+
+    if missing:
+        # Armazena o que já temos para o próximo turn
+        _pending_study_plans[user_id] = {
+            "entities": entities,
+            "missing": list(missing),
+        }
+        questions = " e ".join(missing)
+        doc_part = f" de **{doc_hint}**" if doc_hint else ""
+        return {
+            "answer": (
+                f"Para criar seu plano de estudos{doc_part}, preciso saber: "
+                f"{questions}?"
+            ),
+            "intent": "cascade_study_plan_ask",
+        }
+
+    # Temos tudo — localiza documento
+    docs = crud.list_documents_for_user(db, user_id)
+    if not docs:
+        _pending_study_plans.pop(user_id, None)
+        return {
+            "answer": "Você ainda não inseriu documentos. Adicione na [Inserção](/ingest) primeiro.",
+            "intent": "cascade_study_plan",
+        }
+
+    hint_lower = doc_hint.lower()
+    matched_doc = next(
+        (d for d in docs if hint_lower and (
+            hint_lower in d.file_name.lower() or d.file_name.lower() in hint_lower
+        )),
+        docs[0] if len(docs) == 1 else None,
+    )
+
+    if not matched_doc:
+        doc_list = "\n".join(f"- {d.file_name}" for d in docs[:5])
+        _pending_study_plans.pop(user_id, None)
+        return {
+            "answer": (
+                f'Não encontrei documento com "{doc_hint}". Disponíveis:\n{doc_list}\n\n'
+                "Tente ser mais específico."
+            ),
+            "intent": "cascade_study_plan",
+        }
+
+    try:
+        deadline = _date.fromisoformat(deadline_iso)
+    except (ValueError, TypeError):
+        _pending_study_plans.pop(user_id, None)
+        return {
+            "answer": "Não consegui interpretar a data. Tente novamente com formato DD/MM ou 'em X dias'.",
+            "intent": "cascade_study_plan",
+        }
+
+    if deadline <= _date.today():
+        _pending_study_plans.pop(user_id, None)
+        return {
+            "answer": "O prazo precisa ser uma data futura. Tente novamente.",
+            "intent": "cascade_study_plan",
+        }
+
+    # Executa o gerador
+    _pending_study_plans.pop(user_id, None)
+    try:
+        from docops.services.study_plan_generator import generate_study_plan
+        result = generate_study_plan(
+            doc_name=matched_doc.file_name,
+            doc_id=matched_doc.doc_id,
+            user_id=user_id,
+            hours_per_day=hours_per_day,
+            deadline=deadline,
+            db=db,
+            generate_flashcards=True,
+            num_cards=12,
+        )
+    except Exception as exc:
+        logger.error("Falha ao gerar plano de estudos: %s", exc)
+        return {
+            "answer": "Ocorreu um erro ao gerar o plano de estudos. Tente pela [página de Documentos](/docs).",
+            "intent": "cascade_study_plan",
+        }
+
+    sessions = result["sessions_count"]
+    tasks = result["tasks_created"]
+    deck_note = " + flashcards criados" if result["deck_id"] else ""
+
+    answer = (
+        f"📚 Plano de estudos criado para **{matched_doc.file_name}**!\n\n"
+        f"- ✅ **{tasks} tarefas** por tópico criadas\n"
+        f"- 📅 **{sessions} sessões de estudo** no calendário ({hours_per_day:.0f}h/dia){deck_note}\n"
+        f"- Prazo: **{deadline.strftime('%d/%m/%Y')}**\n\n"
+        f"[Ver Tarefas →](/tasks) · [Ver Calendário →](/schedule)"
+    )
+    if result["deck_id"]:
+        answer += " · [Flashcards →](/flashcards)"
+
+    return {"answer": answer, "intent": "cascade_study_plan"}
+
+
+# ---------------------------------------------------------------------------
 # Entry point principal
 # ---------------------------------------------------------------------------
 
@@ -471,6 +674,18 @@ def maybe_orchestrate(message: str, user_id: int, db: Session) -> dict | None:
     if len(message.strip()) < 10:
         return None
 
+    # ── Verifica se há um plano de estudos pendente para este usuário ──────
+    if user_id in _pending_study_plans:
+        pending = _pending_study_plans[user_id]
+        followup = _extract_followup_info(message)
+        if followup:
+            # Mescla o que o usuário respondeu com as entidades já coletadas
+            merged_entities = {**pending["entities"], **followup}
+            logger.info("Orchestrator: follow-up study_plan para user=%d, merged=%s", user_id, merged_entities)
+            return _exec_cascade_study_plan(merged_entities, user_id, db)
+        # Resposta não parseável — cancela o pending e trata normalmente
+        _pending_study_plans.pop(user_id, None)
+
     parsed = _llm_parse(message)
     if not parsed:
         logger.debug("Parser LLM não retornou JSON válido.")
@@ -484,6 +699,9 @@ def maybe_orchestrate(message: str, user_id: int, db: Session) -> dict | None:
     # Cascades multi-step
     if intent == "cascade_study_event":
         return _exec_cascade_study_event(entities, user_id, db)
+
+    if intent == "cascade_study_plan":
+        return _exec_cascade_study_plan(entities, user_id, db)
 
     if intent == "cascade_doc_review":
         return _exec_cascade_doc_review(entities, user_id, db)

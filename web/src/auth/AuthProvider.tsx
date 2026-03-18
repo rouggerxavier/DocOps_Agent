@@ -25,6 +25,12 @@ const AuthContext = createContext<AuthContextValue | null>(null)
 
 const TOKEN_KEY = 'docops_token'
 
+// Inicializa o header Authorization imediatamente (antes de qualquer render/fetch)
+const _initialToken = localStorage.getItem(TOKEN_KEY)
+if (_initialToken) {
+  api.defaults.headers.common['Authorization'] = `Bearer ${_initialToken}`
+}
+
 // ── Provider ──────────────────────────────────────────────────────────────────
 
 export function AuthProvider({ children }: { children: ReactNode }) {

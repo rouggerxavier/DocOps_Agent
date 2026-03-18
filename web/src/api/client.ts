@@ -234,7 +234,7 @@ export const apiClient = {
     doc_names?: string[],
     strict_grounding?: boolean
   ): Promise<ChatResponse> =>
-    api.post('/api/chat', { message, session_id, top_k, doc_names, strict_grounding }).then(r => r.data),
+    api.post('/api/chat', { message, session_id, top_k, doc_names, strict_grounding }, { timeout: 180000 }).then(r => r.data),
 
   ingestPath: (path: string, chunk_size = 0, chunk_overlap = 0): Promise<IngestResponse> =>
     api.post('/api/ingest', { path, chunk_size, chunk_overlap }).then(r => r.data),
@@ -458,6 +458,21 @@ export const apiClient = {
 
   createStudyPlan: (topic: string, days: number, docNames: string[]): Promise<StudyPlanResponse> =>
     api.post('/api/studyplan', { topic, days, doc_names: docNames }).then(r => r.data),
+
+  createStudyPlanFromDoc: (
+    docName: string,
+    hoursPerDay: number,
+    deadlineDate: string,
+    generateFlashcards = true,
+    numCards = 15,
+  ): Promise<{ plan_text: string; tasks_created: number; reminders_created: number; sessions_count: number; deck_id: number | null; titulo: string }> =>
+    api.post('/api/pipeline/study-plan', {
+      doc_name: docName,
+      hours_per_day: hoursPerDay,
+      deadline_date: deadlineDate,
+      generate_flashcards: generateFlashcards,
+      num_cards: numCards,
+    }, { timeout: 180000 }).then(r => r.data),
 
   // ── Pipeline ────────────────────────────────────────────────────────────────
 
