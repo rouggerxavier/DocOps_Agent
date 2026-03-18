@@ -1,4 +1,4 @@
-import { useRef, useMemo } from 'react'
+import { useRef, useMemo, useEffect } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 
@@ -6,6 +6,18 @@ const PARTICLE_COUNT = 120
 
 function Particles() {
   const mesh = useRef<THREE.Points>(null!)
+  // Canvas has pointerEvents:none so R3F `pointer` is always 0,0.
+  // Track mouse at window level instead.
+  const mouse = useRef({ x: 0, y: 0 })
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      mouse.current.x = (e.clientX / window.innerWidth) * 2 - 1
+      mouse.current.y = -(e.clientY / window.innerHeight) * 2 + 1
+    }
+    window.addEventListener('mousemove', onMove, { passive: true })
+    return () => window.removeEventListener('mousemove', onMove)
+  }, [])
 
   const [positions, colors, basePositions] = useMemo(() => {
     const pos = new Float32Array(PARTICLE_COUNT * 3)
@@ -37,13 +49,13 @@ function Particles() {
     return [pos, col, base]
   }, [])
 
-  useFrame(({ clock, pointer, viewport }) => {
+  useFrame(({ clock, viewport }) => {
     if (!mesh.current) return
     const t = clock.getElapsedTime() * 0.15
     const posAttr = mesh.current.geometry.attributes.position as THREE.BufferAttribute
     const arr = posAttr.array as Float32Array
-    const mx = pointer.x * (viewport.width / 2)
-    const my = pointer.y * (viewport.height / 2)
+    const mx = mouse.current.x * (viewport.width / 2)
+    const my = mouse.current.y * (viewport.height / 2)
 
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       const i3 = i * 3
