@@ -140,6 +140,18 @@ function CalendarActionBadge({ action }: { action: Record<string, any> }) {
   return null
 }
 
+// ── Intent label map ──────────────────────────────────────────────────────
+
+const INTENT_LABELS: Record<string, string> = {
+  cascade_study_plan:       '📚 Plano de estudos criado',
+  cascade_task_deadline:    '✅ Tarefa criada',
+  cascade_create_reminder:  '🔔 Lembrete criado',
+  cascade_create_schedule:  '📅 Agenda criada',
+  cascade_create_note:      '📝 Nota criada',
+  cascade_create_summary:   '📄 Resumo gerado',
+  schedule_fc_reviews:      '🔁 Revisões agendadas',
+}
+
 // ── Message bubble ────────────────────────────────────────────────────────
 
 function MessageBubble({
@@ -216,9 +228,9 @@ function MessageBubble({
           </div>
         )}
 
-        {!isUser && message.intent && !['qa', 'calendar', 'calendar_create_reminder', 'calendar_create_schedule', 'calendar_clarification'].includes(message.intent) && (
+        {!isUser && message.intent && INTENT_LABELS[message.intent] && (
           <Badge variant="secondary" className="text-xs">
-            {message.intent}
+            {INTENT_LABELS[message.intent]}
           </Badge>
         )}
       </div>

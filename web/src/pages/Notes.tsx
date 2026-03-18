@@ -2,12 +2,13 @@ import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
-  Plus, Pin, PinOff, Trash2, FileText, Search, Save, X, StickyNote,
+  Plus, Pin, PinOff, Trash2, FileText, Search, Save, X, StickyNote, Eye, EyeOff,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { apiClient, type NoteItem } from '@/api/client'
 import { cn } from '@/lib/utils'
+import ReactMarkdown from 'react-markdown'
 
 // ── Markdown preview simples ──────────────────────────────────────────────────
 
@@ -40,6 +41,7 @@ function NoteEditor({
   const [title, setTitle] = useState(note?.title ?? '')
   const [content, setContent] = useState(note?.content ?? '')
   const [pinned, setPinned] = useState(note?.pinned ?? false)
+  const [showPreview, setShowPreview] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
@@ -61,6 +63,16 @@ function NoteEditor({
           placeholder="Título da nota..."
           className="flex-1 bg-transparent text-base font-semibold text-zinc-100 placeholder:text-zinc-600 outline-none"
         />
+        <button
+          onClick={() => setShowPreview(p => !p)}
+          className={cn(
+            'rounded-lg p-1.5 transition-colors',
+            showPreview ? 'text-blue-400 hover:text-blue-300' : 'text-zinc-600 hover:text-zinc-400',
+          )}
+          title={showPreview ? 'Ocultar preview' : 'Ver preview Markdown'}
+        >
+          {showPreview ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+        </button>
         <button
           onClick={() => setPinned(p => !p)}
           className={cn(
@@ -87,16 +99,30 @@ function NoteEditor({
         </button>
       </div>
 
-      {/* Markdown editor */}
+      {/* Editor / Preview */}
       <div className="flex flex-1 overflow-hidden">
         <textarea
           ref={textareaRef}
           value={content}
           onChange={e => setContent(e.target.value)}
           placeholder={"Escreva em Markdown...\n\n# Título\n**negrito**, *itálico*, `código`\n- item de lista"}
-          className="flex-1 resize-none bg-transparent p-4 text-sm text-zinc-200 placeholder:text-zinc-700 outline-none font-mono leading-relaxed"
+          className={cn(
+            'resize-none bg-transparent p-4 text-sm text-zinc-200 placeholder:text-zinc-700 outline-none font-mono leading-relaxed',
+            showPreview ? 'w-1/2 border-r border-zinc-800' : 'flex-1',
+          )}
           style={{ userSelect: 'text' }}
         />
+        {showPreview && (
+          <div className="w-1/2 overflow-y-auto p-4">
+            {content.trim() ? (
+              <div className="prose prose-invert prose-sm max-w-none prose-headings:text-zinc-100 prose-p:text-zinc-300 prose-strong:text-zinc-100 prose-code:text-emerald-400 prose-code:bg-zinc-800 prose-code:px-1 prose-code:rounded prose-li:text-zinc-300">
+                <ReactMarkdown>{content}</ReactMarkdown>
+              </div>
+            ) : (
+              <p className="text-sm text-zinc-700 italic">Nada para visualizar ainda...</p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Word count */}

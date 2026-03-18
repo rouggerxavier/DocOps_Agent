@@ -363,7 +363,7 @@ export function Dashboard() {
                 <FileText className="h-4 w-4 shrink-0 text-blue-400" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium text-zinc-100">{doc.file_name}</p>
-                  <p className="text-xs text-zinc-500">{doc.source}</p>
+                  <p className="text-xs text-zinc-500">{doc.chunk_count} chunks</p>
                 </div>
                 <span className="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-500">
                   {doc.chunk_count} chunks

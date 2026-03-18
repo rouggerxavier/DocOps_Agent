@@ -497,7 +497,7 @@ export function Docs() {
                     <p className="text-sm font-medium text-zinc-100 truncate">
                       {doc.file_name}
                     </p>
-                    <p className="text-xs text-zinc-500 truncate">{doc.source}</p>
+                    <p className="text-xs text-zinc-500 truncate">{doc.chunk_count} chunks indexados</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0 ml-4">

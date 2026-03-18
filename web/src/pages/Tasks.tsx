@@ -646,8 +646,9 @@ export function Tasks() {
           <div>
             <h1 className="text-2xl font-bold text-zinc-100">Tarefas</h1>
             <p className="mt-0.5 text-sm text-zinc-500">
-              {counts.doing > 0 ? `${counts.doing} em andamento · ` : ''}
-              {counts.pending} pendentes
+              {isLoading
+                ? 'Carregando...'
+                : `${counts.doing > 0 ? `${counts.doing} em andamento · ` : ''}${counts.pending} pendentes`}
             </p>
           </div>
         </div>

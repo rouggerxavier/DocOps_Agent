@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import tempfile
+import unicodedata
 from pathlib import Path
 from typing import List
 
@@ -187,7 +188,7 @@ async def ingest_upload(
                 detail=f"Unsupported file type: {ext}. Supported: {sorted(SUPPORTED_EXTENSIONS)}",
             )
 
-        safe_name = Path(upload.filename or f"upload{ext}").name
+        safe_name = unicodedata.normalize("NFC", Path(upload.filename or f"upload{ext}").name)
         destination = upload_dir / safe_name
         destination.write_bytes(await upload.read())
         saved_paths.append(destination)
@@ -215,7 +216,10 @@ async def ingest_clip(
 ) -> IngestResponse:
     """Ingest raw text (clipboard, URL content, etc.) as a .txt file."""
     upload_dir = get_user_upload_dir(current_user.id)
-    safe_title = "".join(c if c.isalnum() or c in " _-" else "_" for c in body.title)[:100]
+    safe_title = "".join(
+        c if (unicodedata.category(c)[0] in ("L", "N") or c in " _-") else "_"
+        for c in unicodedata.normalize("NFC", body.title)
+    )[:100]
     filename = f"{safe_title}.txt"
     destination = upload_dir / filename
     destination.write_text(body.text, encoding="utf-8")
