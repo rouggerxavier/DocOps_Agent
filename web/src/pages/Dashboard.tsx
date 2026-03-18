@@ -7,7 +7,8 @@ import {
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { apiClient, type CalendarOverview, type DocItem, type ArtifactItem, type BriefingResponse, type DailyQuestionResponse } from '@/api/client'
+import { useMutation } from '@tanstack/react-query'
+import { apiClient, type CalendarOverview, type DocItem, type ArtifactItem, type BriefingResponse, type DailyQuestionResponse, type EvaluateAnswerResponse } from '@/api/client'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -194,8 +195,31 @@ function OnboardingSteps() {
 
 // ── Daily Question card ────────────────────────────────────────────────────
 
+const SCORE_STYLE: Record<string, string> = {
+  excelente: 'text-emerald-400 border-emerald-700/50 bg-emerald-950/30',
+  bom: 'text-blue-400 border-blue-700/50 bg-blue-950/30',
+  parcial: 'text-yellow-400 border-yellow-700/50 bg-yellow-950/30',
+  incorreto: 'text-red-400 border-red-700/50 bg-red-950/30',
+  sem_resposta: 'text-zinc-400 border-zinc-700/50 bg-zinc-800/30',
+}
+
+const SCORE_LABEL: Record<string, string> = {
+  excelente: 'Excelente',
+  bom: 'Bom',
+  parcial: 'Parcial',
+  incorreto: 'Incorreto',
+  sem_resposta: 'Sem resposta',
+}
+
 function DailyQuestion({ data, loading }: { data: DailyQuestionResponse | undefined; loading: boolean }) {
   const [showHint, setShowHint] = useState(false)
+  const [userAnswer, setUserAnswer] = useState('')
+  const [evaluation, setEvaluation] = useState<EvaluateAnswerResponse | null>(null)
+
+  const evalMut = useMutation({
+    mutationFn: () => apiClient.evaluateAnswer(data!.question!, userAnswer, data?.answer_hint ?? ''),
+    onSuccess: result => setEvaluation(result),
+  })
 
   if (loading) return <Skeleton className="h-28 w-full rounded-xl" />
   if (!data?.question) return null
@@ -207,16 +231,55 @@ function DailyQuestion({ data, loading }: { data: DailyQuestionResponse | undefi
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-600/20">
             <Lightbulb className="h-5 w-5 text-violet-400" />
           </div>
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 mb-1">
+          <div className="flex-1 min-w-0 space-y-2">
+            <div className="flex items-center gap-2">
               <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-400">Pergunta do Dia</span>
               {data.doc_name && (
                 <span className="text-[10px] text-zinc-600 truncate">· {data.doc_name}</span>
               )}
             </div>
             <p className="text-sm font-medium text-zinc-100 leading-snug">{data.question}</p>
+
+            {/* Answer textarea */}
+            {!evaluation && (
+              <div className="space-y-1.5">
+                <textarea
+                  value={userAnswer}
+                  onChange={e => setUserAnswer(e.target.value)}
+                  placeholder="Digite sua resposta aqui..."
+                  rows={2}
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-900/80 px-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-violet-600/60 resize-none"
+                />
+                <Button
+                  size="sm"
+                  onClick={() => evalMut.mutate()}
+                  disabled={userAnswer.trim().length < 3 || evalMut.isPending}
+                  className="h-7 text-xs bg-violet-700 hover:bg-violet-600"
+                >
+                  {evalMut.isPending ? 'Avaliando...' : 'Avaliar resposta'}
+                </Button>
+              </div>
+            )}
+
+            {/* Evaluation result */}
+            {evaluation && (
+              <div className={cn('rounded-lg border px-3 py-2 space-y-1', SCORE_STYLE[evaluation.score] ?? SCORE_STYLE.parcial)}>
+                <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-semibold uppercase">{SCORE_LABEL[evaluation.score] ?? evaluation.score}</span>
+                  <button
+                    onClick={() => { setEvaluation(null); setUserAnswer('') }}
+                    className="text-[10px] text-zinc-500 hover:text-zinc-300"
+                  >
+                    Tentar novamente
+                  </button>
+                </div>
+                <p className="text-xs leading-relaxed">{evaluation.feedback}</p>
+              </div>
+            )}
+
+            {/* Hint toggle */}
             {data.answer_hint && (
-              <div className="mt-2">
+              <div>
                 <button
                   onClick={() => setShowHint(h => !h)}
                   className="flex items-center gap-1 text-xs text-violet-400 hover:text-violet-300 transition-colors"

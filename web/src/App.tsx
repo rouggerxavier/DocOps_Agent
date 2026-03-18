@@ -17,9 +17,11 @@ import { StudyPlan } from '@/pages/StudyPlan'
 import { ReadingKanban } from '@/pages/ReadingKanban'
 import { Login } from '@/pages/Login'
 import { Register } from '@/pages/Register'
+import { Landing } from '@/pages/Landing'
 
 const PAGE_TITLES: Record<string, string> = {
-  '/': 'Dashboard',
+  '/': 'DocOps Agent',
+  '/dashboard': 'Dashboard',
   '/ingest': 'Inserção',
   '/chat': 'Chat',
   '/docs': 'Documentos',
@@ -62,7 +64,7 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 function RedirectIfAuth({ children }: { children: React.ReactNode }) {
   const { token, loading } = useAuth()
   if (loading) return null
-  if (token) return <Navigate to="/" replace />
+  if (token) return <Navigate to="/dashboard" replace />
   return <>{children}</>
 }
 
@@ -73,10 +75,11 @@ export default function App() {
         <AuthProvider>
           <TitleUpdater />
           <Routes>
+            <Route path="/" element={<Landing />} />
             <Route path="/login" element={<RedirectIfAuth><Login /></RedirectIfAuth>} />
             <Route path="/register" element={<RedirectIfAuth><Register /></RedirectIfAuth>} />
             <Route element={<RequireAuth><Layout /></RequireAuth>}>
-              <Route path="/" element={<Dashboard />} />
+              <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/ingest" element={<Ingest />} />
               <Route path="/chat" element={<Chat />} />
               <Route path="/docs" element={<Docs />} />

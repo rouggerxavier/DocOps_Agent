@@ -35,7 +35,7 @@ export function Sidebar() {
   const todayReminders = calendarOverview?.today_reminders.length ?? 0
 
   const links = [
-    { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true, badge: null },
+    { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, end: true, badge: null },
     { to: '/chat', label: 'Chat', icon: MessageSquare, end: false, badge: null },
     { to: '/schedule', label: 'Calendário', icon: CalendarDays, end: false, badge: todayReminders > 0 ? todayReminders : null },
     { to: '/docs', label: 'Documentos', icon: FileText, end: false, badge: null },

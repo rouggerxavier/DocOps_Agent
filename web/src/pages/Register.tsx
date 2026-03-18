@@ -30,7 +30,7 @@ export function Register() {
       // Loga automaticamente após cadastro
       await login(email, password)
       toast.success('Conta criada com sucesso!')
-      navigate('/', { replace: true })
+      navigate('/dashboard', { replace: true })
     } catch (err: any) {
       const msg = err?.response?.data?.detail ?? 'Erro ao criar conta.'
       toast.error(msg)

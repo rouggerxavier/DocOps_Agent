@@ -257,6 +257,11 @@ export interface DailyQuestionResponse {
   date: string
 }
 
+export interface EvaluateAnswerResponse {
+  feedback: string
+  score: 'excelente' | 'bom' | 'parcial' | 'incorreto' | 'sem_resposta'
+}
+
 // ── Gap Analysis ──────────────────────────────────────────────────────────────
 
 export interface GapItem {
@@ -586,6 +591,9 @@ export const apiClient = {
 
   getDailyQuestion: (): Promise<DailyQuestionResponse> =>
     api.get('/api/pipeline/daily-question').then(r => r.data),
+
+  evaluateAnswer: (question: string, userAnswer: string, answerHint: string): Promise<EvaluateAnswerResponse> =>
+    api.post('/api/pipeline/evaluate-answer', { question, user_answer: userAnswer, answer_hint: answerHint }, { timeout: 30000 }).then(r => r.data),
 
   // ── Gap Analysis ────────────────────────────────────────────────────────────
 

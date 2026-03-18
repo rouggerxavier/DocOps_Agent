@@ -218,7 +218,7 @@ def _is_youtube_url(url: str) -> bool:
 
 
 def _get_youtube_transcript(url: str) -> str:
-    """Extrai transcrição de um vídeo do YouTube."""
+    """Extrai transcrição de um vídeo do YouTube (compatível com youtube-transcript-api v1.x)."""
     from youtube_transcript_api import YouTubeTranscriptApi
     import re as _re
 
@@ -226,8 +226,22 @@ def _get_youtube_transcript(url: str) -> str:
     if not match:
         raise ValueError("Não foi possível extrair o ID do vídeo do YouTube.")
     video_id = match.group(1)
-    transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=["pt", "pt-BR", "en"])
-    return " ".join(entry["text"] for entry in transcript)
+
+    api = YouTubeTranscriptApi()
+    try:
+        # Tenta encontrar transcrição nos idiomas preferidos
+        transcript_list = api.list(video_id)
+        try:
+            transcript = transcript_list.find_transcript(["pt", "pt-BR", "en"])
+        except Exception:
+            # Aceita qualquer idioma disponível
+            transcript = next(iter(transcript_list))
+        fetched = transcript.fetch()
+    except Exception:
+        # Fallback: busca transcrição padrão sem filtro de idioma
+        fetched = api.fetch(video_id)
+
+    return " ".join(entry.text for entry in fetched)
 
 
 async def _fetch_webpage_text(url: str) -> str:
@@ -241,7 +255,7 @@ async def _fetch_webpage_text(url: str) -> str:
             "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         )
     }
-    async with httpx.AsyncClient(follow_redirects=True, timeout=20.0) as client:
+    async with httpx.AsyncClient(follow_redirects=True, timeout=20.0, verify=False) as client:
         response = await client.get(url, headers=headers)
         response.raise_for_status()
         html = response.text

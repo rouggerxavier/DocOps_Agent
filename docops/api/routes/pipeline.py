@@ -592,9 +592,7 @@ def _run_gap_analysis(user_id: int, doc_names: list[str], db: Session) -> list[d
     decks = crud.list_flashcard_decks_for_user(db, user_id)
     card_fronts: list[str] = []
     for deck_item in decks[:3]:
-        full_deck = crud.get_flashcard_deck(db, user_id, deck_item.id)
-        if full_deck:
-            card_fronts.extend(c.front[:80] for c in full_deck.cards[:10])
+        card_fronts.extend(c.front[:80] for c in deck_item.cards[:10])
     cards_section = "\n".join(f"- {f}" for f in card_fronts[:30]) or "(nenhum flashcard criado)"
 
     tasks = (
@@ -697,3 +695,74 @@ async def run_gap_analysis(
         gaps=[GapItem(**g) for g in gaps_raw],
         docs_analyzed=min(target_count, 3),
     )
+
+
+# ── Evaluate Answer ─────────────────────────────────────────────────────────────
+
+_EVALUATE_ANSWER_PROMPT = """\
+Você é um professor avaliando a resposta de um estudante de forma construtiva.
+
+Pergunta: {question}
+Dica/gabarito resumido: {answer_hint}
+Resposta do estudante: {user_answer}
+
+REGRAS IMPORTANTES:
+1. Se a "resposta" for uma solicitação para você explicar (ex: "me diga a resposta", "qual é a resposta", "explique", "não sei"), \
+retorne: {{"feedback": "Não identifiquei uma tentativa de resposta. Por favor, escreva o que você sabe sobre o tema, mesmo que seja pouco — \
+a avaliação só funciona com uma resposta genuína.", "score": "sem_resposta"}}
+2. Se a resposta for genuína mas incompleta ou incorreta, avalie normalmente.
+3. Para respostas reais: avalie em 2-4 frases — o que está correto, incompleto, e o que pode ser aprofundado. Seja encorajador mas preciso.
+
+Retorne APENAS JSON (sem markdown):
+{{"feedback": "avaliação aqui", "score": "excelente|bom|parcial|incorreto|sem_resposta"}}
+"""
+
+
+class EvaluateAnswerRequest(BaseModel):
+    question: str = Field(min_length=5, max_length=2000)
+    user_answer: str = Field(min_length=1, max_length=4000)
+    answer_hint: str = Field(default="", max_length=2000)
+
+
+class EvaluateAnswerResponse(BaseModel):
+    feedback: str
+    score: str  # excelente | bom | parcial | incorreto
+
+
+def _run_evaluate_answer(question: str, user_answer: str, answer_hint: str) -> tuple[str, str]:
+    from docops.config import config
+    from google import genai
+
+    client = genai.Client(api_key=config.gemini_api_key)
+    model = getattr(config, "gemini_model_cheap", None) or config.gemini_model
+    prompt = _EVALUATE_ANSWER_PROMPT.format(
+        question=question,
+        answer_hint=answer_hint or "não fornecida",
+        user_answer=user_answer,
+    )
+    response = client.models.generate_content(model=model, contents=prompt)
+    text = response.text.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    data = json.loads(text)
+    return data["feedback"], data.get("score", "parcial")
+
+
+@router.post("/pipeline/evaluate-answer", response_model=EvaluateAnswerResponse)
+async def evaluate_answer(
+    payload: EvaluateAnswerRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Avalia a resposta do usuário a uma pergunta do dia."""
+    try:
+        feedback, score = await asyncio.to_thread(
+            _run_evaluate_answer,
+            payload.question,
+            payload.user_answer,
+            payload.answer_hint,
+        )
+    except Exception as exc:
+        logger.error("Falha ao avaliar resposta: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Erro ao avaliar: {exc}")
+
+    return EvaluateAnswerResponse(feedback=feedback, score=score)
