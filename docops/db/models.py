@@ -36,6 +36,8 @@ class User(Base):
     tasks: Mapped[list[TaskRecord]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     flashcard_decks: Mapped[list[FlashcardDeck]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     study_plans: Mapped[list["StudyPlanRecord"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    daily_questions: Mapped[list["DailyQuestionRecord"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    reading_status_records: Mapped[list["ReadingStatusRecord"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<User id={self.id} email={self.email!r}>"
@@ -275,3 +277,43 @@ class StudyPlanRecord(Base):
 
     def __repr__(self) -> str:
         return f"<StudyPlanRecord id={self.id} user={self.user_id} doc={self.doc_name!r}>"
+
+
+class DailyQuestionRecord(Base):
+    __tablename__ = "daily_questions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    question: Mapped[str] = mapped_column(Text, nullable=False)
+    answer_hint: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    doc_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    date_generated: Mapped[str] = mapped_column(String(10), nullable=False)  # YYYY-MM-DD
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    owner: Mapped["User"] = relationship(back_populates="daily_questions")
+
+    __table_args__ = (
+        Index("ix_daily_question_user_date", "user_id", "date_generated"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<DailyQuestionRecord id={self.id} user={self.user_id} date={self.date_generated!r}>"
+
+
+class ReadingStatusRecord(Base):
+    __tablename__ = "reading_status"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    doc_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="to_read")  # to_read | reading | done
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    owner: Mapped["User"] = relationship(back_populates="reading_status_records")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "doc_id", name="uq_user_doc_reading"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<ReadingStatusRecord id={self.id} user={self.user_id} doc={self.doc_id!r} status={self.status!r}>"

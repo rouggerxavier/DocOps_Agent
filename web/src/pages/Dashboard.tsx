@@ -1,12 +1,13 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   CalendarClock, FileText, Layers, BookOpen,
   MessageSquare, Clock, ChevronRight, ArrowRight, ScrollText,
-  Sun, AlertTriangle, ListTodo, StickyNote,
+  Sun, AlertTriangle, ListTodo, StickyNote, Lightbulb, ChevronDown,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { apiClient, type CalendarOverview, type DocItem, type ArtifactItem, type BriefingResponse } from '@/api/client'
+import { apiClient, type CalendarOverview, type DocItem, type ArtifactItem, type BriefingResponse, type DailyQuestionResponse } from '@/api/client'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -191,6 +192,52 @@ function OnboardingSteps() {
   )
 }
 
+// ── Daily Question card ────────────────────────────────────────────────────
+
+function DailyQuestion({ data, loading }: { data: DailyQuestionResponse | undefined; loading: boolean }) {
+  const [showHint, setShowHint] = useState(false)
+
+  if (loading) return <Skeleton className="h-28 w-full rounded-xl" />
+  if (!data?.question) return null
+
+  return (
+    <Card className="border-violet-800/40 bg-gradient-to-r from-violet-950/30 to-zinc-900 overflow-hidden">
+      <CardContent className="p-4">
+        <div className="flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-violet-600/20">
+            <Lightbulb className="h-5 w-5 text-violet-400" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-violet-400">Pergunta do Dia</span>
+              {data.doc_name && (
+                <span className="text-[10px] text-zinc-600 truncate">· {data.doc_name}</span>
+              )}
+            </div>
+            <p className="text-sm font-medium text-zinc-100 leading-snug">{data.question}</p>
+            {data.answer_hint && (
+              <div className="mt-2">
+                <button
+                  onClick={() => setShowHint(h => !h)}
+                  className="flex items-center gap-1 text-xs text-violet-400 hover:text-violet-300 transition-colors"
+                >
+                  <ChevronDown className={cn('h-3 w-3 transition-transform', showHint && 'rotate-180')} />
+                  {showHint ? 'Ocultar dica' : 'Ver dica de resposta'}
+                </button>
+                {showHint && (
+                  <p className="mt-1.5 rounded-lg bg-zinc-800/60 px-3 py-2 text-xs text-zinc-400 leading-relaxed">
+                    {data.answer_hint}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────
 
 export function Dashboard() {
@@ -214,6 +261,13 @@ export function Dashboard() {
     queryFn: apiClient.getBriefing,
     staleTime: 60_000,
     retry: 1,
+  })
+  const { data: dailyQuestion, isLoading: isDQLoading } = useQuery<DailyQuestionResponse>({
+    queryKey: ['daily-question'],
+    queryFn: apiClient.getDailyQuestion,
+    staleTime: 12 * 60 * 60 * 1000, // 12h — muda uma vez por dia
+    retry: false,
+    enabled: !isLoading && !!docs && docs.length > 0,
   })
 
 
@@ -252,6 +306,9 @@ export function Dashboard() {
 
       {/* Morning Briefing */}
       <MorningBriefing data={briefing} loading={isBriefingLoading} />
+
+      {/* Pergunta do Dia */}
+      <DailyQuestion data={dailyQuestion} loading={isDQLoading} />
 
       {/* Ações Rápidas — sempre visíveis no topo */}
       <div>

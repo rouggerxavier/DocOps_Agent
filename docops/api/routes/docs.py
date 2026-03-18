@@ -5,10 +5,12 @@ from __future__ import annotations
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from docops.api.schemas import DocItem
 from docops.auth.dependencies import get_current_user
+from docops.db import crud as _crud
 from docops.db.crud import list_documents_for_user, get_document_by_user_and_doc_id, delete_document_record
 from docops.db.database import get_db
 from docops.db.models import User
@@ -91,3 +93,36 @@ async def delete_doc(
 
     # Remove registro SQL
     delete_document_record(db, current_user.id, doc_id)
+
+
+# ── Reading status ─────────────────────────────────────────────────────────────
+
+class ReadingStatusUpdate(BaseModel):
+    status: str  # to_read | reading | done
+
+
+@router.get("/docs/reading-status")
+async def get_reading_status(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retorna mapa {doc_id: status} para todos os docs do usuário."""
+    return _crud.get_reading_status_for_user(db, current_user.id)
+
+
+@router.patch("/docs/{doc_id}/reading-status")
+async def update_reading_status(
+    doc_id: str,
+    body: ReadingStatusUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Atualiza o status de leitura de um documento."""
+    valid = {"to_read", "reading", "done"}
+    if body.status not in valid:
+        raise HTTPException(status_code=422, detail=f"Status inválido. Use: {sorted(valid)}")
+    doc = get_document_by_user_and_doc_id(db, current_user.id, doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento não encontrado.")
+    record = _crud.upsert_reading_status(db, current_user.id, doc_id, body.status)
+    return {"doc_id": doc_id, "status": record.status}

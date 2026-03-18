@@ -208,6 +208,111 @@ async def ingest_upload(
     return result
 
 
+class UrlIngestRequest(BaseModel):
+    url: str = Field(min_length=10, max_length=2048)
+    title: str = Field(default="", max_length=255)
+
+
+def _is_youtube_url(url: str) -> bool:
+    return "youtube.com/watch" in url or "youtu.be/" in url
+
+
+def _get_youtube_transcript(url: str) -> str:
+    """Extrai transcrição de um vídeo do YouTube."""
+    from youtube_transcript_api import YouTubeTranscriptApi
+    import re as _re
+
+    match = _re.search(r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})", url)
+    if not match:
+        raise ValueError("Não foi possível extrair o ID do vídeo do YouTube.")
+    video_id = match.group(1)
+    transcript = YouTubeTranscriptApi.get_transcript(video_id, languages=["pt", "pt-BR", "en"])
+    return " ".join(entry["text"] for entry in transcript)
+
+
+async def _fetch_webpage_text(url: str) -> str:
+    """Busca e extrai o texto principal de uma página web."""
+    import httpx
+    from bs4 import BeautifulSoup
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        )
+    }
+    async with httpx.AsyncClient(follow_redirects=True, timeout=20.0) as client:
+        response = await client.get(url, headers=headers)
+        response.raise_for_status()
+        html = response.text
+
+    soup = BeautifulSoup(html, "html.parser")
+    # Remove scripts, styles, nav, footer
+    for tag in soup(["script", "style", "nav", "footer", "header", "aside", "form"]):
+        tag.decompose()
+
+    # Tenta extrair conteúdo principal
+    main = soup.find("main") or soup.find("article") or soup.find(id="content") or soup.body
+    text = main.get_text(separator="\n", strip=True) if main else soup.get_text(separator="\n", strip=True)
+
+    # Limpa linhas muito curtas / vazias
+    lines = [line.strip() for line in text.splitlines() if len(line.strip()) > 30]
+    return "\n".join(lines)
+
+
+@router.post("/ingest/url", response_model=IngestResponse)
+async def ingest_url(
+    body: UrlIngestRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> IngestResponse:
+    """Ingest content from a URL or YouTube video."""
+    import re as _re
+
+    url = body.url.strip()
+
+    # Título: usa o fornecido ou extrai do domínio/ID
+    if body.title.strip():
+        title = body.title.strip()
+    elif _is_youtube_url(url):
+        match = _re.search(r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})", url)
+        title = f"youtube_{match.group(1)}" if match else "youtube_video"
+    else:
+        from urllib.parse import urlparse
+        domain = urlparse(url).netloc.replace("www.", "").replace(".", "_")
+        title = domain or "webpage"
+
+    logger.info("Ingest URL para user %s: %s", current_user.id, url)
+
+    try:
+        if _is_youtube_url(url):
+            text = await asyncio.to_thread(_get_youtube_transcript, url)
+        else:
+            text = await _fetch_webpage_text(url)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Falha ao extrair conteúdo da URL: {exc}")
+
+    if not text or len(text.strip()) < 50:
+        raise HTTPException(status_code=422, detail="Conteúdo insuficiente extraído da URL.")
+
+    upload_dir = get_user_upload_dir(current_user.id)
+    safe_title = "".join(
+        c if (unicodedata.category(c)[0] in ("L", "N") or c in " _-") else "_"
+        for c in unicodedata.normalize("NFC", title)
+    )[:100]
+    filename = f"{safe_title}.txt"
+    destination = upload_dir / filename
+    destination.write_text(text, encoding="utf-8")
+
+    logger.info("Ingest URL salvo: %s (%d chars)", filename, len(text))
+    result, records = await asyncio.to_thread(
+        _run_ingest, current_user.id, [destination], 0, 0,
+    )
+    for record in records:
+        create_document_record(db, **record)
+    return result
+
+
 @router.post("/ingest/clip", response_model=IngestResponse)
 async def ingest_clip(
     body: ClipRequest,

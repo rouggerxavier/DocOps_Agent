@@ -665,3 +665,57 @@ def update_flashcard_ease(db: Session, card_id: int, ease: int) -> "FlashcardIte
     db.commit()
     db.refresh(card)
     return card
+
+
+# -- DailyQuestionRecord -------------------------------------------------------
+
+def get_daily_question_for_user(db: Session, user_id: int, date_str: str) -> "DailyQuestionRecord | None":
+    from docops.db.models import DailyQuestionRecord
+    return db.query(DailyQuestionRecord).filter_by(user_id=user_id, date_generated=date_str).first()
+
+
+def create_daily_question(
+    db: Session,
+    *,
+    user_id: int,
+    question: str,
+    answer_hint: str,
+    doc_name: str,
+    date_generated: str,
+) -> "DailyQuestionRecord":
+    from docops.db.models import DailyQuestionRecord
+    record = DailyQuestionRecord(
+        user_id=user_id,
+        question=question,
+        answer_hint=answer_hint,
+        doc_name=doc_name,
+        date_generated=date_generated,
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+# -- ReadingStatusRecord -------------------------------------------------------
+
+def get_reading_status_for_user(db: Session, user_id: int) -> dict[str, str]:
+    """Retorna {doc_id: status} para todos os docs com status explícito."""
+    from docops.db.models import ReadingStatusRecord
+    records = db.query(ReadingStatusRecord).filter_by(user_id=user_id).all()
+    return {r.doc_id: r.status for r in records}
+
+
+def upsert_reading_status(db: Session, user_id: int, doc_id: str, status: str) -> "ReadingStatusRecord":
+    from docops.db.models import ReadingStatusRecord
+    existing = db.query(ReadingStatusRecord).filter_by(user_id=user_id, doc_id=doc_id).first()
+    if existing:
+        existing.status = status
+        db.commit()
+        db.refresh(existing)
+        return existing
+    record = ReadingStatusRecord(user_id=user_id, doc_id=doc_id, status=status)
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record

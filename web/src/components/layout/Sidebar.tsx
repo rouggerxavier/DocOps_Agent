@@ -13,6 +13,7 @@ import {
   ListTodo,
   Layers,
   GraduationCap,
+  KanbanSquare,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { cn } from '@/lib/utils'
@@ -43,6 +44,7 @@ export function Sidebar() {
     { to: '/tasks', label: 'Tarefas', icon: ListTodo, end: false, badge: null },
     { to: '/flashcards', label: 'Flashcards', icon: Layers, end: false, badge: null },
     { to: '/studyplan', label: 'Plano de Estudos', icon: GraduationCap, end: false, badge: null },
+    { to: '/kanban', label: 'Kanban de Leitura', icon: KanbanSquare, end: false, badge: null },
     { to: '/artifacts', label: 'Artefatos', icon: Archive, end: false, badge: null },
   ]
 

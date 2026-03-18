@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Upload, FolderOpen, CheckCircle, X, FileText, Loader2, Layers, ChevronDown, ClipboardPaste, Camera } from 'lucide-react'
+import { Upload, FolderOpen, CheckCircle, X, FileText, Loader2, Layers, ChevronDown, ClipboardPaste, Camera, Link2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -108,8 +108,12 @@ export function Ingest() {
   const [photoTitle, setPhotoTitle] = useState('')
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
 
+  // URL tab state
+  const [urlInput, setUrlInput] = useState('')
+  const [urlTitle, setUrlTitle] = useState('')
+
   // Active tab
-  const [tab, setTab] = useState<'upload' | 'path' | 'clip' | 'photo'>('upload')
+  const [tab, setTab] = useState<'upload' | 'path' | 'clip' | 'photo' | 'url'>('upload')
 
   const [result, setResult] = useState<IngestResponse | null>(null)
 
@@ -178,7 +182,21 @@ export function Ingest() {
     },
   })
 
-  const isLoading = uploadMutation.isPending || pathMutation.isPending || clipMutation.isPending || photoMutation.isPending
+  const urlMutation = useMutation({
+    mutationFn: () => apiClient.ingestUrl(urlInput.trim(), urlTitle.trim() || undefined),
+    onSuccess: data => {
+      setResult(data)
+      setUrlInput('')
+      setUrlTitle('')
+      qc.invalidateQueries({ queryKey: ['docs'] })
+      toast.success(`${data.chunks_indexed} chunks indexados!`)
+    },
+    onError: (err: any) => {
+      toast.error(err?.response?.data?.detail ?? 'Erro ao inserir URL')
+    },
+  })
+
+  const isLoading = uploadMutation.isPending || pathMutation.isPending || clipMutation.isPending || photoMutation.isPending || urlMutation.isPending
   const { stageLabel, pct } = useIngestProgress(isLoading)
 
   function handleDrop(e: React.DragEvent) {
@@ -245,6 +263,7 @@ export function Ingest() {
           { key: 'path', label: 'Caminho' },
           { key: 'clip', label: 'Clip de Texto' },
           { key: 'photo', label: 'Foto / OCR' },
+          { key: 'url', label: 'URL / YouTube' },
         ] as const).map(t => (
           <button
             key={t.key}
@@ -603,6 +622,61 @@ export function Ingest() {
                 <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Extraindo texto...</>
               ) : (
                 <><Camera className="mr-2 h-4 w-4" />Extrair e Indexar</>
+              )}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* URL / YouTube tab */}
+      {tab === 'url' && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Link2 className="h-5 w-5 text-blue-400" />
+              Inserir via URL ou YouTube
+            </CardTitle>
+            <CardDescription>
+              Cole uma URL de página web ou link do YouTube para extrair e indexar o conteúdo.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-zinc-400">
+                URL <span className="text-zinc-600">(página web ou youtube.com/watch?v=...)</span>
+              </label>
+              <Input
+                value={urlInput}
+                onChange={e => setUrlInput(e.target.value)}
+                placeholder="https://..."
+                className="font-mono text-sm"
+              />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-zinc-400">
+                Título do documento <span className="text-zinc-600">(opcional)</span>
+              </label>
+              <Input
+                value={urlTitle}
+                onChange={e => setUrlTitle(e.target.value)}
+                placeholder="Ex: Artigo sobre Machine Learning"
+              />
+            </div>
+            {urlInput && (urlInput.includes('youtube.com') || urlInput.includes('youtu.be')) && (
+              <div className="flex items-center gap-2 rounded-lg border border-red-800/40 bg-red-950/20 px-3 py-2 text-xs text-red-400">
+                <span>🎬</span>
+                <span>Detectado como vídeo do YouTube — a transcrição será extraída automaticamente.</span>
+              </div>
+            )}
+            <Button
+              onClick={() => urlMutation.mutate()}
+              disabled={!urlInput.trim() || isLoading}
+              className="w-full"
+            >
+              {urlMutation.isPending ? (
+                <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Extraindo e indexando...</>
+              ) : (
+                <><Link2 className="mr-2 h-4 w-4" />Inserir URL</>
               )}
             </Button>
           </CardContent>

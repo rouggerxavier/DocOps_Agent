@@ -447,3 +447,253 @@ async def delete_study_plan(
         raise HTTPException(status_code=404, detail="Plano não encontrado")
     crud.delete_study_plan_record(db, plan)
     return {"status": "deleted"}
+
+
+# ── Daily Question ─────────────────────────────────────────────────────────────
+
+_DAILY_QUESTION_PROMPT = """\
+Você é um professor que cria perguntas de revisão instigantes. Com base nos fragmentos do documento abaixo, crie UMA pergunta de reflexão ou compreensão que estimule o pensamento crítico do estudante.
+
+Documento: {doc_name}
+Fragmentos:
+{content}
+
+Retorne APENAS JSON (sem markdown, sem texto extra):
+{{"question": "A pergunta aqui (1-2 frases diretas)", "answer_hint": "Dica ou resposta resumida (2-4 frases)"}}
+"""
+
+
+def _generate_daily_question_llm(doc_name: str, content: str) -> tuple[str, str]:
+    from docops.config import config
+    from google import genai
+
+    client = genai.Client(api_key=config.gemini_api_key)
+    model = getattr(config, "gemini_model_cheap", None) or config.gemini_model
+    prompt = _DAILY_QUESTION_PROMPT.format(doc_name=doc_name, content=content[:6000])
+    response = client.models.generate_content(model=model, contents=prompt)
+    text = response.text.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    data = json.loads(text)
+    return data["question"], data.get("answer_hint", "")
+
+
+@router.get("/pipeline/daily-question")
+async def get_daily_question(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Retorna (ou gera) a pergunta do dia a partir dos documentos do usuário."""
+    import random
+    from datetime import date
+
+    today = date.today().isoformat()
+
+    # Verifica cache diário
+    existing = crud.get_daily_question_for_user(db, current_user.id, today)
+    if existing:
+        return {
+            "question": existing.question,
+            "answer_hint": existing.answer_hint,
+            "doc_name": existing.doc_name,
+            "date": existing.date_generated,
+        }
+
+    docs = crud.list_documents_for_user(db, current_user.id)
+    if not docs:
+        return {"question": None, "answer_hint": None, "doc_name": None, "date": today}
+
+    doc = random.choice(docs)
+
+    def _gen() -> tuple[str, str] | tuple[None, None]:
+        from docops.rag.retriever import retrieve_for_doc
+        chunks = retrieve_for_doc(
+            doc.file_name,
+            query="conceito importante, definição, princípio fundamental",
+            doc_id=doc.doc_id,
+            user_id=current_user.id,
+            top_k=10,
+        )
+        if not chunks:
+            return None, None
+        content = "\n\n".join(c.page_content[:400] for c in chunks[:8])
+        return _generate_daily_question_llm(doc.file_name, content)
+
+    try:
+        question, answer_hint = await asyncio.to_thread(_gen)
+    except Exception as exc:
+        logger.warning("Falha ao gerar pergunta do dia: %s", exc)
+        return {"question": None, "answer_hint": None, "doc_name": None, "date": today}
+
+    if question:
+        record = crud.create_daily_question(
+            db,
+            user_id=current_user.id,
+            question=question,
+            answer_hint=answer_hint or "",
+            doc_name=doc.file_name,
+            date_generated=today,
+        )
+        return {
+            "question": record.question,
+            "answer_hint": record.answer_hint,
+            "doc_name": record.doc_name,
+            "date": record.date_generated,
+        }
+
+    return {"question": None, "answer_hint": None, "doc_name": None, "date": today}
+
+
+# ── Gap Analysis ───────────────────────────────────────────────────────────────
+
+_GAP_ANALYSIS_PROMPT = """\
+Você é um especialista em análise de aprendizado. Analise os dados abaixo e identifique lacunas de conhecimento — tópicos presentes nos documentos mas não cobertos pelos flashcards ou tarefas do usuário.
+
+Documentos disponíveis:
+{docs_section}
+
+Flashcards criados (tópicos já estudados):
+{cards_section}
+
+Tarefas criadas:
+{tasks_section}
+
+Amostra do conteúdo dos documentos:
+{content_section}
+
+Retorne APENAS JSON array (sem markdown, sem texto extra). Máximo 8 gaps:
+[
+  {{
+    "topico": "Nome específico do tópico lacunado",
+    "descricao": "Por que este tópico é importante e está faltando",
+    "prioridade": "high|normal|low",
+    "sugestao": "Ação recomendada: criar flashcard, adicionar tarefa, estudar seção X, etc."
+  }}
+]
+
+Prioridade 'high' = tópico fundamental não coberto. Seja específico e acionável.
+"""
+
+
+def _run_gap_analysis(user_id: int, doc_names: list[str], db: Session) -> list[dict]:
+    from docops.config import config
+    from docops.db.models import TaskRecord
+    from docops.rag.retriever import retrieve_for_doc
+    from google import genai
+
+    docs = crud.list_documents_for_user(db, user_id)
+    if not docs:
+        return []
+
+    target_docs = [d for d in docs if not doc_names or d.file_name in doc_names] or docs[:3]
+
+    docs_section = "\n".join(f"- {d.file_name} ({d.chunk_count} chunks)" for d in target_docs[:5])
+
+    decks = crud.list_flashcard_decks_for_user(db, user_id)
+    card_fronts: list[str] = []
+    for deck_item in decks[:3]:
+        full_deck = crud.get_flashcard_deck(db, user_id, deck_item.id)
+        if full_deck:
+            card_fronts.extend(c.front[:80] for c in full_deck.cards[:10])
+    cards_section = "\n".join(f"- {f}" for f in card_fronts[:30]) or "(nenhum flashcard criado)"
+
+    tasks = (
+        db.query(TaskRecord)
+        .filter_by(user_id=user_id)
+        .order_by(TaskRecord.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    tasks_section = "\n".join(f"- {t.title}" for t in tasks) or "(nenhuma tarefa criada)"
+
+    content_parts: list[str] = []
+    for doc in target_docs[:2]:
+        chunks = retrieve_for_doc(
+            doc.file_name,
+            query="tópicos principais, conceitos, capítulos, seções",
+            doc_id=doc.doc_id,
+            user_id=user_id,
+            top_k=12,
+        )
+        if chunks:
+            content_parts.append(
+                f"\n### {doc.file_name}\n" + "\n".join(c.page_content[:300] for c in chunks[:8])
+            )
+    content_section = "\n".join(content_parts)[:8000]
+
+    prompt = _GAP_ANALYSIS_PROMPT.format(
+        docs_section=docs_section,
+        cards_section=cards_section,
+        tasks_section=tasks_section,
+        content_section=content_section,
+    )
+
+    client = genai.Client(api_key=config.gemini_api_key)
+    model = getattr(config, "gemini_model_cheap", None) or config.gemini_model
+    response = client.models.generate_content(model=model, contents=prompt)
+    text = response.text.strip()
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+
+    try:
+        gaps = json.loads(text)
+        if not isinstance(gaps, list):
+            return []
+        valid = {"high", "normal", "low"}
+        return [
+            {
+                "topico": str(g.get("topico", "")).strip(),
+                "descricao": str(g.get("descricao", "")).strip(),
+                "prioridade": g.get("prioridade", "normal") if g.get("prioridade") in valid else "normal",
+                "sugestao": str(g.get("sugestao", "")).strip(),
+            }
+            for g in gaps if g.get("topico")
+        ][:8]
+    except Exception as exc:
+        logger.warning("Falha ao parsear gaps: %s", exc)
+        return []
+
+
+class GapAnalysisRequest(BaseModel):
+    doc_names: list[str] = Field(default_factory=list)  # vazio = todos os docs
+
+
+class GapItem(BaseModel):
+    topico: str
+    descricao: str
+    prioridade: str
+    sugestao: str
+
+
+class GapAnalysisResponse(BaseModel):
+    gaps: list[GapItem]
+    docs_analyzed: int
+
+
+@router.post("/pipeline/gap-analysis", response_model=GapAnalysisResponse)
+async def run_gap_analysis(
+    payload: GapAnalysisRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Analisa lacunas de aprendizado: tópicos nos docs não cobertos por flashcards/tarefas."""
+    docs = crud.list_documents_for_user(db, current_user.id)
+    if not docs:
+        raise HTTPException(status_code=404, detail="Nenhum documento encontrado.")
+
+    logger.info(
+        "Gap analysis solicitada por user=%d, %d doc(s) alvo",
+        current_user.id, len(payload.doc_names) or len(docs),
+    )
+
+    try:
+        gaps_raw = await asyncio.to_thread(_run_gap_analysis, current_user.id, payload.doc_names, db)
+    except Exception as exc:
+        logger.error("Falha na gap analysis: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Erro na análise: {exc}")
+
+    target_count = len([d for d in docs if not payload.doc_names or d.file_name in payload.doc_names]) or len(docs)
+    return GapAnalysisResponse(
+        gaps=[GapItem(**g) for g in gaps_raw],
+        docs_analyzed=min(target_count, 3),
+    )

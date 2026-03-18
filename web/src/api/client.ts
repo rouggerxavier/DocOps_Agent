@@ -248,6 +248,33 @@ export interface StudyPlanItem {
   plan_text: string
 }
 
+// ── Daily Question ─────────────────────────────────────────────────────────────
+
+export interface DailyQuestionResponse {
+  question: string | null
+  answer_hint: string | null
+  doc_name: string | null
+  date: string
+}
+
+// ── Gap Analysis ──────────────────────────────────────────────────────────────
+
+export interface GapItem {
+  topico: string
+  descricao: string
+  prioridade: 'high' | 'normal' | 'low'
+  sugestao: string
+}
+
+export interface GapAnalysisResponse {
+  gaps: GapItem[]
+  docs_analyzed: number
+}
+
+// ── Reading Status ─────────────────────────────────────────────────────────────
+
+export type ReadingStatus = 'to_read' | 'reading' | 'done'
+
 // ── API functions ─────────────────────────────────────────────────────────────
 
 export const apiClient = {
@@ -551,4 +578,25 @@ export const apiClient = {
       headers: { 'Content-Type': 'multipart/form-data' },
     }).then(r => r.data)
   },
+
+  ingestUrl: (url: string, title?: string): Promise<IngestResponse> =>
+    api.post('/api/ingest/url', { url, title: title ?? '' }, { timeout: 60000 }).then(r => r.data),
+
+  // ── Daily Question ──────────────────────────────────────────────────────────
+
+  getDailyQuestion: (): Promise<DailyQuestionResponse> =>
+    api.get('/api/pipeline/daily-question').then(r => r.data),
+
+  // ── Gap Analysis ────────────────────────────────────────────────────────────
+
+  runGapAnalysis: (docNames: string[] = []): Promise<GapAnalysisResponse> =>
+    api.post('/api/pipeline/gap-analysis', { doc_names: docNames }, { timeout: 90000 }).then(r => r.data),
+
+  // ── Reading Status ──────────────────────────────────────────────────────────
+
+  getReadingStatus: (): Promise<Record<string, ReadingStatus>> =>
+    api.get('/api/docs/reading-status').then(r => r.data),
+
+  updateReadingStatus: (docId: string, status: ReadingStatus): Promise<{ doc_id: string; status: ReadingStatus }> =>
+    api.patch(`/api/docs/${encodeURIComponent(docId)}/reading-status`, { status }).then(r => r.data),
 }
