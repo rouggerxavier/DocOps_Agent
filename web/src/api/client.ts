@@ -463,14 +463,15 @@ export const apiClient = {
 
   digestDocument: (
     docName: string,
-    options?: { generateFlashcards?: boolean; extractTasks?: boolean; numCards?: number; maxTasks?: number }
-  ): Promise<{ summary: string; deck_id: number | null; tasks_created: number; task_titles: string[] }> =>
+    options?: { generateFlashcards?: boolean; extractTasks?: boolean; numCards?: number; maxTasks?: number; scheduleReviews?: boolean }
+  ): Promise<{ summary: string; deck_id: number | null; tasks_created: number; task_titles: string[]; reviews_scheduled: number }> =>
     api.post('/api/pipeline/digest', {
       doc_name: docName,
       generate_flashcards: options?.generateFlashcards ?? true,
       extract_tasks: options?.extractTasks ?? true,
       num_cards: options?.numCards ?? 10,
       max_tasks: options?.maxTasks ?? 8,
+      schedule_reviews: options?.scheduleReviews ?? false,
     }, { timeout: 120000 }).then(r => r.data),
 
   extractTasksFromDoc: (

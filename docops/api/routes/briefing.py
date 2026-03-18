@@ -99,9 +99,13 @@ def get_briefing(
     # Tarefas pendentes (não concluídas)
     all_tasks = crud.list_tasks_for_user(db, current_user.id)
     pending = [t for t in all_tasks if t.status != "done"]
+    now_utc = datetime.now(timezone.utc)
     overdue = [
         t for t in pending
-        if t.due_date is not None and t.due_date < now
+        if t.due_date is not None and (
+            (t.due_date.tzinfo is not None and t.due_date < now_utc) or
+            (t.due_date.tzinfo is None and t.due_date < now_utc.replace(tzinfo=None))
+        )
     ]
     pending_not_overdue = [t for t in pending if t not in overdue]
 

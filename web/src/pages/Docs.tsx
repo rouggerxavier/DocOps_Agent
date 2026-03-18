@@ -303,12 +303,14 @@ function SmartDigestDialog({ doc, onClose }: { doc: string; onClose: () => void 
   const qc = useQueryClient()
   const [genFlashcards, setGenFlashcards] = useState(true)
   const [extractTasks, setExtractTasks] = useState(true)
+  const [scheduleReviews, setScheduleReviews] = useState(false)
   const [numCards, setNumCards] = useState(10)
   const [result, setResult] = useState<{
     summary: string
     deck_id: number | null
     tasks_created: number
     task_titles: string[]
+    reviews_scheduled: number
   } | null>(null)
 
   const mutation = useMutation({
@@ -318,6 +320,7 @@ function SmartDigestDialog({ doc, onClose }: { doc: string; onClose: () => void 
         extractTasks,
         numCards,
         maxTasks: 8,
+        scheduleReviews,
       }),
     onSuccess: data => {
       setResult(data)
@@ -384,6 +387,20 @@ function SmartDigestDialog({ doc, onClose }: { doc: string; onClose: () => void 
                     <p className="text-xs text-zinc-500">Identifica ações, exercícios e entregas no documento</p>
                   </div>
                 </label>
+                {genFlashcards && (
+                  <label className="flex items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 cursor-pointer hover:border-zinc-600 transition-colors">
+                    <input
+                      type="checkbox"
+                      checked={scheduleReviews}
+                      onChange={e => setScheduleReviews(e.target.checked)}
+                      className="h-4 w-4 accent-purple-500"
+                    />
+                    <div>
+                      <p className="text-sm font-medium text-zinc-200">Agendar Revisões SRS</p>
+                      <p className="text-xs text-zinc-500">Cria lembretes de revisão espaçada no calendário (+1d, +3d, +7d)</p>
+                    </div>
+                  </label>
+                )}
               </div>
               <Button onClick={() => mutation.mutate()} className="w-full bg-amber-600 hover:bg-amber-700 text-white">
                 <Zap className="mr-2 h-4 w-4" />
@@ -415,6 +432,13 @@ function SmartDigestDialog({ doc, onClose }: { doc: string; onClose: () => void 
                     <p className="text-xs text-emerald-400 font-medium mb-1">Tarefas extraídas</p>
                     <p className="text-lg font-bold text-emerald-300">{result.tasks_created} tarefas</p>
                     <a href="/tasks" className="text-xs text-emerald-500 hover:underline">Ver em Tarefas →</a>
+                  </div>
+                )}
+                {result.reviews_scheduled > 0 && (
+                  <div className="rounded-lg border border-purple-800 bg-purple-950/30 p-3">
+                    <p className="text-xs text-purple-400 font-medium mb-1">Revisões SRS agendadas</p>
+                    <p className="text-lg font-bold text-purple-300">{result.reviews_scheduled} lembretes</p>
+                    <a href="/schedule" className="text-xs text-purple-500 hover:underline">Ver Calendário →</a>
                   </div>
                 )}
               </div>

@@ -84,6 +84,38 @@ def _extract_task_items(content: str, max_tasks: int) -> list[dict]:
     return result[:max_tasks]
 
 
+def _schedule_srs_reminders(deck_id: int, deck_title: str, user_id: int, db: Session) -> int:
+    """Cria lembretes de revisão espaçada (SRS) para um deck de flashcards.
+
+    Agenda: +1 dia, +3 dias, +7 dias a partir de hoje às 19h.
+    Retorna o número de lembretes criados.
+    """
+    from datetime import datetime, timedelta, timezone
+    from docops.db import crud as _crud
+
+    now = datetime.now(timezone.utc)
+    slots = [
+        ("🔁 1ª revisão", now + timedelta(days=1)),
+        ("🔁 2ª revisão", now + timedelta(days=3)),
+        ("🔁 3ª revisão", now + timedelta(days=7)),
+    ]
+    created = 0
+    for label, dt in slots:
+        scheduled = dt.replace(hour=19, minute=0, second=0, microsecond=0)
+        try:
+            _crud.create_reminder_record(
+                db,
+                user_id=user_id,
+                title=f"{label} — {deck_title}",
+                starts_at=scheduled,
+                note=f"Revisão espaçada automática. Deck ID: {deck_id}",
+            )
+            created += 1
+        except Exception as exc:
+            logger.warning("Falha ao criar lembrete SRS para deck %d: %s", deck_id, exc)
+    return created
+
+
 def _run_digest(
     doc_name: str,
     doc_id: str,
@@ -93,6 +125,7 @@ def _run_digest(
     num_cards: int,
     max_tasks: int,
     db: Session,
+    schedule_reviews: bool = False,
 ) -> dict:
     from docops.graph.graph import run as graph_run
     from docops.rag.retriever import retrieve_for_doc
@@ -138,6 +171,9 @@ def _run_digest(
             )
             deck_id = deck.id
             logger.info("Smart Digest: deck criado (id=%s, %d cards)", deck_id, len(cards))
+            if schedule_reviews:
+                n = _schedule_srs_reminders(deck_id, deck.title, user_id, db)
+                logger.info("Smart Digest: %d lembretes SRS agendados para deck %d", n, deck_id)
         except Exception as exc:
             logger.warning("Falha ao gerar flashcards no digest: %s", exc)
 
@@ -166,6 +202,7 @@ def _run_digest(
         "deck_id": deck_id,
         "tasks_created": tasks_created,
         "task_titles": task_titles,
+        "reviews_scheduled": 3 if (deck_id and schedule_reviews) else 0,
     }
 
 
@@ -177,6 +214,7 @@ class DigestRequest(BaseModel):
     extract_tasks: bool = True
     num_cards: int = Field(default=10, ge=1, le=30)
     max_tasks: int = Field(default=8, ge=1, le=20)
+    schedule_reviews: bool = False  # Agenda revisões SRS no calendário ao criar deck
 
 
 class DigestResponse(BaseModel):
@@ -184,6 +222,7 @@ class DigestResponse(BaseModel):
     deck_id: Optional[int]
     tasks_created: int
     task_titles: list[str]
+    reviews_scheduled: int = 0  # Número de lembretes SRS criados
 
 
 class ExtractTasksRequest(BaseModel):
@@ -221,6 +260,7 @@ async def digest_document(
         payload.num_cards,
         payload.max_tasks,
         db,
+        payload.schedule_reviews,
     )
     return DigestResponse(**result)
 

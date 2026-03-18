@@ -133,13 +133,13 @@ async def chat(
     """Run chat pipeline with retrieval scoped to current_user."""
     logger.info("Chat request from user %s: '%s'", current_user.id, body.message[:80])
 
-    from docops.services.action_router import maybe_answer_action_query
-    action_answer = maybe_answer_action_query(body.message, current_user.id, db)
-    if action_answer:
+    from docops.services.orchestrator import maybe_orchestrate
+    orch_answer = await asyncio.to_thread(maybe_orchestrate, body.message, current_user.id, db)
+    if orch_answer:
         return ChatResponse(
-            answer=action_answer["answer"],
+            answer=orch_answer["answer"],
             sources=[],
-            intent=action_answer.get("intent", "action"),
+            intent=orch_answer.get("intent", "action"),
             session_id=body.session_id,
             grounding=None,
         )
