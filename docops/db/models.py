@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from docops.db.database import Base
@@ -35,6 +35,7 @@ class User(Base):
     notes: Mapped[list[NoteRecord]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     tasks: Mapped[list[TaskRecord]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     flashcard_decks: Mapped[list[FlashcardDeck]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    study_plans: Mapped[list["StudyPlanRecord"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<User id={self.id} email={self.email!r}>"
@@ -248,3 +249,29 @@ class FlashcardItem(Base):
 
     def __repr__(self) -> str:
         return f"<FlashcardItem id={self.id} deck={self.deck_id} front={self.front[:30]!r}>"
+
+
+class StudyPlanRecord(Base):
+    __tablename__ = "study_plans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    titulo: Mapped[str] = mapped_column(String(512), nullable=False)
+    doc_name: Mapped[str] = mapped_column(String(512), nullable=False)
+    plan_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    tasks_created: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reminders_created: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    sessions_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    deck_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    hours_per_day: Mapped[float] = mapped_column(Float, nullable=False, default=2.0)
+    deadline_date: Mapped[str] = mapped_column(String(10), nullable=False)  # ISO YYYY-MM-DD
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+    owner: Mapped["User"] = relationship(back_populates="study_plans")
+
+    __table_args__ = (
+        Index("ix_study_plan_user", "user_id", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<StudyPlanRecord id={self.id} user={self.user_id} doc={self.doc_name!r}>"

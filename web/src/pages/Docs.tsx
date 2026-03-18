@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { FileText, BookOpen, GitCompare, Loader2, Search, Download, Trash2, Zap, CheckSquare, Brain, CalendarDays, GraduationCap } from 'lucide-react'
+import { BookOpen, Brain, CalendarDays, CheckSquare, FileText, GitCompare, GraduationCap, Loader2, Search, Trash2, Zap } from 'lucide-react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import { Card, CardContent } from '@/components/ui/card'
@@ -9,218 +9,6 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { apiClient, type DocItem } from '@/api/client'
-
-function downloadBlobFile(blob: Blob, filename: string) {
-  const objectUrl = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = objectUrl
-  anchor.download = filename
-  document.body.appendChild(anchor)
-  anchor.click()
-  anchor.remove()
-  URL.revokeObjectURL(objectUrl)
-}
-
-function SummarizeDialog({
-  doc,
-  onClose,
-}: {
-  doc: string
-  onClose: () => void
-}) {
-  const [result, setResult] = useState('')
-  const [mode, setMode] = useState<'brief' | 'deep'>('brief')
-  const [saveSummary, setSaveSummary] = useState(true)
-  const [artifactFilename, setArtifactFilename] = useState<string | null>(null)
-  const [jobId, setJobId] = useState<string | null>(null)
-  const [downloading, setDownloading] = useState<'md' | 'pdf' | null>(null)
-
-  const startJob = useMutation({
-    mutationFn: () => apiClient.summarizeAsync(doc, saveSummary, mode),
-    onSuccess: data => {
-      setJobId(data.job_id)
-    },
-    onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao iniciar resumo'),
-  })
-  const jobQuery = useQuery({
-    queryKey: ['job', jobId],
-    queryFn: () => apiClient.getJobStatus(jobId!),
-    enabled: !!jobId,
-    refetchInterval: query =>
-      query.state.data?.status === 'succeeded' || query.state.data?.status === 'failed'
-        ? false
-        : 1200,
-  })
-
-  useEffect(() => {
-    if (!jobId || !jobQuery.data) return
-    if (jobQuery.data.status === 'succeeded') {
-      const payload = jobQuery.data.result ?? {}
-      setResult(String(payload.answer ?? ''))
-      setArtifactFilename(payload.artifact_filename ?? null)
-      if (saveSummary && payload.artifact_filename) {
-        toast.success(`Resumo salvo: ${payload.artifact_filename}`)
-      }
-      setJobId(null)
-    } else if (jobQuery.data.status === 'failed') {
-      toast.error(jobQuery.data.error ?? 'Erro ao gerar resumo')
-      setJobId(null)
-    }
-  }, [jobId, jobQuery.data, saveSummary])
-
-  const modeLabel = mode === 'brief' ? 'Resumo Breve' : 'Resumo Aprofundado'
-  const isProcessing = startJob.isPending || !!jobId
-
-  async function handleDownloadMd() {
-    if (!artifactFilename) return
-    setDownloading('md')
-    try {
-      const blob = await apiClient.getArtifactBlob(artifactFilename)
-      downloadBlobFile(blob, artifactFilename)
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail ?? 'Erro ao baixar .md')
-    } finally {
-      setDownloading(null)
-    }
-  }
-
-  async function handleDownloadPdf() {
-    if (!artifactFilename) return
-    setDownloading('pdf')
-    try {
-      const blob = await apiClient.getArtifactPdfBlob(artifactFilename)
-      const pdfName = artifactFilename.replace(/\.(md|markdown|txt)$/i, '.pdf')
-      downloadBlobFile(blob, pdfName)
-    } catch (err: any) {
-      toast.error(err?.response?.data?.detail ?? 'Erro ao baixar PDF')
-    } finally {
-      setDownloading(null)
-    }
-  }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
-          <h2 className="font-semibold text-zinc-100">Resumo: {doc}</h2>
-          <Button variant="ghost" size="sm" onClick={onClose}>✕</Button>
-        </div>
-        <div className="p-6 space-y-4">
-          {!result && !isProcessing && (
-            <>
-              {/* Mode selector */}
-              <div>
-                <p className="mb-2 text-sm font-medium text-zinc-300">Tipo de resumo:</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setMode('brief')}
-                    className={`rounded-lg border px-4 py-3 text-left transition-colors ${
-                      mode === 'brief'
-                        ? 'border-blue-500 bg-blue-500/10 text-blue-300'
-                        : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600'
-                    }`}
-                  >
-                    <p className="text-sm font-semibold">Resumo Breve</p>
-                    <p className="mt-0.5 text-xs opacity-70">
-                      Síntese concisa — até 300 palavras com os pontos essenciais
-                    </p>
-                  </button>
-                  <button
-                    onClick={() => setMode('deep')}
-                    className={`rounded-lg border px-4 py-3 text-left transition-colors ${
-                      mode === 'deep'
-                        ? 'border-violet-500 bg-violet-500/10 text-violet-300'
-                        : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600'
-                    }`}
-                  >
-                    <p className="text-sm font-semibold">Resumo Aprofundado</p>
-                    <p className="mt-0.5 text-xs opacity-70">
-                      Análise completa seção por seção com detalhes técnicos
-                    </p>
-                  </button>
-                </div>
-              </div>
-              <label className="flex items-center gap-2 rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-200">
-                <input
-                  type="checkbox"
-                  checked={saveSummary}
-                  onChange={e => setSaveSummary(e.target.checked)}
-                />
-                Salvar resumo em artefatos (habilita exportação .md e PDF)
-              </label>
-              <Button onClick={() => startJob.mutate()} className="w-full">
-                <BookOpen className="mr-2 h-4 w-4" />
-                Gerar {modeLabel}
-              </Button>
-            </>
-          )}
-          {isProcessing && (
-            <div className="flex flex-col items-center justify-center gap-3 py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-blue-400" />
-              <span className="text-sm text-zinc-400">
-                {mode === 'deep'
-                  ? 'Analisando documento em profundidade...'
-                  : 'Gerando resumo breve...'}
-              </span>
-              <div className="w-full max-w-md rounded-md border border-zinc-700 bg-zinc-800 p-2">
-                <div className="mb-1 flex items-center justify-between text-[11px] text-zinc-400">
-                  <span>{jobQuery.data?.stage ?? 'iniciando'}</span>
-                  <span>{jobQuery.data?.progress ?? 5}%</span>
-                </div>
-                <div className="h-2 rounded bg-zinc-700">
-                  <div
-                    className="h-2 rounded bg-blue-500 transition-all"
-                    style={{ width: `${jobQuery.data?.progress ?? 5}%` }}
-                  />
-                </div>
-              </div>
-            </div>
-          )}
-          {result && (
-            <>
-              <div className="flex items-center justify-between">
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
-                  mode === 'brief'
-                    ? 'bg-blue-500/15 text-blue-300'
-                    : 'bg-violet-500/15 text-violet-300'
-                }`}>
-                  {modeLabel}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-xs text-zinc-500 hover:text-zinc-300"
-                  onClick={() => {
-                    setResult('')
-                    setArtifactFilename(null)
-                    startJob.reset()
-                  }}
-                >
-                  Gerar outro
-                </Button>
-              </div>
-              {artifactFilename && (
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" onClick={handleDownloadMd} disabled={downloading !== null}>
-                    <Download className="mr-2 h-4 w-4" />
-                    {downloading === 'md' ? 'Baixando...' : 'Exportar .md'}
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={handleDownloadPdf} disabled={downloading !== null}>
-                    <FileText className="mr-2 h-4 w-4" />
-                    {downloading === 'pdf' ? 'Baixando...' : 'Exportar PDF'}
-                  </Button>
-                </div>
-              )}
-              <div className="prose prose-invert prose-sm max-w-none max-h-[32rem] overflow-y-auto">
-                <ReactMarkdown>{result}</ReactMarkdown>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
 
 function CompareDialog({
   doc1,
@@ -626,7 +414,6 @@ function SmartDigestDialog({ doc, onClose }: { doc: string; onClose: () => void 
 export function Docs() {
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
-  const [summarizeDoc, setSummarizeDoc] = useState<string | null>(null)
   const [compareDoc, setCompareDoc] = useState<string | null>(null)
   const [digestDoc, setDigestDoc] = useState<string | null>(null)
 
@@ -725,14 +512,6 @@ export function Docs() {
                     <Zap className="h-4 w-4" />
                     Digest
                   </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setSummarizeDoc(doc.file_name)}
-                  >
-                    <BookOpen className="h-4 w-4" />
-                    Resumir
-                  </Button>
                   {docs && docs.length > 1 && (
                     <Button
                       variant="ghost"
@@ -764,9 +543,6 @@ export function Docs() {
       )}
 
       {/* Dialogs */}
-      {summarizeDoc && (
-        <SummarizeDialog doc={summarizeDoc} onClose={() => setSummarizeDoc(null)} />
-      )}
       {compareDoc && docs && (
         <CompareDialog
           doc1={compareDoc}

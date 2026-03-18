@@ -241,6 +241,14 @@ class StudyPlanRequest(BaseModel):
     deadline_date: str  # ISO YYYY-MM-DD
     generate_flashcards: bool = True
     num_cards: int = Field(default=15, ge=5, le=30)
+    preferred_start_time: str = Field(default="20:00")  # HH:MM — horário preferido para as sessões
+
+
+class StudyPlanConflict(BaseModel):
+    date: str
+    session_time: str
+    conflicting_with: str
+    conflicting_time: str
 
 
 class StudyPlanResponse(BaseModel):
@@ -250,6 +258,22 @@ class StudyPlanResponse(BaseModel):
     sessions_count: int
     deck_id: Optional[int]
     titulo: str
+    study_plan_id: Optional[int] = None
+    conflicts: list[StudyPlanConflict] = []
+
+
+class StudyPlanListItem(BaseModel):
+    id: int
+    titulo: str
+    doc_name: str
+    tasks_created: int
+    reminders_created: int
+    sessions_count: int
+    deck_id: Optional[int]
+    hours_per_day: float
+    deadline_date: str
+    created_at: str
+    plan_text: str
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -346,8 +370,9 @@ async def create_study_plan(
         raise HTTPException(status_code=422, detail="deadline_date deve ser uma data futura")
 
     logger.info(
-        "Study plan solicitado por user=%d para doc='%s', %gh/dia, prazo=%s",
+        "Study plan solicitado por user=%d para doc='%s', %gh/dia, prazo=%s, horário=%s",
         current_user.id, payload.doc_name, payload.hours_per_day, payload.deadline_date,
+        payload.preferred_start_time,
     )
 
     from docops.services import study_plan_generator
@@ -362,5 +387,63 @@ async def create_study_plan(
         db,
         payload.generate_flashcards,
         payload.num_cards,
+        payload.preferred_start_time,
     )
+
+    # Salva o plano no banco de dados
+    plan_record = crud.create_study_plan_record(
+        db,
+        user_id=current_user.id,
+        titulo=result["titulo"],
+        doc_name=doc_record.file_name,
+        plan_text=result["plan_text"],
+        tasks_created=result["tasks_created"],
+        reminders_created=result["reminders_created"],
+        sessions_count=result["sessions_count"],
+        deck_id=result["deck_id"],
+        hours_per_day=payload.hours_per_day,
+        deadline_date=payload.deadline_date,
+    )
+    result["study_plan_id"] = plan_record.id
+    logger.info("Study plan salvo (id=%d)", plan_record.id)
+
     return StudyPlanResponse(**result)
+
+
+@router.get("/pipeline/study-plans", response_model=list[StudyPlanListItem])
+async def list_study_plans(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Lista planos de estudos salvos do usuário."""
+    plans = crud.list_study_plans_for_user(db, current_user.id)
+    return [
+        StudyPlanListItem(
+            id=p.id,
+            titulo=p.titulo,
+            doc_name=p.doc_name,
+            tasks_created=p.tasks_created,
+            reminders_created=p.reminders_created,
+            sessions_count=p.sessions_count,
+            deck_id=p.deck_id,
+            hours_per_day=p.hours_per_day,
+            deadline_date=p.deadline_date,
+            created_at=p.created_at.isoformat(),
+            plan_text=p.plan_text,
+        )
+        for p in plans
+    ]
+
+
+@router.delete("/pipeline/study-plans/{plan_id}")
+async def delete_study_plan(
+    plan_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove um plano de estudos salvo."""
+    plan = crud.get_study_plan_by_user_and_id(db, current_user.id, plan_id)
+    if not plan:
+        raise HTTPException(status_code=404, detail="Plano não encontrado")
+    crud.delete_study_plan_record(db, plan)
+    return {"status": "deleted"}

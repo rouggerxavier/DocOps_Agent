@@ -216,6 +216,38 @@ export interface StudyPlanResponse {
   pdf_filename: string | null
 }
 
+export interface StudyPlanConflict {
+  date: string
+  session_time: string
+  conflicting_with: string
+  conflicting_time: string
+}
+
+export interface StudyPlanDocResponse {
+  plan_text: string
+  tasks_created: number
+  reminders_created: number
+  sessions_count: number
+  deck_id: number | null
+  titulo: string
+  study_plan_id: number | null
+  conflicts: StudyPlanConflict[]
+}
+
+export interface StudyPlanItem {
+  id: number
+  titulo: string
+  doc_name: string
+  tasks_created: number
+  reminders_created: number
+  sessions_count: number
+  deck_id: number | null
+  hours_per_day: number
+  deadline_date: string
+  created_at: string
+  plan_text: string
+}
+
 // ── API functions ─────────────────────────────────────────────────────────────
 
 export const apiClient = {
@@ -465,14 +497,22 @@ export const apiClient = {
     deadlineDate: string,
     generateFlashcards = true,
     numCards = 15,
-  ): Promise<{ plan_text: string; tasks_created: number; reminders_created: number; sessions_count: number; deck_id: number | null; titulo: string }> =>
+    preferredStartTime = '20:00',
+  ): Promise<StudyPlanDocResponse> =>
     api.post('/api/pipeline/study-plan', {
       doc_name: docName,
       hours_per_day: hoursPerDay,
       deadline_date: deadlineDate,
       generate_flashcards: generateFlashcards,
       num_cards: numCards,
+      preferred_start_time: preferredStartTime,
     }, { timeout: 180000 }).then(r => r.data),
+
+  listStudyPlans: (): Promise<StudyPlanItem[]> =>
+    api.get('/api/pipeline/study-plans').then(r => r.data),
+
+  deleteStudyPlan: (id: number): Promise<void> =>
+    api.delete(`/api/pipeline/study-plans/${id}`).then(() => undefined),
 
   // ── Pipeline ────────────────────────────────────────────────────────────────
 

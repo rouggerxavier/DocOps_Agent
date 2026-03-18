@@ -593,6 +593,65 @@ def delete_task_activity(db: Session, activity: "TaskActivityLog") -> None:
     db.commit()
 
 
+# -- StudyPlanRecord ----------------------------------------------------------
+
+def create_study_plan_record(
+    db: Session,
+    *,
+    user_id: int,
+    titulo: str,
+    doc_name: str,
+    plan_text: str,
+    tasks_created: int = 0,
+    reminders_created: int = 0,
+    sessions_count: int = 0,
+    deck_id: "int | None" = None,
+    hours_per_day: float = 2.0,
+    deadline_date: str,
+) -> "StudyPlanRecord":
+    from docops.db.models import StudyPlanRecord
+    record = StudyPlanRecord(
+        user_id=user_id,
+        titulo=titulo,
+        doc_name=doc_name,
+        plan_text=plan_text,
+        tasks_created=tasks_created,
+        reminders_created=reminders_created,
+        sessions_count=sessions_count,
+        deck_id=deck_id,
+        hours_per_day=hours_per_day,
+        deadline_date=deadline_date,
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def list_study_plans_for_user(db: Session, user_id: int) -> "list[StudyPlanRecord]":
+    from docops.db.models import StudyPlanRecord
+    return (
+        db.query(StudyPlanRecord)
+        .filter(StudyPlanRecord.user_id == user_id)
+        .order_by(StudyPlanRecord.created_at.desc())
+        .all()
+    )
+
+
+def get_study_plan_by_user_and_id(db: Session, user_id: int, plan_id: int) -> "StudyPlanRecord | None":
+    from docops.db.models import StudyPlanRecord
+    return (
+        db.query(StudyPlanRecord)
+        .filter(StudyPlanRecord.user_id == user_id, StudyPlanRecord.id == plan_id)
+        .first()
+    )
+
+
+def delete_study_plan_record(db: Session, plan: "StudyPlanRecord") -> None:
+    db.delete(plan)
+    db.commit()
+
+
 def update_flashcard_ease(db: Session, card_id: int, ease: int) -> "FlashcardItem | None":
     from docops.db.models import FlashcardItem
     from datetime import datetime, timezone, timedelta

@@ -49,6 +49,8 @@ Intents possíveis:
 - "create_task"          → criar tarefa simples sem prazo específico
 - "list_tasks"           → listar tarefas pendentes
 - "flashcard_hint"       → pede flashcards de um documento sem cascade
+- "cascade_create_note"  → usuário quer criar/salvar uma anotação, nota ou lembrete textual
+- "cascade_create_summary" → usuário quer fazer um resumo de um documento específico
 - "rag"                  → pergunta sobre documentos, dúvida, QA — deve ir pro RAG
 
 Regras:
@@ -56,6 +58,8 @@ Regras:
 - Se mencionar prova/exame/teste + data → "cascade_study_event"
 - Se mencionar "plano de estudos", "cronograma de estudos", "me ajuda a estudar [doc]", "estudar [doc] até [data]" → "cascade_study_plan"
 - Se mencionar entrega/prazo/deadline de projeto/trabalho + data → "cascade_task_deadline"
+- Se mencionar "cria uma nota", "salva essa anotação", "anota isso", "registra isso" → "cascade_create_note"
+- Se mencionar "resumo de", "resumir [doc]", "faz um resumo", "sumarize" → "cascade_create_summary"
 - Datas relativas: "amanhã"=+1d, "depois de amanhã"=+2d, "semana que vem"=+7d, "próxima semana"=+7d
 - Se não houver data clara, deadline_iso = null
 - doc_hint: nome ou parte do nome do documento mencionado, null se não mencionado
@@ -63,6 +67,7 @@ Regras:
 - task_title: título limpo da tarefa (começa com verbo), null se não aplicável
 - deck_hint: parte do nome do deck/documento para flashcards
 - hours_per_day: horas por dia de estudo mencionadas (número float), null se não mencionado
+- content: conteúdo ou texto da nota que o usuário quer salvar, null se não especificado
 
 Formato de resposta:
 {{
@@ -74,7 +79,8 @@ Formato de resposta:
     "deck_hint": "<string ou null>",
     "deadline_iso": "<YYYY-MM-DD ou null>",
     "deadline_label": "<descrição legível da data ou null>",
-    "hours_per_day": "<float ou null>"
+    "hours_per_day": "<float ou null>",
+    "content": "<string ou null>"
   }}
 }}
 
@@ -632,25 +638,117 @@ def _exec_cascade_study_plan(entities: dict, user_id: int, db: Session) -> dict:
     except Exception as exc:
         logger.error("Falha ao gerar plano de estudos: %s", exc)
         return {
-            "answer": "Ocorreu um erro ao gerar o plano de estudos. Tente pela [página de Documentos](/docs).",
+            "answer": "Ocorreu um erro ao gerar o plano de estudos. Tente pela [página de Plano de Estudos](/study-plan).",
             "intent": "cascade_study_plan",
         }
+
+    # Salva plano no banco
+    try:
+        from docops.db import crud as _crud
+        plan_record = _crud.create_study_plan_record(
+            db,
+            user_id=user_id,
+            titulo=result["titulo"],
+            doc_name=matched_doc.file_name,
+            plan_text=result["plan_text"],
+            tasks_created=result["tasks_created"],
+            reminders_created=result["reminders_created"],
+            sessions_count=result["sessions_count"],
+            deck_id=result["deck_id"],
+            hours_per_day=hours_per_day,
+            deadline_date=deadline_iso,
+        )
+        logger.info("Cascade study plan: plano salvo (id=%d)", plan_record.id)
+    except Exception as exc:
+        logger.warning("Falha ao salvar plano de estudos no cascade: %s", exc)
 
     sessions = result["sessions_count"]
     tasks = result["tasks_created"]
     deck_note = " + flashcards criados" if result["deck_id"] else ""
+    conflicts = result.get("conflicts", [])
 
     answer = (
         f"📚 Plano de estudos criado para **{matched_doc.file_name}**!\n\n"
         f"- ✅ **{tasks} tarefas** por tópico criadas\n"
         f"- 📅 **{sessions} sessões de estudo** no calendário ({hours_per_day:.0f}h/dia){deck_note}\n"
         f"- Prazo: **{deadline.strftime('%d/%m/%Y')}**\n\n"
-        f"[Ver Tarefas →](/tasks) · [Ver Calendário →](/schedule)"
+        f"[Ver Plano →](/study-plan) · [Ver Tarefas →](/tasks) · [Ver Calendário →](/schedule)"
     )
     if result["deck_id"]:
         answer += " · [Flashcards →](/flashcards)"
 
+    if conflicts:
+        conflict_items = "\n".join(
+            f"  - {c['date']}: sessão {c['session_time']} conflita com **{c['conflicting_with']}** ({c['conflicting_time']})"
+            for c in conflicts[:3]
+        )
+        answer += f"\n\n⚠️ **{len(conflicts)} conflito(s) de horário detectado(s):**\n{conflict_items}"
+        answer += "\nVerifique seu [Calendário →](/schedule) para ajustar se necessário."
+
     return {"answer": answer, "intent": "cascade_study_plan"}
+
+
+# ---------------------------------------------------------------------------
+# Cascade: Criar Nota
+# ---------------------------------------------------------------------------
+
+def _exec_cascade_create_note(entities: dict, user_id: int, db: Session, original_message: str) -> dict:
+    """Cria uma nota com o conteúdo fornecido pelo usuário."""
+    from docops.db import crud
+
+    topic = entities.get("topic") or entities.get("task_title") or "Nota"
+    content_raw = entities.get("content") or ""
+
+    # Se o usuário não forneceu conteúdo, usa a mensagem original como corpo
+    if not content_raw:
+        content_raw = original_message
+
+    title = f"Nota: {topic}"
+    try:
+        note = crud.create_note_record(
+            db,
+            user_id=user_id,
+            title=title,
+            content=content_raw,
+        )
+        return {
+            "answer": (
+                f"📝 Nota criada: **{note.title}**\n\n"
+                f"[Ver Notas →](/notes)"
+            ),
+            "intent": "cascade_create_note",
+        }
+    except Exception as exc:
+        logger.error("Falha ao criar nota: %s", exc)
+        return {
+            "answer": "Não foi possível criar a nota. Tente pela [página de Notas](/notes).",
+            "intent": "cascade_create_note",
+        }
+
+
+def _exec_cascade_create_summary(entities: dict, user_id: int, db: Session) -> dict:
+    """Orienta o usuário a criar um resumo via página de Artefatos."""
+    doc_hint = entities.get("doc_hint") or ""
+
+    if doc_hint:
+        return {
+            "answer": (
+                f"📄 Para criar um resumo de **{doc_hint}**, acesse [Artefatos →](/artifacts) "
+                f"e clique em **Resumir Documento**. Você pode escolher:\n\n"
+                f"- **Resumo Breve** — síntese concisa com os pontos principais\n"
+                f"- **Resumo Aprofundado** — análise detalhada seção por seção\n\n"
+                f"O resumo será salvo automaticamente em seus artefatos."
+            ),
+            "intent": "cascade_create_summary",
+        }
+    return {
+        "answer": (
+            "📄 Para criar um resumo de um documento, acesse [Artefatos →](/artifacts) "
+            "e clique em **Resumir Documento**.\n\n"
+            "Você pode escolher entre Resumo Breve e Resumo Aprofundado."
+        ),
+        "intent": "cascade_create_summary",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -663,7 +761,7 @@ _SIMPLE_INTENTS = {"create_task", "list_tasks", "flashcard_hint"}
 _PASSTHROUGH_INTENTS = {"rag", "calendar"}
 
 
-def maybe_orchestrate(message: str, user_id: int, db: Session) -> dict | None:
+def maybe_orchestrate(message: str, user_id: int, db: Session) -> dict | None:  # noqa: C901
     """Tenta orquestrar a mensagem com parser LLM + cascades.
 
     Returns:
@@ -711,6 +809,12 @@ def maybe_orchestrate(message: str, user_id: int, db: Session) -> dict | None:
 
     if intent == "schedule_fc_reviews":
         return _exec_schedule_fc_reviews(entities, user_id, db)
+
+    if intent == "cascade_create_note":
+        return _exec_cascade_create_note(entities, user_id, db, message)
+
+    if intent == "cascade_create_summary":
+        return _exec_cascade_create_summary(entities, user_id, db)
 
     # Ações simples — delega pro action_router que já funciona bem com regex
     if intent in _SIMPLE_INTENTS:
