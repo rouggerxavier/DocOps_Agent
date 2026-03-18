@@ -99,7 +99,7 @@ function StatCard({
 }: {
   title: string
   value: string | number
-  icon: React.ElementType
+  icon: React.ComponentType<{ className?: string }>
   description?: string
   loading?: boolean
   accent?: 'green' | 'blue' | 'yellow'
@@ -135,7 +135,7 @@ function QuickAction({
   to, icon: Icon, label, description, color,
 }: {
   to: string
-  icon: React.ElementType
+  icon: React.ComponentType<{ className?: string }>
   label: string
   description: string
   color: string

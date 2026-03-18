@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type Column = { key: ReadingStatus; label: string; icon: React.ElementType; color: string; bg: string }
+type Column = { key: ReadingStatus; label: string; icon: React.ComponentType<{ className?: string }>; color: string; bg: string }
 
 const COLUMNS: Column[] = [
   { key: 'to_read',  label: 'Para Ler',   icon: Clock,        color: 'text-zinc-400',   bg: 'bg-zinc-800/50' },
