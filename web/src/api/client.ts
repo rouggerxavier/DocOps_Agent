@@ -459,6 +459,29 @@ export const apiClient = {
   createStudyPlan: (topic: string, days: number, docNames: string[]): Promise<StudyPlanResponse> =>
     api.post('/api/studyplan', { topic, days, doc_names: docNames }).then(r => r.data),
 
+  // ── Pipeline ────────────────────────────────────────────────────────────────
+
+  digestDocument: (
+    docName: string,
+    options?: { generateFlashcards?: boolean; extractTasks?: boolean; numCards?: number; maxTasks?: number }
+  ): Promise<{ summary: string; deck_id: number | null; tasks_created: number; task_titles: string[] }> =>
+    api.post('/api/pipeline/digest', {
+      doc_name: docName,
+      generate_flashcards: options?.generateFlashcards ?? true,
+      extract_tasks: options?.extractTasks ?? true,
+      num_cards: options?.numCards ?? 10,
+      max_tasks: options?.maxTasks ?? 8,
+    }).then(r => r.data),
+
+  extractTasksFromDoc: (
+    docName: string,
+    maxTasks?: number
+  ): Promise<{ tasks_created: number; titles: string[] }> =>
+    api.post('/api/pipeline/extract-tasks', {
+      doc_name: docName,
+      max_tasks: maxTasks ?? 10,
+    }).then(r => r.data),
+
   // ── Ingest Clip & Photo ─────────────────────────────────────────────────────
 
   ingestClip: (text: string, title: string): Promise<IngestResponse> =>

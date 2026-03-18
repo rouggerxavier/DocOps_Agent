@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { FileText, BookOpen, GitCompare, Loader2, Search, Download, Trash2 } from 'lucide-react'
+import { FileText, BookOpen, GitCompare, Loader2, Search, Download, Trash2, Zap, CheckSquare, Brain } from 'lucide-react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import { Card, CardContent } from '@/components/ui/card'
@@ -299,11 +299,165 @@ function CompareDialog({
   )
 }
 
+function SmartDigestDialog({ doc, onClose }: { doc: string; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [genFlashcards, setGenFlashcards] = useState(true)
+  const [extractTasks, setExtractTasks] = useState(true)
+  const [numCards, setNumCards] = useState(10)
+  const [result, setResult] = useState<{
+    summary: string
+    deck_id: number | null
+    tasks_created: number
+    task_titles: string[]
+  } | null>(null)
+
+  const mutation = useMutation({
+    mutationFn: () =>
+      apiClient.digestDocument(doc, {
+        generateFlashcards: genFlashcards,
+        extractTasks,
+        numCards,
+        maxTasks: 8,
+      }),
+    onSuccess: data => {
+      setResult(data)
+      if (data.deck_id) qc.invalidateQueries({ queryKey: ['flashcard-decks'] })
+      if (data.tasks_created > 0) qc.invalidateQueries({ queryKey: ['tasks'] })
+      toast.success('Smart Digest concluído!')
+    },
+    onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro no Smart Digest'),
+  })
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+      <div className="w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
+          <div className="flex items-center gap-2">
+            <Zap className="h-5 w-5 text-amber-400" />
+            <h2 className="font-semibold text-zinc-100">Smart Digest: {doc}</h2>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onClose}>✕</Button>
+        </div>
+        <div className="p-6 space-y-4">
+          {!result && !mutation.isPending && (
+            <>
+              <p className="text-sm text-zinc-400">
+                Gera resumo analítico, cria flashcards e extrai tarefas do documento em uma operação.
+              </p>
+              <div className="space-y-3">
+                <label className="flex items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 cursor-pointer hover:border-zinc-600 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={genFlashcards}
+                    onChange={e => setGenFlashcards(e.target.checked)}
+                    className="h-4 w-4 accent-blue-500"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-zinc-200">Gerar Flashcards</p>
+                    <p className="text-xs text-zinc-500">Cria um deck de flashcards para revisão espaçada</p>
+                  </div>
+                </label>
+                {genFlashcards && (
+                  <div className="ml-7 flex items-center gap-3">
+                    <span className="text-xs text-zinc-400 shrink-0">Quantidade de cards:</span>
+                    <input
+                      type="range"
+                      min={5}
+                      max={30}
+                      step={5}
+                      value={numCards}
+                      onChange={e => setNumCards(Number(e.target.value))}
+                      className="flex-1"
+                    />
+                    <span className="text-xs font-medium text-blue-400 w-8 text-right">{numCards}</span>
+                  </div>
+                )}
+                <label className="flex items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 cursor-pointer hover:border-zinc-600 transition-colors">
+                  <input
+                    type="checkbox"
+                    checked={extractTasks}
+                    onChange={e => setExtractTasks(e.target.checked)}
+                    className="h-4 w-4 accent-emerald-500"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-zinc-200">Extrair Tarefas</p>
+                    <p className="text-xs text-zinc-500">Identifica ações, exercícios e entregas no documento</p>
+                  </div>
+                </label>
+              </div>
+              <Button onClick={() => mutation.mutate()} className="w-full bg-amber-600 hover:bg-amber-700 text-white">
+                <Zap className="mr-2 h-4 w-4" />
+                Executar Smart Digest
+              </Button>
+            </>
+          )}
+
+          {mutation.isPending && (
+            <div className="flex flex-col items-center justify-center gap-3 py-10">
+              <Brain className="h-8 w-8 animate-pulse text-amber-400" />
+              <span className="text-sm text-zinc-400">Analisando documento...</span>
+              <span className="text-xs text-zinc-600">Gerando resumo, flashcards e extraindo tarefas</span>
+            </div>
+          )}
+
+          {result && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                {result.deck_id && (
+                  <div className="rounded-lg border border-blue-800 bg-blue-950/30 p-3">
+                    <p className="text-xs text-blue-400 font-medium mb-1">Flashcards criados</p>
+                    <p className="text-lg font-bold text-blue-300">{numCards} cards</p>
+                    <a href="/flashcards" className="text-xs text-blue-500 hover:underline">Ver em Flashcards →</a>
+                  </div>
+                )}
+                {result.tasks_created > 0 && (
+                  <div className="rounded-lg border border-emerald-800 bg-emerald-950/30 p-3">
+                    <p className="text-xs text-emerald-400 font-medium mb-1">Tarefas extraídas</p>
+                    <p className="text-lg font-bold text-emerald-300">{result.tasks_created} tarefas</p>
+                    <a href="/tasks" className="text-xs text-emerald-500 hover:underline">Ver em Tarefas →</a>
+                  </div>
+                )}
+              </div>
+              {result.task_titles.length > 0 && (
+                <div>
+                  <p className="text-xs font-medium text-zinc-400 mb-2 flex items-center gap-1">
+                    <CheckSquare className="h-3 w-3" /> Tarefas criadas:
+                  </p>
+                  <ul className="space-y-1">
+                    {result.task_titles.map((t, i) => (
+                      <li key={i} className="text-xs text-zinc-300 flex items-start gap-2">
+                        <span className="text-emerald-500 mt-0.5">✓</span>
+                        {t}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <div>
+                <p className="text-xs font-medium text-zinc-400 mb-2 flex items-center gap-1">
+                  <BookOpen className="h-3 w-3" /> Resumo:
+                </p>
+                <div className="prose prose-invert prose-xs max-w-none max-h-60 overflow-y-auto rounded-lg bg-zinc-800 p-3">
+                  <ReactMarkdown>{result.summary}</ReactMarkdown>
+                </div>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => { setResult(null); mutation.reset() }} className="w-full">
+                Fazer novamente
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function Docs() {
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
   const [summarizeDoc, setSummarizeDoc] = useState<string | null>(null)
   const [compareDoc, setCompareDoc] = useState<string | null>(null)
+  const [digestDoc, setDigestDoc] = useState<string | null>(null)
 
   const { data: docs, isLoading, error } = useQuery<DocItem[]>({
     queryKey: ['docs'],
@@ -393,6 +547,16 @@ export function Docs() {
                   <Button
                     variant="ghost"
                     size="sm"
+                    onClick={() => setDigestDoc(doc.file_name)}
+                    className="text-amber-400 hover:text-amber-300"
+                    title="Smart Digest: resumo + flashcards + tarefas"
+                  >
+                    <Zap className="h-4 w-4" />
+                    Digest
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => setSummarizeDoc(doc.file_name)}
                   >
                     <BookOpen className="h-4 w-4" />
@@ -438,6 +602,9 @@ export function Docs() {
           allDocs={docs}
           onClose={() => setCompareDoc(null)}
         />
+      )}
+      {digestDoc && (
+        <SmartDigestDialog doc={digestDoc} onClose={() => setDigestDoc(null)} />
       )}
     </div>
   )

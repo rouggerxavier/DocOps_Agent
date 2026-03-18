@@ -21,6 +21,7 @@ from docops.api.routes import (
     ingest,
     jobs,
     notes,
+    pipeline,
     studyplan,
     summarize,
     tasks,
@@ -77,6 +78,7 @@ def create_app() -> FastAPI:
     app.include_router(briefing.router, prefix=prefix, tags=["briefing"], dependencies=_auth)
     app.include_router(flashcards.router, prefix=prefix, tags=["flashcards"], dependencies=_auth)
     app.include_router(studyplan.router, prefix=prefix, tags=["studyplan"], dependencies=_auth)
+    app.include_router(pipeline.router, prefix=prefix, tags=["pipeline"], dependencies=_auth)
 
     # ── Servir frontend React (web/dist/) ────────────────────────────────────
     # Resolve relativo à raiz do projeto (dois níveis acima de docops/api/)
