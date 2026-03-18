@@ -1,10 +1,14 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
   BookOpen, MessageSquare, Layers, ListTodo, KanbanSquare,
   GraduationCap, Zap, FileText, StickyNote, CalendarDays,
-  ArrowRight, Brain,
+  ArrowRight, Brain, Play, Loader2, CheckCircle2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { BackgroundWrapper } from '@/components/BackgroundWrapper'
+import { ParticlesBackground } from '@/components/ParticlesBackground'
 
 const FEATURES = [
   {
@@ -78,20 +82,49 @@ const STEPS = [
   { n: '03', title: 'Acompanhe o progresso', desc: 'Kanban de leitura, análise de gaps, revisão espaçada e pergunta diária mantêm seu aprendizado ativo e organizado.' },
 ]
 
-export function Landing() {
-  return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      {/* Background */}
-      <div className="pointer-events-none fixed inset-0 overflow-hidden">
-        <div className="absolute -top-60 -left-60 h-[700px] w-[700px] rounded-full bg-blue-700/15 blur-[140px]" />
-        <div className="absolute top-1/3 -right-40 h-[500px] w-[500px] rounded-full bg-violet-700/10 blur-[120px]" />
-        <div className="absolute -bottom-40 left-1/3 h-[400px] w-[400px] rounded-full bg-blue-500/8 blur-[100px]" />
-        <div
-          className="absolute inset-0 opacity-[0.025]"
-          style={{ backgroundImage: 'radial-gradient(circle, #a1a1aa 1px, transparent 1px)', backgroundSize: '32px 32px' }}
-        />
-      </div>
+const DEMO_RESULTS = [
+  {
+    icon: ListTodo,
+    color: 'text-orange-400',
+    border: 'border-orange-500/30',
+    bg: 'bg-orange-500/10',
+    title: 'Tarefas criadas',
+    items: ['Revisar capítulo 3 — Redes Neurais', 'Resolver exercícios de backpropagation', 'Preparar resumo para a prova'],
+  },
+  {
+    icon: Layers,
+    color: 'text-amber-400',
+    border: 'border-amber-500/30',
+    bg: 'bg-amber-500/10',
+    title: 'Flashcards gerados',
+    items: ['O que é gradient descent?', 'Diferença entre CNN e RNN?', 'O que é overfitting?'],
+  },
+  {
+    icon: CalendarDays,
+    color: 'text-indigo-400',
+    border: 'border-indigo-500/30',
+    bg: 'bg-indigo-500/10',
+    title: 'Agenda organizada',
+    items: ['Seg 10h — Estudo de Redes Neurais', 'Qua 14h — Revisão de Flashcards', 'Sex 09h — Simulado final'],
+  },
+]
 
+export function Landing() {
+  const [demoInput, setDemoInput] = useState('Organize meu estudo de Machine Learning')
+  const [demoState, setDemoState] = useState<'idle' | 'loading' | 'done'>('idle')
+
+  function runDemo() {
+    if (demoState === 'loading') return
+    setDemoState('loading')
+    setTimeout(() => setDemoState('done'), 1200)
+  }
+
+  function resetDemo() {
+    setDemoState('idle')
+  }
+
+  return (
+    <BackgroundWrapper animatedLayer={<ParticlesBackground />}>
       {/* Header */}
       <header className="relative border-b border-zinc-800/60 bg-zinc-950/80 backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
@@ -117,34 +150,61 @@ export function Landing() {
       </header>
 
       {/* Hero */}
-      <section className="relative mx-auto max-w-6xl px-6 pb-24 pt-24 text-center">
-        <div className="inline-flex items-center gap-2 rounded-full border border-blue-800/50 bg-blue-950/40 px-4 py-1.5 text-xs text-blue-300 mb-8">
+      <section className="relative mx-auto max-w-6xl px-6 pb-32 pt-28 text-center">
+        {/* Badge */}
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="inline-flex items-center gap-2 rounded-full border border-blue-700/40 bg-blue-950/50 px-4 py-1.5 text-xs text-blue-300 mb-10 shadow-inner shadow-blue-900/30"
+        >
           <Zap className="h-3 w-3" />
           RAG Local · Gemini + ChromaDB
-        </div>
-        <h1 className="text-5xl font-extrabold tracking-tight text-zinc-50 sm:text-6xl">
-          Seu assistente de
+        </motion.div>
+
+        {/* Headline */}
+        <motion.h1
+          initial={{ opacity: 0, y: 24 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.1 }}
+          className="text-6xl font-black tracking-tight text-zinc-50 sm:text-7xl lg:text-8xl leading-[1.05]"
+        >
+          Transforme documentos
           <br />
-          <span className="bg-gradient-to-r from-blue-400 to-violet-400 bg-clip-text text-transparent">
-            documentos local
+          <span className="bg-gradient-to-r from-blue-400 via-indigo-400 to-violet-400 bg-clip-text text-transparent">
+            em conhecimento
           </span>
-        </h1>
-        <p className="mx-auto mt-6 max-w-2xl text-lg text-zinc-400 leading-relaxed">
+        </motion.h1>
+
+        {/* Subtitle */}
+        <motion.p
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.25 }}
+          className="mx-auto mt-8 max-w-2xl text-xl text-zinc-400 leading-relaxed"
+        >
           Indexe PDFs, vídeos do YouTube e páginas web. Converse com seu acervo, gere flashcards,
           planos de estudo e acompanhe seu aprendizado — tudo privado, rodando na sua máquina.
-        </p>
-        <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
+        </motion.p>
+
+        {/* CTAs */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.4 }}
+          className="mt-12 flex flex-wrap items-center justify-center gap-4"
+        >
           <Link to="/register">
-            <Button size="lg" className="bg-blue-600 hover:bg-blue-500 shadow-xl shadow-blue-600/25 gap-2 text-base px-8">
+            <Button size="lg" className="bg-blue-600 hover:bg-blue-500 shadow-2xl shadow-blue-600/30 gap-2 text-base px-10 h-12">
               Começar agora <ArrowRight className="h-4 w-4" />
             </Button>
           </Link>
           <Link to="/login">
-            <Button size="lg" variant="outline" className="border-zinc-700 text-zinc-300 hover:bg-zinc-800 text-base px-8">
+            <Button size="lg" variant="outline" className="border-zinc-700 text-zinc-300 hover:bg-zinc-800/80 hover:border-zinc-600 text-base px-10 h-12">
               Já tenho conta
             </Button>
           </Link>
-        </div>
+        </motion.div>
       </section>
 
       {/* Features */}
@@ -154,16 +214,24 @@ export function Landing() {
           <p className="mt-3 text-zinc-500">Ferramentas integradas que transformam seus documentos em conhecimento ativo.</p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {FEATURES.map(f => {
+          {FEATURES.map((f, i) => {
             const Icon = f.icon
             return (
-              <div key={f.title} className={`rounded-xl border p-5 space-y-3 ${f.bg}`}>
+              <motion.div
+                key={f.title}
+                initial={{ opacity: 0, y: 24 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: '-40px' }}
+                transition={{ duration: 0.45, delay: i * 0.07 }}
+                whileHover={{ scale: 1.03, transition: { duration: 0.2 } }}
+                className={`rounded-xl border p-5 space-y-3 cursor-pointer backdrop-blur-sm ${f.bg} transition-shadow duration-300 hover:shadow-lg hover:shadow-black/40`}
+              >
                 <div className="flex items-center gap-3">
                   <Icon className={`h-5 w-5 shrink-0 ${f.color}`} />
                   <h3 className="font-semibold text-zinc-100 text-sm">{f.title}</h3>
                 </div>
                 <p className="text-xs text-zinc-400 leading-relaxed">{f.desc}</p>
-              </div>
+              </motion.div>
             )
           })}
         </div>
@@ -185,6 +253,102 @@ export function Landing() {
         </div>
       </section>
 
+      {/* IA em ação */}
+      <section className="relative mx-auto max-w-6xl px-6 pb-28">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: '-60px' }}
+          transition={{ duration: 0.5 }}
+          className="mb-12 text-center"
+        >
+          <h2 className="text-3xl font-bold text-zinc-100">IA em ação</h2>
+          <p className="mt-3 text-zinc-500">Veja como a IA transforma um comando simples em ações concretas.</p>
+        </motion.div>
+
+        {/* Input + botão */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true, margin: '-40px' }}
+          transition={{ duration: 0.5, delay: 0.1 }}
+          className="mx-auto flex max-w-2xl items-center gap-3"
+        >
+          <input
+            type="text"
+            value={demoInput}
+            onChange={e => { setDemoInput(e.target.value); if (demoState === 'done') resetDemo() }}
+            placeholder="Ex: Organize meu estudo de Machine Learning"
+            className="flex-1 rounded-xl border border-zinc-700/60 bg-zinc-900/80 px-5 py-3.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none backdrop-blur-sm transition-colors focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/30"
+            disabled={demoState === 'loading'}
+          />
+          <Button
+            onClick={runDemo}
+            disabled={demoState === 'loading' || !demoInput.trim()}
+            className="h-[50px] gap-2 rounded-xl bg-blue-600 px-6 text-sm font-medium shadow-lg shadow-blue-600/20 hover:bg-blue-500 disabled:opacity-50"
+          >
+            {demoState === 'loading' ? (
+              <><Loader2 className="h-4 w-4 animate-spin" /> Processando...</>
+            ) : demoState === 'done' ? (
+              <><CheckCircle2 className="h-4 w-4" /> Concluído</>
+            ) : (
+              <><Play className="h-4 w-4" /> Executar</>
+            )}
+          </Button>
+        </motion.div>
+
+        {/* Resultado cards */}
+        <div className="mx-auto mt-10 grid max-w-4xl gap-5 md:grid-cols-3">
+          <AnimatePresence>
+            {demoState === 'done' && DEMO_RESULTS.map((r, i) => {
+              const Icon = r.icon
+              return (
+                <motion.div
+                  key={r.title}
+                  initial={{ opacity: 0, y: 30, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                  transition={{ duration: 0.4, delay: i * 0.15 }}
+                  className={`rounded-xl border ${r.border} ${r.bg} p-5 backdrop-blur-sm`}
+                >
+                  <div className="mb-3 flex items-center gap-2.5">
+                    <Icon className={`h-5 w-5 ${r.color}`} />
+                    <h4 className="text-sm font-semibold text-zinc-100">{r.title}</h4>
+                  </div>
+                  <ul className="space-y-2">
+                    {r.items.map((item, j) => (
+                      <motion.li
+                        key={item}
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ duration: 0.3, delay: i * 0.15 + j * 0.08 + 0.2 }}
+                        className="flex items-start gap-2 text-xs text-zinc-400 leading-relaxed"
+                      >
+                        <CheckCircle2 className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${r.color}`} />
+                        {item}
+                      </motion.li>
+                    ))}
+                  </ul>
+                </motion.div>
+              )
+            })}
+          </AnimatePresence>
+        </div>
+
+        {demoState === 'done' && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.8 }}
+            className="mt-6 text-center"
+          >
+            <button onClick={resetDemo} className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
+              Resetar demonstração
+            </button>
+          </motion.div>
+        )}
+      </section>
+
       {/* CTA footer */}
       <section className="relative mx-auto max-w-6xl px-6 pb-24">
         <div className="rounded-2xl border border-blue-800/30 bg-gradient-to-r from-blue-950/40 to-violet-950/30 p-12 text-center">
@@ -203,6 +367,6 @@ export function Landing() {
       <footer className="relative border-t border-zinc-800/60 py-6 text-center text-xs text-zinc-600">
         DocOps Agent · RAG Local · Gemini + ChromaDB
       </footer>
-    </div>
+    </BackgroundWrapper>
   )
 }
