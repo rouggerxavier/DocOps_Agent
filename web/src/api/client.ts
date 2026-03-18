@@ -471,7 +471,7 @@ export const apiClient = {
       extract_tasks: options?.extractTasks ?? true,
       num_cards: options?.numCards ?? 10,
       max_tasks: options?.maxTasks ?? 8,
-    }).then(r => r.data),
+    }, { timeout: 120000 }).then(r => r.data),
 
   extractTasksFromDoc: (
     docName: string,
@@ -480,7 +480,7 @@ export const apiClient = {
     api.post('/api/pipeline/extract-tasks', {
       doc_name: docName,
       max_tasks: maxTasks ?? 10,
-    }).then(r => r.data),
+    }, { timeout: 90000 }).then(r => r.data),
 
   // ── Ingest Clip & Photo ─────────────────────────────────────────────────────
 
