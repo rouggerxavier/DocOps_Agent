@@ -9,17 +9,15 @@ import {
 import { Button } from '@/components/ui/button'
 import { BackgroundWrapper } from '@/components/BackgroundWrapper'
 import { ParticlesBackground } from '@/components/ParticlesBackground'
-import { useAI, type AICategory } from '@/hooks/useAI'
+import { useAI, type AICard, type AICategory } from '@/hooks/useAI'
+import { getDynamicDelay, useDynamicDelay } from '@/lib/stagger'
 
-// ── Animation language ────────────────────────────────────────────────────────
-// Expo-out spring — same curve used by Linear, Vercel, Apple.
-// Fast start, ultra-smooth settle. Applied globally for consistency.
-const EASE = [0.16, 1, 0.3, 1] as const
+// ── Animation constants ───────────────────────────────────────────────────────
 
-// Shared viewport config for all whileInView triggers
+const EASE     = [0.16, 1, 0.3, 1] as const  // expo-out spring — used globally
 const VIEWPORT = { once: true, margin: '-60px' } as const
 
-// ── Data ─────────────────────────────────────────────────────────────────────
+// ── Static data ───────────────────────────────────────────────────────────────
 
 const CARD_STYLES: Record<AICategory, { icon: typeof ListTodo; color: string; border: string; bg: string }> = {
   tasks:       { icon: ListTodo,    color: 'text-orange-400', border: 'border-orange-500/30', bg: 'bg-orange-500/10' },
@@ -31,24 +29,103 @@ const CARD_STYLES: Record<AICategory, { icon: typeof ListTodo; color: string; bo
 }
 
 const FEATURES = [
-  { icon: MessageSquare, color: 'text-blue-400',    bg: 'bg-blue-500/10 border-blue-500/20',    title: 'Chat com RAG',         desc: 'Converse com seus documentos usando recuperação semântica + BM25 híbrido. Respostas com citações rastreáveis.' },
-  { icon: FileText,      color: 'text-violet-400',  bg: 'bg-violet-500/10 border-violet-500/20', title: 'Resumos Inteligentes', desc: 'Resumos breves ou profundos (deep) com pipeline multi-etapas, agrupamento por seção e verificação de grounding.' },
-  { icon: Layers,        color: 'text-amber-400',   bg: 'bg-amber-500/10 border-amber-500/20',  title: 'Flashcards',           desc: 'Gere flashcards automáticos a partir dos seus documentos. Revisão espaçada integrada com agendamento.' },
-  { icon: KanbanSquare,  color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20', title: 'Kanban de Leitura',  desc: 'Organize seus documentos em Para Ler, Lendo e Lido. Análise de gaps identifica tópicos não cobertos.' },
-  { icon: GraduationCap, color: 'text-pink-400',    bg: 'bg-pink-500/10 border-pink-500/20',    title: 'Plano de Estudos',     desc: 'Gere um plano de estudos personalizado baseado nos seus documentos e objetivos de aprendizado.' },
-  { icon: Brain,         color: 'text-cyan-400',    bg: 'bg-cyan-500/10 border-cyan-500/20',    title: 'Pergunta do Dia',      desc: 'Uma pergunta diária gerada por IA a partir dos seus documentos, com avaliação de resposta em tempo real.' },
-  { icon: ListTodo,      color: 'text-orange-400',  bg: 'bg-orange-500/10 border-orange-500/20', title: 'Tarefas & Agenda',    desc: 'Extraia tarefas acionáveis dos seus documentos automaticamente. Calendário integrado com lembretes.' },
-  { icon: StickyNote,    color: 'text-teal-400',    bg: 'bg-teal-500/10 border-teal-500/20',    title: 'Notas com Preview',    desc: 'Editor de notas com preview Markdown em tempo real. Vinculadas ao contexto dos seus documentos.' },
-  { icon: CalendarDays,  color: 'text-indigo-400',  bg: 'bg-indigo-500/10 border-indigo-500/20', title: 'Ingestão Múltipla',   desc: 'PDF, Markdown, CSV, XLSX, texto colado, foto com OCR, URL de página web ou transcrição de YouTube.' },
+  { icon: MessageSquare, color: 'text-blue-400',    bg: 'bg-blue-500/10 border-blue-500/20',     title: 'Chat com RAG',        desc: 'Converse com seus documentos usando recuperação semântica + BM25 híbrido. Respostas com citações rastreáveis.' },
+  { icon: FileText,      color: 'text-violet-400',  bg: 'bg-violet-500/10 border-violet-500/20',  title: 'Resumos Inteligentes',desc: 'Resumos breves ou profundos (deep) com pipeline multi-etapas, agrupamento por seção e verificação de grounding.' },
+  { icon: Layers,        color: 'text-amber-400',   bg: 'bg-amber-500/10 border-amber-500/20',   title: 'Flashcards',           desc: 'Gere flashcards automáticos a partir dos seus documentos. Revisão espaçada integrada com agendamento.' },
+  { icon: KanbanSquare,  color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20',title: 'Kanban de Leitura',   desc: 'Organize seus documentos em Para Ler, Lendo e Lido. Análise de gaps identifica tópicos não cobertos.' },
+  { icon: GraduationCap, color: 'text-pink-400',    bg: 'bg-pink-500/10 border-pink-500/20',     title: 'Plano de Estudos',     desc: 'Gere um plano de estudos personalizado baseado nos seus documentos e objetivos de aprendizado.' },
+  { icon: Brain,         color: 'text-cyan-400',    bg: 'bg-cyan-500/10 border-cyan-500/20',     title: 'Pergunta do Dia',      desc: 'Uma pergunta diária gerada por IA a partir dos seus documentos, com avaliação de resposta em tempo real.' },
+  { icon: ListTodo,      color: 'text-orange-400',  bg: 'bg-orange-500/10 border-orange-500/20', title: 'Tarefas & Agenda',     desc: 'Extraia tarefas acionáveis dos seus documentos automaticamente. Calendário integrado com lembretes.' },
+  { icon: StickyNote,    color: 'text-teal-400',    bg: 'bg-teal-500/10 border-teal-500/20',     title: 'Notas com Preview',    desc: 'Editor de notas com preview Markdown em tempo real. Vinculadas ao contexto dos seus documentos.' },
+  { icon: CalendarDays,  color: 'text-indigo-400',  bg: 'bg-indigo-500/10 border-indigo-500/20', title: 'Ingestão Múltipla',    desc: 'PDF, Markdown, CSV, XLSX, texto colado, foto com OCR, URL de página web ou transcrição de YouTube.' },
 ]
 
 const STEPS = [
   { n: '01', title: 'Insira seus documentos', desc: 'PDF, Markdown, texto, planilhas, fotos, URLs ou vídeos do YouTube são indexados no Chroma com embeddings semânticos.' },
   { n: '02', title: 'Converse e aprenda',      desc: 'Faça perguntas, gere resumos, crie flashcards e planos de estudos — tudo fundamentado nos seus próprios materiais.' },
-  { n: '03', title: 'Acompanhe o progresso',  desc: 'Kanban de leitura, análise de gaps, revisão espaçada e pergunta diária mantêm seu aprendizado ativo e organizado.' },
+  { n: '03', title: 'Acompanhe o progresso',   desc: 'Kanban de leitura, análise de gaps, revisão espaçada e pergunta diária mantêm seu aprendizado ativo e organizado.' },
 ]
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// ── Sub-components (needed so useDynamicDelay can be called per-element) ──────
+
+function FeatureCard({ feature, index }: { feature: typeof FEATURES[0]; index: number }) {
+  const [ref, delay] = useDynamicDelay(index)
+  const Icon = feature.icon
+  return (
+    <motion.div
+      ref={ref}
+      initial={{ opacity: 0, y: 28 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={VIEWPORT}
+      transition={{ duration: 0.65, delay, ease: EASE }}
+      whileHover={{ scale: 1.025, transition: { duration: 0.4, ease: EASE } }}
+      className={`rounded-xl border p-5 space-y-3 cursor-pointer backdrop-blur-sm ${feature.bg} transition-shadow duration-300 hover:shadow-lg hover:shadow-black/40`}
+    >
+      <div className="flex items-center gap-3">
+        <Icon className={`h-5 w-5 shrink-0 ${feature.color}`} />
+        <h3 className="font-semibold text-zinc-100 text-sm">{feature.title}</h3>
+      </div>
+      <p className="text-xs text-zinc-400 leading-relaxed">{feature.desc}</p>
+    </motion.div>
+  )
+}
+
+function StepItem({ step, index }: { step: typeof STEPS[0]; index: number }) {
+  const [ref, delay] = useDynamicDelay(index)
+  return (
+    <motion.div
+      ref={ref}
+      initial={{ opacity: 0, y: 24 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={VIEWPORT}
+      transition={{ duration: 0.7, delay, ease: EASE }}
+      className="space-y-3"
+    >
+      <div className="text-5xl font-black text-zinc-800">{step.n}</div>
+      <h3 className="font-semibold text-zinc-100">{step.title}</h3>
+      <p className="text-sm text-zinc-500 leading-relaxed">{step.desc}</p>
+    </motion.div>
+  )
+}
+
+function ResultCard({ card, index }: { card: AICard; index: number }) {
+  const [ref, cardDelay] = useDynamicDelay(index)
+  const style = CARD_STYLES[card.category]
+  const Icon = style.icon
+  return (
+    <motion.div
+      ref={ref}
+      key={`card-${index}`}
+      initial={{ opacity: 0, y: 32, scale: 0.96 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      exit={{ opacity: 0, y: -8, scale: 0.98, transition: { duration: 0.25, ease: EASE } }}
+      transition={{ duration: 0.6, delay: cardDelay, ease: EASE }}
+      className={`rounded-xl border ${style.border} ${style.bg} p-5 backdrop-blur-sm`}
+    >
+      <div className="mb-3 flex items-center gap-2.5">
+        <Icon className={`h-5 w-5 ${style.color}`} />
+        <h4 className="text-sm font-semibold text-zinc-100">{card.title}</h4>
+      </div>
+      <ul className="space-y-2">
+        {card.items.map((item, j) => (
+          <motion.li
+            key={item}
+            initial={{ opacity: 0, x: -12 }}
+            animate={{ opacity: 1, x: 0 }}
+            // Items stagger after their card's entrance — cardDelay anchors the sequence
+            transition={{ duration: 0.45, delay: cardDelay + getDynamicDelay(j) * 0.6 + 0.1, ease: EASE }}
+            className="flex items-start gap-2 text-xs text-zinc-400 leading-relaxed"
+          >
+            <CheckCircle2 className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${style.color}`} />
+            {item}
+          </motion.li>
+        ))}
+      </ul>
+    </motion.div>
+  )
+}
+
+// ── Page component ────────────────────────────────────────────────────────────
 
 export function Landing() {
   const [demoInput, setDemoInput] = useState('Organize meu estudo de Machine Learning')
@@ -78,14 +155,17 @@ export function Landing() {
         </div>
       </header>
 
-      {/* ── Hero ────────────────────────────────────────────────────────────── */}
+      {/* ── Hero ─────────────────────────────────────────────────────────────
+          Above the fold — uses getDynamicDelay(i) directly (no DOM measurement
+          needed; Y position is always ~0). Sub-linear spacing means Badge→H1
+          has the largest gap, creating impact before the content arrives. */}
       <section className="relative mx-auto max-w-6xl px-6 pb-32 pt-28 text-center">
 
         {/* Badge */}
         <motion.div
           initial={{ opacity: 0, y: 14 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, ease: EASE }}
+          transition={{ duration: 0.7, delay: getDynamicDelay(0), ease: EASE }}
           className="inline-flex items-center gap-2 rounded-full border border-blue-700/40 bg-blue-950/50 px-4 py-1.5 text-xs text-blue-300 mb-10 shadow-inner shadow-blue-900/30"
         >
           <Zap className="h-3 w-3" />
@@ -96,7 +176,7 @@ export function Landing() {
         <motion.h1
           initial={{ opacity: 0, y: 28 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.85, delay: 0.1, ease: EASE }}
+          transition={{ duration: 0.85, delay: getDynamicDelay(1), ease: EASE }}
           className="text-6xl font-black tracking-tight text-zinc-50 sm:text-7xl lg:text-8xl leading-[1.05]"
         >
           Transforme documentos
@@ -110,7 +190,7 @@ export function Landing() {
         <motion.p
           initial={{ opacity: 0, y: 22 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.85, delay: 0.22, ease: EASE }}
+          transition={{ duration: 0.85, delay: getDynamicDelay(2), ease: EASE }}
           className="mx-auto mt-8 max-w-2xl text-xl text-zinc-400 leading-relaxed"
         >
           Indexe PDFs, vídeos do YouTube e páginas web. Converse com seu acervo, gere flashcards,
@@ -121,7 +201,7 @@ export function Landing() {
         <motion.div
           initial={{ opacity: 0, y: 18 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.75, delay: 0.38, ease: EASE }}
+          transition={{ duration: 0.75, delay: getDynamicDelay(3), ease: EASE }}
           className="mt-12 flex flex-wrap items-center justify-center gap-4"
         >
           <Link to="/register">
@@ -137,7 +217,9 @@ export function Landing() {
         </motion.div>
       </section>
 
-      {/* ── Features ────────────────────────────────────────────────────────── */}
+      {/* ── Features ─────────────────────────────────────────────────────────
+          Each FeatureCard measures its own offsetTop so Y-deeper cards get
+          a slightly longer delay — matches the natural scan order. */}
       <section className="relative mx-auto max-w-6xl px-6 pb-24">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -151,33 +233,11 @@ export function Landing() {
         </motion.div>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {FEATURES.map((f, i) => {
-            const Icon = f.icon
-            // Diagonal stagger: row step 0.08 + column step 0.035 — wave from top-left to bottom-right
-            const row = Math.floor(i / 3)
-            const col = i % 3
-            return (
-              <motion.div
-                key={f.title}
-                initial={{ opacity: 0, y: 28 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={VIEWPORT}
-                transition={{ duration: 0.65, delay: row * 0.08 + col * 0.035, ease: EASE }}
-                whileHover={{ scale: 1.025, transition: { duration: 0.4, ease: EASE } }}
-                className={`rounded-xl border p-5 space-y-3 cursor-pointer backdrop-blur-sm ${f.bg} transition-shadow duration-300 hover:shadow-lg hover:shadow-black/40`}
-              >
-                <div className="flex items-center gap-3">
-                  <Icon className={`h-5 w-5 shrink-0 ${f.color}`} />
-                  <h3 className="font-semibold text-zinc-100 text-sm">{f.title}</h3>
-                </div>
-                <p className="text-xs text-zinc-400 leading-relaxed">{f.desc}</p>
-              </motion.div>
-            )
-          })}
+          {FEATURES.map((f, i) => <FeatureCard key={f.title} feature={f} index={i} />)}
         </div>
       </section>
 
-      {/* ── How it works ────────────────────────────────────────────────────── */}
+      {/* ── How it works ──────────────────────────────────────────────────── */}
       <section className="relative mx-auto max-w-6xl px-6 pb-24">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -190,24 +250,11 @@ export function Landing() {
         </motion.div>
 
         <div className="grid gap-8 md:grid-cols-3">
-          {STEPS.map((s, i) => (
-            <motion.div
-              key={s.n}
-              initial={{ opacity: 0, y: 24 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={VIEWPORT}
-              transition={{ duration: 0.7, delay: i * 0.1, ease: EASE }}
-              className="space-y-3"
-            >
-              <div className="text-5xl font-black text-zinc-800">{s.n}</div>
-              <h3 className="font-semibold text-zinc-100">{s.title}</h3>
-              <p className="text-sm text-zinc-500 leading-relaxed">{s.desc}</p>
-            </motion.div>
-          ))}
+          {STEPS.map((s, i) => <StepItem key={s.n} step={s} index={i} />)}
         </div>
       </section>
 
-      {/* ── IA em ação ──────────────────────────────────────────────────────── */}
+      {/* ── IA em ação ────────────────────────────────────────────────────── */}
       <section className="relative mx-auto max-w-6xl px-6 pb-28">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -225,7 +272,7 @@ export function Landing() {
           initial={{ opacity: 0, y: 18 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={VIEWPORT}
-          transition={{ duration: 0.65, delay: 0.12, ease: EASE }}
+          transition={{ duration: 0.65, delay: getDynamicDelay(0), ease: EASE }}
           className="mx-auto flex max-w-2xl items-center gap-3"
         >
           <input
@@ -251,42 +298,12 @@ export function Landing() {
           </Button>
         </motion.div>
 
-        {/* Result cards */}
+        {/* Result cards — each measures its own Y at mount */}
         <div className="mx-auto mt-10 grid max-w-4xl gap-5 md:grid-cols-3">
           <AnimatePresence>
-            {ai.result?.cards.map((card, i) => {
-              const style = CARD_STYLES[card.category]
-              const Icon = style.icon
-              return (
-                <motion.div
-                  key={`card-${i}`}
-                  initial={{ opacity: 0, y: 32, scale: 0.96 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -8, scale: 0.98, transition: { duration: 0.25, ease: EASE } }}
-                  transition={{ duration: 0.6, delay: i * 0.1, ease: EASE }}
-                  className={`rounded-xl border ${style.border} ${style.bg} p-5 backdrop-blur-sm`}
-                >
-                  <div className="mb-3 flex items-center gap-2.5">
-                    <Icon className={`h-5 w-5 ${style.color}`} />
-                    <h4 className="text-sm font-semibold text-zinc-100">{card.title}</h4>
-                  </div>
-                  <ul className="space-y-2">
-                    {card.items.map((item, j) => (
-                      <motion.li
-                        key={item}
-                        initial={{ opacity: 0, x: -12 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        transition={{ duration: 0.45, delay: i * 0.1 + j * 0.06 + 0.18, ease: EASE }}
-                        className="flex items-start gap-2 text-xs text-zinc-400 leading-relaxed"
-                      >
-                        <CheckCircle2 className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${style.color}`} />
-                        {item}
-                      </motion.li>
-                    ))}
-                  </ul>
-                </motion.div>
-              )
-            })}
+            {ai.result?.cards.map((card, i) => (
+              <ResultCard key={`card-${i}`} card={card} index={i} />
+            ))}
           </AnimatePresence>
         </div>
 
@@ -304,7 +321,7 @@ export function Landing() {
         )}
       </section>
 
-      {/* ── CTA footer ──────────────────────────────────────────────────────── */}
+      {/* ── CTA footer ───────────────────────────────────────────────────── */}
       <section className="relative mx-auto max-w-6xl px-6 pb-24">
         <motion.div
           initial={{ opacity: 0, y: 24, scale: 0.98 }}
