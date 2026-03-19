@@ -10,9 +10,51 @@ from docops.logging import get_logger
 from docops.storage.paths import get_user_artifacts_dir
 
 def _markdown_to_pdf(content: str, output_path: Path) -> None:
-    """Convert Markdown text to a PDF file using fpdf2."""
+    """Convert Markdown text to a styled PDF using fpdf2.
+
+    Handles bold (**text**), headings (#/##/###), bullets, inline
+    citations [Fonte N], and renders a clean "Referências" section at
+    the end instead of raw markdown source lines.
+    """
+    import re
+    import unicodedata
+
     from fpdf import FPDF
 
+    # ── regex for inline citations and the Fontes: section ──────────
+    _RE_FONTE = re.compile(r"\s*\[Fonte\s*\d+\]", re.IGNORECASE)
+    _RE_FONTES_HEADER = re.compile(
+        r"^\*{0,2}Fontes:\*{0,2}\s*$", re.IGNORECASE
+    )
+    _RE_FONTE_LINE = re.compile(
+        r"^-\s*\[Fonte\s*\d+\]\s*\*{0,2}(.+?)\*{0,2}\s*(?:—\s*_.*_)?\s*$",
+        re.IGNORECASE,
+    )
+    _RE_BOLD = re.compile(r"\*\*(.+?)\*\*")
+
+    # ── separate body from Fontes: section ──────────────────────────
+    body_lines: list[str] = []
+    references: list[str] = []
+    in_fontes = False
+
+    for raw_line in content.splitlines():
+        if _RE_FONTES_HEADER.match(raw_line.strip()):
+            in_fontes = True
+            continue
+        if in_fontes:
+            m = _RE_FONTE_LINE.match(raw_line.strip())
+            if m:
+                references.append(m.group(1).strip())
+            elif raw_line.strip().startswith("- "):
+                # Fallback: any bullet in the Fontes block
+                cleaned = raw_line.strip().lstrip("- ").strip()
+                cleaned = _RE_BOLD.sub(r"\1", cleaned)
+                if cleaned:
+                    references.append(cleaned)
+            continue
+        body_lines.append(raw_line)
+
+    # ── PDF setup ───────────────────────────────────────────────────
     class _PDF(FPDF):
         def header(self):
             pass
@@ -21,8 +63,6 @@ def _markdown_to_pdf(content: str, output_path: Path) -> None:
     pdf.set_margins(15, 15, 15)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-
-    import unicodedata
 
     def _pick_unicode_fonts() -> tuple[Path | None, Path | None]:
         candidates = [
@@ -59,6 +99,8 @@ def _markdown_to_pdf(content: str, output_path: Path) -> None:
         else:
             heading_style = ""
 
+    has_bold_font = heading_style == "B"
+
     def _fix_mojibake(text: str) -> str:
         markers = ("Ã", "Â", "â", "ð", "�")
         if not any(m in text for m in markers):
@@ -87,7 +129,7 @@ def _markdown_to_pdf(content: str, output_path: Path) -> None:
         result = []
         for word in words:
             if len(word) > 60:
-                result.extend([word[i:i+60] for i in range(0, len(word), 60)])
+                result.extend([word[i : i + 60] for i in range(0, len(word), 60)])
             else:
                 result.append(word)
         return " ".join(result)
@@ -96,9 +138,35 @@ def _markdown_to_pdf(content: str, output_path: Path) -> None:
         pdf.set_x(pdf.l_margin)
         pdf.multi_cell(0, height, text, new_x="LMARGIN", new_y="NEXT")
 
+    def _write_rich_line(text: str, height: int) -> None:
+        """Write a line handling **bold** segments as real bold in the PDF."""
+        segments = _RE_BOLD.split(text)
+        if len(segments) <= 1 or not has_bold_font:
+            # No bold markers or no bold font available — write plain
+            _write_line(_safe(text), height)
+            return
+        # Render segment by segment using multi_cell for proper wrapping.
+        # fpdf2 doesn't support inline style changes inside multi_cell,
+        # so we use write() which flows inline.
+        pdf.set_x(pdf.l_margin)
+        for idx, seg in enumerate(segments):
+            if not seg:
+                continue
+            is_bold = idx % 2 == 1  # odd segments are inside **...**
+            pdf.set_font(font_family, "B" if is_bold else body_style, pdf.font_size_pt)
+            pdf.write(height, _safe(seg))
+        pdf.set_font(font_family, body_style, 11)
+        pdf.ln(height)
+
+    def _strip_citations(text: str) -> str:
+        """Remove [Fonte N] markers from text."""
+        return _RE_FONTE.sub("", text)
+
+    # ── render body ─────────────────────────────────────────────────
     pdf.set_font(font_family, body_style, 11)
 
-    for line in content.splitlines():
+    for line in body_lines:
+        line = _strip_citations(line)
         if line.startswith("# "):
             pdf.set_font(font_family, heading_style, 16)
             _write_line(_safe(line[2:].strip()), 8)
@@ -112,11 +180,29 @@ def _markdown_to_pdf(content: str, output_path: Path) -> None:
             _write_line(_safe(line[4:].strip()), 6)
             pdf.set_font(font_family, body_style, 11)
         elif line.startswith("- ") or line.startswith("* "):
-            _write_line(_safe(f"  - {line[2:].strip()}"), 6)
+            clean = _RE_BOLD.sub(r"\1", line[2:].strip())
+            _write_line(_safe(f"  \u2022 {clean}"), 6)
         elif line.strip() == "":
             pdf.ln(3)
         else:
-            _write_line(_safe(line), 6)
+            _write_rich_line(line, 6)
+
+    # ── render Referências section ──────────────────────────────────
+    if references:
+        pdf.ln(8)
+        pdf.set_draw_color(180, 180, 180)
+        pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+        pdf.ln(5)
+
+        pdf.set_font(font_family, heading_style, 13)
+        _write_line("Referências", 7)
+        pdf.set_font(font_family, body_style, 9)
+        pdf.ln(2)
+
+        for idx, ref in enumerate(references, start=1):
+            ref_clean = _RE_BOLD.sub(r"\1", ref)
+            ref_clean = _RE_FONTE.sub("", ref_clean).strip()
+            _write_line(_safe(f"[{idx}]  {ref_clean}"), 5)
 
     pdf.output(str(output_path))
 
