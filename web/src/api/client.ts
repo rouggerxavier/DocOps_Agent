@@ -8,6 +8,8 @@ export const api = axios.create({
   timeout: 15000, // 15s — evita tela preta se o backend não responder
 })
 
+const INGEST_TIMEOUT_MS = 180000
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 export interface DocItem {
@@ -301,7 +303,7 @@ export const apiClient = {
     api.post('/api/chat', { message, session_id, top_k, doc_names, strict_grounding }, { timeout: 180000 }).then(r => r.data),
 
   ingestPath: (path: string, chunk_size = 0, chunk_overlap = 0): Promise<IngestResponse> =>
-    api.post('/api/ingest', { path, chunk_size, chunk_overlap }).then(r => r.data),
+    api.post('/api/ingest', { path, chunk_size, chunk_overlap }, { timeout: INGEST_TIMEOUT_MS }).then(r => r.data),
 
   ingestUpload: (files: File[], chunk_size = 0, chunk_overlap = 0): Promise<IngestResponse> => {
     const form = new FormData()
@@ -310,6 +312,7 @@ export const apiClient = {
     form.append('chunk_overlap', String(chunk_overlap))
     return api.post('/api/ingest/upload', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: INGEST_TIMEOUT_MS,
     }).then(r => r.data)
   },
 
@@ -573,7 +576,7 @@ export const apiClient = {
   // ── Ingest Clip & Photo ─────────────────────────────────────────────────────
 
   ingestClip: (text: string, title: string): Promise<IngestResponse> =>
-    api.post('/api/ingest/clip', { text, title }).then(r => r.data),
+    api.post('/api/ingest/clip', { text, title }, { timeout: INGEST_TIMEOUT_MS }).then(r => r.data),
 
   ingestPhoto: (file: File, title: string): Promise<IngestResponse> => {
     const form = new FormData()
@@ -581,11 +584,12 @@ export const apiClient = {
     form.append('title', title)
     return api.post('/api/ingest/photo', form, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: INGEST_TIMEOUT_MS,
     }).then(r => r.data)
   },
 
   ingestUrl: (url: string, title?: string): Promise<IngestResponse> =>
-    api.post('/api/ingest/url', { url, title: title ?? '' }, { timeout: 60000 }).then(r => r.data),
+    api.post('/api/ingest/url', { url, title: title ?? '' }, { timeout: INGEST_TIMEOUT_MS }).then(r => r.data),
 
   // ── Daily Question ──────────────────────────────────────────────────────────
 
