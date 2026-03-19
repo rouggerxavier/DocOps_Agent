@@ -19,9 +19,8 @@ venv/
 env/
 
 # Data and artifacts (persisted locally, not committed)
-data/chroma/
-data/bm25/
-data/app.db
+data/
+*.db
 artifacts/
 uploads/
 
@@ -37,6 +36,8 @@ htmlcov/
 .playwright-mcp/
 screenshot_*.png
 test_*.png
+audit_*.png
+dashboard-*.png
 
 # Docs (user's own documents, not committed — keep .gitkeep)
 docs/*
@@ -53,3 +54,9 @@ pip-wheel-metadata/
 AI_REPO_CONTEXT.local.md
 
 CLAUDE.md
+.claude/
+start.ps1
+stop.ps1
+=0.2.2
+/package-lock.json
+*.pdf
