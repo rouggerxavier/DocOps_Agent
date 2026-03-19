@@ -9,7 +9,11 @@ const Z_SPREAD = 6              // depth range — wider = more parallax separat
 const Z_SPREAD_HALF = Z_SPREAD * 0.5
 const PARALLAX_STRENGTH = 1.5   // max world-space offset for nearest particles
 const MOUSE_LERP = 0.08         // smooth mouse interpolation factor
+const ATTRACT_STRENGTH = 0.008  // gentle pull toward cursor
+const ATTRACT_MAX_FORCE = 0.06  // force cap — prevents chaos
+const OFFSET_DAMPING = 0.92     // per-frame velocity decay (lower = heavier feel)
 const CONNECTION_DIST_SQ = CONNECTION_DIST * CONNECTION_DIST
+const REPULSION_RADIUS_SQ = REPULSION_RADIUS * REPULSION_RADIUS
 const MAX_LINES = (PARTICLE_COUNT * (PARTICLE_COUNT - 1)) / 2
 
 // Line base color (blue-violet midpoint)
@@ -34,11 +38,12 @@ function Particles() {
     return () => window.removeEventListener('mousemove', onMove)
   }, [])
 
-  const [positions, colors, basePositions, depthFactors] = useMemo(() => {
+  const [positions, colors, basePositions, depthFactors, offsets] = useMemo(() => {
     const pos = new Float32Array(PARTICLE_COUNT * 3)
     const col = new Float32Array(PARTICLE_COUNT * 3)
     const base = new Float32Array(PARTICLE_COUNT * 3)
     const depth = new Float32Array(PARTICLE_COUNT) // precomputed per-particle parallax weight
+    const offs = new Float32Array(PARTICLE_COUNT * 2) // persistent XY attraction offsets
 
     const blue = new THREE.Color('#3b82f6')
     const violet = new THREE.Color('#8b5cf6')
@@ -63,7 +68,7 @@ function Particles() {
       col[i3 + 1] = tmp.g
       col[i3 + 2] = tmp.b
     }
-    return [pos, col, base, depth]
+    return [pos, col, base, depth, offs]
   }, [])
 
   // Pre-allocated line buffers (reused every frame, never recreated)
@@ -77,8 +82,10 @@ function Particles() {
     const t = clock.getElapsedTime() * 0.15
     const posAttr = pointsRef.current.geometry.attributes.position as THREE.BufferAttribute
     const arr = posAttr.array as Float32Array
-    const mx = mouse.current.x * (viewport.width / 2)
-    const my = mouse.current.y * (viewport.height / 2)
+    const vhw = viewport.width / 2
+    const vhh = viewport.height / 2
+    const mx = mouse.current.x * vhw
+    const my = mouse.current.y * vhh
 
     // ── Smooth mouse tracking for parallax (lerp) ──
     smoothMouse.current.x += (mouse.current.x - smoothMouse.current.x) * MOUSE_LERP
@@ -86,19 +93,44 @@ function Particles() {
     const smx = smoothMouse.current.x
     const smy = smoothMouse.current.y
 
-    // ── Update particle positions (drift + parallax + mouse repulsion) ──
+    // Smooth mouse in world coords (for attraction)
+    const smxW = smx * vhw
+    const smyW = smy * vhh
+
+    // ── Update particle positions (drift + parallax + attraction + repulsion) ──
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       const i3 = i * 3
+      const i2 = i * 2
 
-      const pf = depthFactors[i] * PARALLAX_STRENGTH // precomputed: no div/mul inside loop
+      const pf = depthFactors[i] * PARALLAX_STRENGTH
       arr[i3] = basePositions[i3] + Math.sin(t + i * 0.3) * 0.3 + smx * pf
       arr[i3 + 1] = basePositions[i3 + 1] + Math.cos(t + i * 0.2) * 0.25 + smy * pf
       arr[i3 + 2] = basePositions[i3 + 2] + Math.sin(t * 0.5 + i * 0.1) * 0.15
 
+      // Attraction: gentle pull toward smooth mouse
+      const adx = smxW - arr[i3]
+      const ady = smyW - arr[i3 + 1]
+      const aDist = Math.sqrt(adx * adx + ady * ady)
+      if (aDist > 0.01) {
+        const force = Math.min(ATTRACT_STRENGTH * aDist, ATTRACT_MAX_FORCE)
+        offsets[i2] += (adx / aDist) * force
+        offsets[i2 + 1] += (ady / aDist) * force
+      }
+
+      // Damping — creates weight/lag
+      offsets[i2] *= OFFSET_DAMPING
+      offsets[i2 + 1] *= OFFSET_DAMPING
+
+      // Apply accumulated offset
+      arr[i3] += offsets[i2]
+      arr[i3 + 1] += offsets[i2 + 1]
+
+      // Close-range repulsion (raw mouse — immediate response)
       const dx = arr[i3] - mx
       const dy = arr[i3 + 1] - my
-      const dist = Math.sqrt(dx * dx + dy * dy)
-      if (dist < REPULSION_RADIUS) {
+      const distSqR = dx * dx + dy * dy
+      if (distSqR < REPULSION_RADIUS_SQ) {
+        const dist = Math.sqrt(distSqR)
         const force = (REPULSION_RADIUS - dist) * 0.04
         arr[i3] += (dx / dist) * force
         arr[i3 + 1] += (dy / dist) * force
