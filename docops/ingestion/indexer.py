@@ -8,6 +8,8 @@ chunks with the same ID are skipped (upsert semantics via stable IDs).
 """
 
 import json
+import sqlite3
+import sys
 from copy import deepcopy
 from pathlib import Path
 from typing import List
@@ -20,6 +22,26 @@ from docops.logging import get_logger
 from docops.storage.paths import get_user_collection_name
 
 logger = get_logger("docops.ingestion.indexer")
+
+
+def _ensure_sqlite_compat() -> None:
+    """Ensure sqlite3 is compatible with Chroma on older Linux distros.
+
+    Ubuntu 20.04 ships sqlite3 < 3.35, which is unsupported by Chroma.
+    When needed, swap stdlib sqlite3 with pysqlite3-binary at runtime.
+    """
+    if sqlite3.sqlite_version_info >= (3, 35, 0):
+        return
+
+    try:
+        import pysqlite3
+    except Exception as exc:  # pragma: no cover - exercised only in old sqlite envs
+        raise RuntimeError(
+            "SQLite too old for Chroma (need >= 3.35). Install pysqlite3-binary "
+            "or use a runtime with newer sqlite."
+        ) from exc
+
+    sys.modules["sqlite3"] = pysqlite3
 
 
 # ── Embeddings ────────────────────────────────────────────────────────────────
@@ -45,6 +67,7 @@ def get_vectorstore_for_user(user_id: int, embeddings=None):
         # Legacy/global compatibility path (used by historical tests and CLI).
         return get_vectorstore(embeddings=embeddings)
 
+    _ensure_sqlite_compat()
     from langchain_chroma import Chroma
 
     chroma_dir = config.chroma_dir
@@ -64,6 +87,7 @@ def get_vectorstore(embeddings=None):
 
     Prefer get_vectorstore_for_user() in all authenticated contexts.
     """
+    _ensure_sqlite_compat()
     from langchain_chroma import Chroma
 
     chroma_dir = config.chroma_dir

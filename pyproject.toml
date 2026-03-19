@@ -11,6 +11,7 @@ dependencies = [
     "langchain-chroma>=0.1.0",
     "langgraph>=1.0.0",
     "chromadb>=0.5.0,<0.6.0",
+    "pysqlite3-binary>=0.5.4; platform_system != 'Windows'",
     "pypdf>=4.0.0",
     "openpyxl>=3.1.0",
     "xlrd>=2.0.1",
