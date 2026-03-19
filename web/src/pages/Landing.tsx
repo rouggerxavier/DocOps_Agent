@@ -9,6 +9,16 @@ import {
 import { Button } from '@/components/ui/button'
 import { BackgroundWrapper } from '@/components/BackgroundWrapper'
 import { ParticlesBackground } from '@/components/ParticlesBackground'
+import { useAI, type AICategory } from '@/hooks/useAI'
+
+const CARD_STYLES: Record<AICategory, { icon: typeof ListTodo; color: string; border: string; bg: string }> = {
+  tasks:       { icon: ListTodo,     color: 'text-orange-400', border: 'border-orange-500/30', bg: 'bg-orange-500/10' },
+  flashcards:  { icon: Layers,       color: 'text-amber-400',  border: 'border-amber-500/30',  bg: 'bg-amber-500/10' },
+  schedule:    { icon: CalendarDays,  color: 'text-indigo-400', border: 'border-indigo-500/30', bg: 'bg-indigo-500/10' },
+  summary:     { icon: FileText,      color: 'text-violet-400', border: 'border-violet-500/30', bg: 'bg-violet-500/10' },
+  suggestions: { icon: Zap,           color: 'text-cyan-400',   border: 'border-cyan-500/30',   bg: 'bg-cyan-500/10' },
+  general:     { icon: Brain,         color: 'text-blue-400',   border: 'border-blue-500/30',   bg: 'bg-blue-500/10' },
+}
 
 const FEATURES = [
   {
@@ -82,44 +92,11 @@ const STEPS = [
   { n: '03', title: 'Acompanhe o progresso', desc: 'Kanban de leitura, análise de gaps, revisão espaçada e pergunta diária mantêm seu aprendizado ativo e organizado.' },
 ]
 
-const DEMO_RESULTS = [
-  {
-    icon: ListTodo,
-    color: 'text-orange-400',
-    border: 'border-orange-500/30',
-    bg: 'bg-orange-500/10',
-    title: 'Tarefas criadas',
-    items: ['Revisar capítulo 3 — Redes Neurais', 'Resolver exercícios de backpropagation', 'Preparar resumo para a prova'],
-  },
-  {
-    icon: Layers,
-    color: 'text-amber-400',
-    border: 'border-amber-500/30',
-    bg: 'bg-amber-500/10',
-    title: 'Flashcards gerados',
-    items: ['O que é gradient descent?', 'Diferença entre CNN e RNN?', 'O que é overfitting?'],
-  },
-  {
-    icon: CalendarDays,
-    color: 'text-indigo-400',
-    border: 'border-indigo-500/30',
-    bg: 'bg-indigo-500/10',
-    title: 'Agenda organizada',
-    items: ['Seg 10h — Estudo de Redes Neurais', 'Qua 14h — Revisão de Flashcards', 'Sex 09h — Simulado final'],
-  },
-]
 
 export function Landing() {
   const [demoInput, setDemoInput] = useState('Organize meu estudo de Machine Learning')
-  const [demoState, setDemoState] = useState<'idle' | 'loading' | 'done'>('idle')
-
-  function runDemo() {
-    if (demoState === 'loading') return
-    setDemoState('loading')
-    setTimeout(() => setDemoState('done'), 1200)
-  }
-
-  const resetDemo = () => setDemoState('idle')
+  const ai = useAI()
+  const demoState = ai.loading ? 'loading' : ai.result ? 'done' : 'idle'
 
   return (
     <BackgroundWrapper animatedLayer={<ParticlesBackground />}>
@@ -275,13 +252,13 @@ export function Landing() {
           <input
             type="text"
             value={demoInput}
-            onChange={e => { setDemoInput(e.target.value); if (demoState === 'done') resetDemo() }}
+            onChange={e => { setDemoInput(e.target.value); if (ai.result) ai.reset() }}
             placeholder="Ex: Organize meu estudo de Machine Learning"
             className="flex-1 rounded-xl border border-zinc-700/60 bg-zinc-900/80 px-5 py-3.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none backdrop-blur-sm transition-colors focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/30"
             disabled={demoState === 'loading'}
           />
           <Button
-            onClick={runDemo}
+            onClick={() => ai.run(demoInput)}
             disabled={demoState === 'loading' || !demoInput.trim()}
             className="h-[50px] gap-2 rounded-xl bg-blue-600 px-6 text-sm font-medium shadow-lg shadow-blue-600/20 hover:bg-blue-500 disabled:opacity-50"
           >
@@ -298,23 +275,24 @@ export function Landing() {
         {/* Resultado cards */}
         <div className="mx-auto mt-10 grid max-w-4xl gap-5 md:grid-cols-3">
           <AnimatePresence>
-            {demoState === 'done' && DEMO_RESULTS.map((r, i) => {
-              const Icon = r.icon
+            {ai.result?.cards.map((card, i) => {
+              const style = CARD_STYLES[card.category]
+              const Icon = style.icon
               return (
                 <motion.div
-                  key={r.title}
+                  key={`card-${i}`}
                   initial={{ opacity: 0, y: 30, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   exit={{ opacity: 0, y: -10, scale: 0.95 }}
                   transition={{ duration: 0.4, delay: i * 0.15 }}
-                  className={`rounded-xl border ${r.border} ${r.bg} p-5 backdrop-blur-sm`}
+                  className={`rounded-xl border ${style.border} ${style.bg} p-5 backdrop-blur-sm`}
                 >
                   <div className="mb-3 flex items-center gap-2.5">
-                    <Icon className={`h-5 w-5 ${r.color}`} />
-                    <h4 className="text-sm font-semibold text-zinc-100">{r.title}</h4>
+                    <Icon className={`h-5 w-5 ${style.color}`} />
+                    <h4 className="text-sm font-semibold text-zinc-100">{card.title}</h4>
                   </div>
                   <ul className="space-y-2">
-                    {r.items.map((item, j) => (
+                    {card.items.map((item, j) => (
                       <motion.li
                         key={item}
                         initial={{ opacity: 0, x: -10 }}
@@ -322,7 +300,7 @@ export function Landing() {
                         transition={{ duration: 0.3, delay: i * 0.15 + j * 0.08 + 0.2 }}
                         className="flex items-start gap-2 text-xs text-zinc-400 leading-relaxed"
                       >
-                        <CheckCircle2 className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${r.color}`} />
+                        <CheckCircle2 className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${style.color}`} />
                         {item}
                       </motion.li>
                     ))}
@@ -340,7 +318,7 @@ export function Landing() {
             transition={{ delay: 0.8 }}
             className="mt-6 text-center"
           >
-            <button onClick={resetDemo} className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
+            <button onClick={ai.reset} className="text-xs text-zinc-600 hover:text-zinc-400 transition-colors">
               Resetar demonstração
             </button>
           </motion.div>
