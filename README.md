@@ -1,451 +1,510 @@
 # DocOps Agent
 
-# rodar 
-cd C:\vscode\DocOps_Agent\DocOps_Agent\web
-npm run dev
-
-python -m uvicorn docops.api.app:app
-
-> **Document Operations Agent** Ã¢â‚¬â€ RAG + LangGraph + Google Gemini + Chroma
-
-Agente conversacional que opera sobre seus documentos tÃƒÂ©cnicos usando Retrieval-Augmented Generation (RAG). Indexa PDFs, Markdown e TXT em um Chroma persistente e responde perguntas com citaÃƒÂ§ÃƒÂµes rastreÃƒÂ¡veis, verificaÃƒÂ§ÃƒÂ£o de fundamentaÃƒÂ§ÃƒÂ£o e suporte a mÃƒÂºltiplos intents (QA, resumo, comparaÃƒÂ§ÃƒÂ£o, plano de estudos, artefatos).
+Assistente RAG (Retrieval-Augmented Generation) para documentos, com sumarização profunda, comparação, flashcards, plano de estudos, tarefas, calendário e muito mais.
 
 ---
 
-## PrÃƒÂ©-requisitos
+## Stack
 
-| Requisito | VersÃƒÂ£o |
-|---|---|
-| Python | **3.11 ou 3.12** (ChromaDB requer Ã¢â€°Â¤ 3.13; veja nota abaixo) |
-| Google Gemini API Key | [ai.google.dev](https://ai.google.dev/) |
+### Backend
+| Camada | Tecnologia |
+|--------|-----------|
+| Framework web | FastAPI + Uvicorn |
+| Agente/grafo | LangGraph |
+| LLM | Google Gemini (via `langchain-google-genai`) |
+| Banco vetorial | ChromaDB |
+| Busca léxica | BM25 (`rank-bm25`) |
+| ORM / banco relacional | SQLAlchemy + SQLite (dev) / PostgreSQL (prod) |
+| Autenticação | JWT (`PyJWT` + `bcrypt`) |
+| Leitura de documentos | pypdf, openpyxl, xlrd, odfpy, beautifulsoup4 |
+| CLI | Typer + Rich |
+| Testes | pytest + pytest-asyncio |
 
-> **Nota Python 3.14+:** Se o seu sistema tiver Python 3.14 instalado, crie o venv explicitamente com 3.11 ou 3.12:
-> ```bash
-> py -3.11 -m venv .venv
-> ```
-
----
-
-## InstalaÃƒÂ§ÃƒÂ£o
-
-```bash
-# 1. Clone o repositÃƒÂ³rio
-git clone <repo-url>
-cd docops-agent
-
-# 2. Crie e ative o ambiente virtual (use Python 3.11 ou 3.12)
-py -3.11 -m venv .venv          # Windows
-source .venv/Scripts/activate   # Windows (Git Bash / PowerShell: .venv\Scripts\activate)
-
-# 3. Instale as dependÃƒÂªncias
-pip install -r requirements.txt
-
-# 4. Configure as variÃƒÂ¡veis de ambiente
-cp .env.example .env
-# Edite .env e preencha GEMINI_API_KEY
-```
-
----
-
-## ConfiguraÃƒÂ§ÃƒÂ£o (`.env`)
-
-| VariÃƒÂ¡vel | PadrÃƒÂ£o | DescriÃƒÂ§ÃƒÂ£o |
-|---|---|---|
-| `GEMINI_API_KEY` | **(obrigatÃƒÂ³rio)** | Chave da API Google Gemini |
-| `CHROMA_DIR` | `./data/chroma` | DiretÃƒÂ³rio de persistÃƒÂªncia do Chroma |
-| `DOCS_DIR` | `./docs` | Pasta com documentos a indexar |
-| `ARTIFACTS_DIR` | `./artifacts` | Onde os artefatos gerados sÃƒÂ£o salvos |
-| `TOP_K` | `6` | NÃƒÂºmero de chunks recuperados por query |
-| `CHUNK_SIZE` | `900` | Tamanho de cada chunk (tokens) |
-| `CHUNK_OVERLAP` | `150` | SobreposiÃƒÂ§ÃƒÂ£o entre chunks |
-| `LOG_LEVEL` | `INFO` | NÃƒÂ­vel de log (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
-| `GEMINI_MODEL` | `gemini-2.0-flash` | Modelo Gemini para sÃƒÂ­ntese |
-| *(embedding)* | `models/gemini-embedding-001` | Embedding model (hardcoded, ÃƒÂºnico disponÃƒÂ­vel na API) |
-| `RETRIEVAL_MODE` | `mmr` | Modo de retrieval: `mmr`, `similarity` ou `hybrid` (BM25 + vector) |
-| `MIN_RELEVANCE_SCORE` | `0.2` | Score mÃƒÂ­nimo de relevÃƒÂ¢ncia Ã¢â‚¬â€ chunks abaixo sÃƒÂ£o descartados |
-| `MMR_FETCH_K` | `top_k Ãƒâ€” 4` | Candidatos buscados antes do re-ranking MMR |
-| `MMR_LAMBDA` | `0.5` | BalanÃƒÂ§o MMR: 0 = diversidade mÃƒÂ¡x, 1 = relevÃƒÂ¢ncia mÃƒÂ¡x |
-| `CONTEXT_MAX_CHARS` | `1500` | MÃƒÂ¡x de chars do chunk no contexto do LLM (0 = sem limite) |
-| `MULTI_QUERY` | `false` | Multi-query: reescreve a query em N variaÃƒÂ§ÃƒÂµes para maior recall |
-| `MULTI_QUERY_N` | `3` | NÃƒÂºmero de variaÃƒÂ§ÃƒÂµes de query |
-| `MULTI_QUERY_PER_QUERY_K` | `top_k` | top_k por variaÃƒÂ§ÃƒÂ£o individual |
-| `RERANKER` | `none` | Modo de reranking: `none`, `local` (bag-of-words) ou `llm` (Gemini) |
-| `RERANK_TOP_N` | `top_k` | Documentos a manter apÃƒÂ³s reranking |
-| `BM25_DIR` | `./data/bm25` | DiretÃƒÂ³rio do ÃƒÂ­ndice BM25 persistente |
-| `HYBRID_K_LEX` | `top_k` | NÃƒÂºmero de resultados BM25 no modo hybrid |
-| `HYBRID_ALPHA` | `0.5` | Peso (reservado; RRF usado por padrÃƒÂ£o) |
-| `INGEST_INCREMENTAL` | `false` | Pular re-indexaÃƒÂ§ÃƒÂ£o de chunks inalterados (IDs SHA-256 estÃƒÂ¡veis) |
-| `STRUCTURED_CHUNKING` | `true` | Chunking estruturado por seÃƒÂ§ÃƒÂ£o para MD/TXT |
-| `SEMANTIC_GROUNDING_ENABLED` | `true` | Verificador semÃƒÂ¢ntico claimÃ¢â€ â€™evidence |
-| `GROUNDED_VERIFIER_MODE` | `heuristic` | Modo: `heuristic`, `llm`, `hybrid` |
-| `GROUNDED_VERIFIER_THRESHOLD` | `0.65` | Minimum heuristic support threshold |
-| `GROUNDED_CLAIMS_MODE` | `heuristic` | Claim extraction mode: `heuristic`, `llm`, `hybrid` |
-| `MIN_SUPPORT_RATE` | `0.5` | Minimum support rate before semantic repair/retry |
-| `GROUNDING_REPAIR_MAX_PASSES` | `1` | Maximum number of semantic repair passes |
-| `GROUNDING_RETRIEVAL_MAX_RETRIES` | `1` | Retrieval retries triggered by semantic grounding |
-| `DEBUG_GROUNDING` | `false` | Expose grounding payload in API/CLI debug mode |
-| `EVAL_SUITES_DIR` | `./eval/suites` | DiretÃƒÂ³rio com suites YAML de avaliaÃƒÂ§ÃƒÂ£o |
-| `EVAL_OUTPUT_DIR` | `./artifacts` | DiretÃƒÂ³rio de saÃƒÂ­da dos relatÃƒÂ³rios de eval |
+### Frontend
+| Camada | Tecnologia |
+|--------|-----------|
+| Framework | React 19 + TypeScript |
+| Build | Vite 7 |
+| Roteamento | React Router 7 |
+| UI | Tailwind CSS 4 + Radix UI |
+| Animações | Framer Motion 12 |
+| 3D | React Three Fiber + Three.js |
+| HTTP | Axios + TanStack Query |
+| Testes E2E | Playwright |
 
 ---
 
 ## Arquitetura
 
 ```
-UsuÃƒÂ¡rio
-  Ã¢â€â€š
-  Ã¢â€“Â¼
-CLI (typer/rich)
-  Ã¢â€â€š
-  Ã¢â€“Â¼
-LangGraph Ã¢â‚¬â€ grafo de estados
-  Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ classify_intent   Ã¢â€ â€™ detecta intent (qa/summary/comparison/Ã¢â‚¬Â¦)
-  Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ retrieve          Ã¢â€ â€™ tool_search_docs Ã¢â€ â€™ Chroma MMR/similarity/hybrid + score threshold + reranking
-  Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ synthesize        Ã¢â€ â€™ Gemini LLM + prompt especializado
-  Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ verify_grounding  Ã¢â€ â€™ verifica citaÃƒÂ§ÃƒÂµes e factualidade
-  Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ retry_retrieve    Ã¢â€ â€™ repete com top_k maior se necessÃƒÂ¡rio
-  Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ finalize          Ã¢â€ â€™ monta resposta + seÃƒÂ§ÃƒÂ£o "Fontes:"
+┌─────────────────────────────────────────┐
+│              Frontend (React)           │
+│  Landing · Chat · Docs · Ingest · ...   │
+└──────────────────┬──────────────────────┘
+                   │ HTTP / REST (HTTPS via Vercel rewrite)
+┌──────────────────▼──────────────────────┐
+│            FastAPI  /api/*              │
+│  auth · chat · ingest · summarize · ... │
+└──────┬───────────────────┬──────────────┘
+       │                   │
+┌──────▼──────┐   ┌────────▼────────────────────────┐
+│  SQLite /   │   │         LangGraph Agent          │
+│ PostgreSQL  │   │  classify → retrieve → synthesize│
+│  (users,    │   │       → verify_grounding         │
+│  docs, etc) │   └────────┬────────────────────────┘
+└─────────────┘            │
+                  ┌────────▼────────────────────┐
+                  │        RAG Pipeline          │
+                  │  ChromaDB (vetores por user) │
+                  │  BM25 (léxico por user)      │
+                  │  Hybrid search + reranking   │
+                  └─────────────────────────────┘
 ```
 
-### Fluxo MVP
-
-1. **IngestÃƒÂ£o**: `load_directory/load_file` Ã¢â€ â€™ `split_documents` (IDs SHA-256 estÃƒÂ¡veis) Ã¢â€ â€™ `index_chunks` (Chroma) + `build_bm25_index` (BM25)
-2. **Chat**: query Ã¢â€ â€™ [multi-query rewriting] Ã¢â€ â€™ grafo LangGraph Ã¢â€ â€™ [reranking] Ã¢â€ â€™ resposta com fontes rastreÃƒÂ¡veis
-3. **VerificaÃƒÂ§ÃƒÂ£o**: `verify_grounding` confere citaÃƒÂ§ÃƒÂµes, detecta citaÃƒÂ§ÃƒÂµes fantasmas (`[Fonte N]` > total de chunks), retries automÃƒÂ¡ticos
-
----
-
-## Estrutura de Pastas
+### Fluxo do Grafo LangGraph (QA / brief summary)
 
 ```
-docops-agent/
-Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ docops/
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ __init__.py
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ __main__.py          # python -m docops
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ cli.py               # Comandos CLI (typer)
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ config.py            # Leitura de env vars
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ logging.py           # Logger configurÃƒÂ¡vel via LOG_LEVEL
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ graph/
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ graph.py         # Montagem e execuÃƒÂ§ÃƒÂ£o do grafo LangGraph
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ nodes.py         # NÃƒÂ³s do grafo (funÃƒÂ§ÃƒÂµes de estado)
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ state.py         # AgentState (TypedDict)
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ ingestion/
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ indexer.py       # Chroma persistente (get_vectorstore, index_chunks)
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ loaders.py       # Carregamento de PDF, MD, TXT
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ splitter.py      # Dispatcher + chunking genÃƒÂ©rico (PDF)
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ md_splitter.py   # Chunking por headings (Markdown)
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ txt_splitter.py  # Chunking por heurÃƒÂ­sticas (TXT)
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ grounding/
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ claims.py        # ExtraÃƒÂ§ÃƒÂ£o de claims factuais sem citaÃƒÂ§ÃƒÂ£o
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ support.py       # Verificador claimÃ¢â€ â€™evidence (heurÃƒÂ­stico/LLM/hybrid)
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ rag/
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ citations.py     # build_context_block, build_sources_section (com breadcrumbs)
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ hybrid.py        # BM25 index + Reciprocal Rank Fusion
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ prompts.py       # Prompts para cada intent
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ query_rewrite.py # Multi-query: rewrite_queries, multi_query_retrieve
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ reranker.py      # Reranking: local (BoW) e LLM
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ retriever.py     # retrieve() com multi-query, hybrid, reranking
-Ã¢â€â€š   Ã¢â€â€š   Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ verifier.py      # verify_grounding (citaÃƒÂ§ÃƒÂµes + fantasmas + factualidade)
-Ã¢â€â€š   Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ tools/
-Ã¢â€â€š       Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ doc_tools.py     # tool_search_docs, tool_read_chunk, tool_write_artifact, tool_list_docs
-Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ eval/
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ runner.py            # EvalRunner + mÃƒÂ©tricas (CitationCoverage, SupportRate, Ã¢â‚¬Â¦)
-Ã¢â€â€š   Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ suites/
-Ã¢â€â€š       Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ demo.yaml        # Suite demo com 11 casos (factual, resumo, localizaÃƒÂ§ÃƒÂ£o, abstain)
-Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ tests/
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ test_chroma_ingest.py         # Testes de ingestÃƒÂ£o Chroma com FakeEmbeddings
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ test_ingest.py
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ test_retriever.py
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ test_splitter.py
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ test_structured_splitter.py   # MD/TXT splitters + dispatcher
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ test_semantic_grounding.py    # claims.py + support.py
-Ã¢â€â€š   Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ test_eval.py                  # eval harness (mock agent)
-Ã¢â€â€š   Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ test_verifier.py
-Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ docs/                    # Coloque seus documentos aqui (ignorado pelo git)
-Ã¢â€â€š   Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ .gitkeep
-Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ data/chroma/             # ÃƒÂndice Chroma persistente (gerado em runtime, ignorado pelo git)
-Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ artifacts/               # Artefatos gerados (ignorado pelo git)
-Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ .env.example
-Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ pyproject.toml
-Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ requirements.txt
+classify_intent → retrieve → synthesize → verify_grounding
+                                                ↓
+                                   [retry?] retry_retrieve
+                                                ↓
+                                           finalize → END
+```
+
+### Pipeline Deep Summary (`docops/summarize/pipeline.py`)
+
+```
+collect_ordered_chunks
+      ↓
+clean_chunks            (NFC, null bytes, controles, PUA, ligaduras)
+      ↓
+group_chunks            (section-based ≥70% ou window-based fallback)
+      ↓
+summarize_groups        (1 chamada LLM por grupo, max 6 grupos)
+      ↓
+consolidate_summaries   (1 chamada LLM → visão global)
+      ↓
+select_citation_anchors (1 chunk/grupo + fill uniforme, max 12)
+      ↓
+finalize_deep_summary   (1 chamada LLM com citation_anchors)
+      ↓
+validate_summary_citations  (remove [Fonte N] fantasmas)
+      ↓
+validate_summary_grounding  (overlap de tokens por bloco)
+      ↓
+clean_summary_output
+      ↓
+build_anchor_sources_section
 ```
 
 ---
 
-## Ferramentas (Tools)
-
-| Ferramenta | DescriÃƒÂ§ÃƒÂ£o |
-|---|---|
-| `tool_search_docs(query, top_k)` | Busca chunks relevantes no Chroma (MMR ou similarity + score threshold); retorna `List[Document]` com metadata (chunk_id, file_name, page, source, retrieval_score) |
-| `tool_read_chunk(chunk_id)` | LÃƒÂª um chunk completo por ID direto do Chroma |
-| `tool_write_artifact(filename, content)` | Grava conteÃƒÂºdo em `artifacts/` |
-| `tool_list_docs()` | Lista todos os documentos indexados com contagem de chunks |
-
----
-
-## Structured Chunking
-
-Quando `STRUCTURED_CHUNKING=true` (padrÃƒÂ£o), arquivos MD e TXT sÃƒÂ£o divididos por estrutura de seÃƒÂ§ÃƒÂ£o em vez de apenas por tamanho.
-
-### Markdown (`.md`)
-- Divide por headings ATX (`#`, `##`, `###`, etc.)
-- Cada chunk recebe `section_title` e `section_path` (breadcrumb), ex.: `"Arquitetura > Retrieval > Reranking"`
-- SeÃƒÂ§ÃƒÂµes grandes sÃƒÂ£o subdivididas mantendo os metadados
-
-### TXT (`.txt`)
-- Detecta "headings" por: linhas em CAIXA ALTA, linhas terminando em `:`, numeraÃƒÂ§ÃƒÂ£o `1.` / `1.1`
-- Produz `section_title` e `section_path` quando detectado
-
-### Schema de metadados
-
-Todos os chunks (PDF, MD, TXT) recebem:
-```
-file_type, page, page_start, page_end
-section_title, section_path
-chunk_id (SHA-256 estÃƒÂ¡vel), chunk_index
-```
-
-### Fontes com breadcrumbs
+## Estrutura de Diretórios
 
 ```
-- [Fonte 1] **manual.md Ã¢â‚¬â€ Arquitetura > Retrieval, p. 3** Ã¢â‚¬â€ _snippet_
-```
-
----
-
-## Grounding verifier
-
-O mÃƒÂ³dulo `docops/grounding/` verifica se os trechos citados **suportam** as afirmaÃƒÂ§ÃƒÂµes, nÃƒÂ£o apenas se existem.
-
-### Pipeline
-1. **ExtraÃƒÂ§ÃƒÂ£o de claims** (`claims.py`): frases factuais sem citaÃƒÂ§ÃƒÂ£o `[Fonte N]`
-2. **VerificaÃƒÂ§ÃƒÂ£o de suporte** (`support.py`): heurÃƒÂ­stico (overlap + nÃƒÂºmeros) ou LLM
-3. **Repair pass**: se `CitationSupportRate < MIN_SUPPORT_RATE`, dispara retry
-
-### Modos (`GROUNDED_VERIFIER_MODE`)
-| Modo | DescriÃƒÂ§ÃƒÂ£o |
-|---|---|
-| `heuristic` | Overlap de tokens + consistÃƒÂªncia numÃƒÂ©rica (sem API) |
-| `llm` | Juiz Gemini com output JSON |
-| `hybrid` | HeurÃƒÂ­stico primeiro; LLM sÃƒÂ³ quando UNCLEAR |
-
----
-
-## Evaluation
-
-```bash
-# Suite demo em modo mock (sem API)
-python -m docops.eval --suite demo --mock
-
-# Suite real
-python -m docops.eval --suite demo --retrieval hybrid --rerank on --k 8
-
-# Modo estrito (falha CI se coverage < 100%)
-python -m docops.eval --suite demo --strict
-```
-
-### MÃƒÂ©tricas
-| MÃƒÂ©trica | DescriÃƒÂ§ÃƒÂ£o |
-|---|---|
-| `CitationCoverage` | FraÃƒÂ§ÃƒÂ£o de frases factuais com Ã¢â€°Â¥1 citaÃƒÂ§ÃƒÂ£o `[Fonte N]` |
-| `CitationSupportRate` | FraÃƒÂ§ÃƒÂ£o das citaÃƒÂ§ÃƒÂµes com suporte semÃƒÂ¢ntico SUPPORTED |
-| `AbstentionAccuracy` | Agente abstÃƒÂ©m corretamente quando nÃƒÂ£o hÃƒÂ¡ resposta |
-| `RetrievalRecall proxy` | Termos da pergunta presentes em chunks recuperados |
-| `MustCitePass` | PadrÃƒÂµes obrigatÃƒÂ³rios de citaÃƒÂ§ÃƒÂ£o presentes na resposta |
-
-### Criar uma suite
-
-```yaml
-suite_name: minha_suite
-cases:
-  - id: factual_01
-    question: "Em que ano o produto foi lanÃƒÂ§ado?"
-    tags: [factual, numbers]
-  - id: abstain_01
-    question: "Qual ÃƒÂ© o preÃƒÂ§o?"
-    expected: ""   # agente deve dizer que nÃƒÂ£o encontrou
-    tags: [abstain]
+DocOps_Agent/
+├── docops/
+│   ├── api/
+│   │   ├── app.py              # FastAPI factory + routers
+│   │   ├── routes/             # 16 módulos de rota
+│   │   └── schemas.py          # Todos os modelos Pydantic
+│   ├── auth/
+│   │   ├── dependencies.py     # get_current_user (FastAPI Depends)
+│   │   └── security.py         # JWT encode/decode, hash de senha
+│   ├── config.py               # Singleton config (100+ propriedades)
+│   ├── db/
+│   │   ├── database.py         # Engine, session, init_db()
+│   │   ├── models.py           # 14 modelos ORM
+│   │   └── crud.py             # Operações de banco
+│   ├── graph/
+│   │   ├── graph.py            # build_graph() + run()
+│   │   ├── nodes.py            # 6 funções de nó
+│   │   └── state.py            # AgentState TypedDict
+│   ├── grounding/
+│   │   ├── claims.py           # Extração de claims factuais
+│   │   └── support.py          # Verificação SUPPORTED/UNCLEAR
+│   ├── ingestion/
+│   │   ├── indexer.py          # Persiste chunks no Chroma + BM25
+│   │   ├── loaders.py          # PDF/MD/TXT → Documents
+│   │   ├── md_splitter.py      # Chunking por headings ATX
+│   │   ├── splitter.py         # Dispatcher por file_type
+│   │   └── txt_splitter.py     # Chunking heurístico TXT
+│   ├── rag/
+│   │   ├── citations.py        # build_context_block, build_sources_section
+│   │   ├── hybrid.py           # Busca híbrida (vetor + BM25)
+│   │   ├── prompts.py          # 15+ templates de prompt
+│   │   ├── retriever.py        # retrieve(), retrieve_for_doc()
+│   │   └── verifier.py         # verify_grounding (heurística)
+│   ├── services/
+│   │   └── ownership.py        # require_user_document / require_user_artifact
+│   ├── storage/paths.py        # Caminhos de coleção Chroma por usuário
+│   ├── summarize/
+│   │   ├── pipeline.py         # run_deep_summary() — pipeline multi-etapas
+│   │   └── text_cleaner.py     # Limpeza de chunks e output LLM
+│   └── tools/doc_tools.py      # tool_search_docs, tool_list_docs, tool_write_artifact
+├── eval/                       # Harness de avaliação + suites YAML
+├── tests/                      # pytest
+├── web/                        # Frontend React
+│   └── src/
+│       ├── api/client.ts       # Cliente HTTP (axios)
+│       ├── hooks/              # useAI, useScrollProgress, useDynamicDelay, ...
+│       ├── lib/stagger.ts      # getDynamicDelay (stagger position-aware)
+│       ├── pages/              # 14 páginas React
+│       └── components/         # Layout, Sidebar, UI primitives
+├── vercel.json                 # Rewrites Vercel (SPA + proxy /api/* → Oracle)
+├── docker-compose.yml
+├── Dockerfile
+├── pyproject.toml
+└── .env                        # Não commitado
 ```
 
 ---
 
-## CitaÃƒÂ§ÃƒÂµes e Verificador
+## Modelos de Banco de Dados
 
-- Cada chunk ÃƒÂ© numerado como `[Fonte N]` no contexto enviado ao LLM.
-- O contexto inclui o **texto completo** do chunk (atÃƒÂ© `CONTEXT_MAX_CHARS` caracteres), nÃƒÂ£o apenas um snippet curto.
-- O LLM ÃƒÂ© instruÃƒÂ­do a referenciar `[Fonte N]` na resposta.
-- **Score threshold**: chunks com score abaixo de `MIN_RELEVANCE_SCORE` sÃƒÂ£o descartados.
-- **MMR (Max Marginal Relevance)**: modo padrÃƒÂ£o Ã¢â‚¬â€ prioriza diversidade entre os chunks.
-- **Hybrid search**: BM25 lexical + vector semantic, fusÃƒÂ£o via Reciprocal Rank Fusion (RRF).
-- **Multi-query**: reescreve a query em N variaÃƒÂ§ÃƒÂµes usando o LLM para aumentar recall.
-- **Reranking**: rescore dos chunks via bag-of-words (`local`) ou LLM (`llm`).
-- **Stable IDs**: chunk_id = SHA-256(file_name + index + text), permitindo ingestÃƒÂ£o incremental.
-- **Evidence snippets**: a seÃƒÂ§ÃƒÂ£o Fontes mostra o trecho mais relevante (nÃƒÂ£o apenas o inÃƒÂ­cio).
-- `verify_grounding` conta citaÃƒÂ§ÃƒÂµes, detecta afirmaÃƒÂ§ÃƒÂµes factuais e **citaÃƒÂ§ÃƒÂµes fantasmas** (`[Fonte 9]` com apenas 2 chunks Ã¢â€ â€™ falha).
-- Se falhar: incrementa `top_k` e reexecuta retrieval (atÃƒÂ© `MAX_RETRIES`).
-- Se exceder retries: adiciona disclaimer de confianÃƒÂ§a baixa.
-- Resposta final inclui seÃƒÂ§ÃƒÂ£o **Fontes:** com arquivo, pÃƒÂ¡gina, chunk_id e evidence snippet.
-
----
-
-## Comandos CLI
-
-### IngestÃƒÂ£o
-
-```bash
-# Indexar toda a pasta docs/
-python -m docops ingest --path docs/
-
-# Indexar um arquivo especÃƒÂ­fico
-python -m docops ingest --file docs/manual.pdf
-
-# Com chunk size personalizado
-python -m docops ingest --path docs/ --chunk-size 600 --chunk-overlap 100
-```
-
-### Chat
-
-```bash
-# Iniciar chat interativo com seus documentos
-python -m docops chat
-```
-
-### Listar documentos indexados
-
-```bash
-python -m docops list-docs
-```
-
-### Resumo de documento
-
-```bash
-python -m docops summarize --doc manual.pdf
-python -m docops summarize --doc manual.pdf --save   # salva em artifacts/
-```
-
-### ComparaÃƒÂ§ÃƒÂ£o de documentos
-
-```bash
-python -m docops compare --doc1 v1.pdf --doc2 v2.pdf
-python -m docops compare --doc1 v1.pdf --doc2 v2.pdf --save
-```
-
-### GeraÃƒÂ§ÃƒÂ£o de artefatos
-
-```bash
-python -m docops artifact --type study_plan --topic "Redes Neurais"
-python -m docops artifact --type checklist --topic "Deploy em produÃƒÂ§ÃƒÂ£o" --output deploy_checklist.md
-```
-
-### Evaluation
-
-```bash
-# Rodar suite demo em modo mock (sem chamadas ÃƒÂ  API)
-python -m docops.eval --suite demo --mock
-
-# Rodar com retrieval hÃƒÂ­brido e reranking
-python -m docops.eval --suite demo --retrieval hybrid --rerank on
-
-# Especificar arquivo de saÃƒÂ­da
-python -m docops.eval --suite demo --out artifacts/eval_demo.json
-
-# Ver todos os flags
-python -m docops.eval --help
-```
+| Tabela | Descrição |
+|--------|-----------|
+| `users` | Usuários com hash de senha, email único |
+| `documents` | Registros de documentos indexados por usuário |
+| `artifacts` | Artefatos gerados (resumos, comparações, flashcards) |
+| `reminders` | Lembretes com data/hora de início e fim |
+| `schedules` | Grade horária semanal (dia da semana + horário) |
+| `notes` | Notas pessoais (pinned, Markdown) |
+| `tasks` | Tarefas com status, prioridade, prazo |
+| `task_checklist_items` | Itens de checklist por tarefa |
+| `task_activity_logs` | Log de atividade por tarefa |
+| `flashcard_decks` | Baralhos de flashcards |
+| `flashcard_items` | Cards individuais com algoritmo de repetição espaçada |
+| `study_plans` | Planos de estudo vinculados a documentos |
+| `daily_questions` | Pergunta diária gerada por IA |
+| `reading_status` | Status de leitura por documento (to_read / reading / done) |
 
 ---
 
-## Executando os Testes
+## Endpoints da API
 
-```bash
-# Com o venv ativado
-pytest
+**Base URL:** `/api`
 
-# Ou explicitamente via Python 3.11
-/c/vscode/DocOps_Agent/.venv/Scripts/python.exe -m pytest tests/ -v
+### Autenticação (público)
+```
+POST   /api/register
+POST   /api/login
+GET    /api/me
+GET    /api/health
 ```
 
-Os testes de Chroma (`test_chroma_ingest.py`) usam `FakeEmbeddings` determinÃƒÂ­sticos Ã¢â‚¬â€ nenhuma chamada ÃƒÂ  API Gemini ÃƒÂ© feita.
+### Documentos (autenticado)
+```
+GET    /api/docs
+DELETE /api/docs/{doc_id}
+GET    /api/docs/reading-status
+PATCH  /api/docs/{doc_id}/reading-status
+```
+
+### Ingestão (autenticado)
+```
+POST   /api/ingest          (path local)
+POST   /api/ingest/upload   (upload de arquivo)
+POST   /api/ingest/url      (URL / YouTube)
+POST   /api/ingest/clip     (texto de clipboard)
+POST   /api/ingest/photo    (OCR de imagem)
+```
+
+### Chat & Resumo (autenticado)
+```
+POST   /api/chat
+POST   /api/compare
+POST   /api/summarize       (brief | deep)
+POST   /api/summarize/async
+```
+
+### Artefatos (autenticado)
+```
+POST   /api/artifact
+POST   /api/artifact/async
+GET    /api/artifacts
+GET    /api/artifacts/{filename}
+GET    /api/artifacts/{filename}/pdf
+DELETE /api/artifacts/{filename}
+```
+
+### Calendário & Lembretes (autenticado)
+```
+GET/POST/PUT/DELETE  /api/reminders
+GET/POST/PUT/DELETE  /api/schedules
+GET                  /api/overview
+```
+
+### Notas (autenticado)
+```
+GET/POST/PUT/DELETE  /api/notes
+```
+
+### Tarefas (autenticado)
+```
+GET/POST/PUT/DELETE  /api/tasks
+GET/POST/PUT/DELETE  /api/tasks/{id}/checklist
+GET/POST/DELETE      /api/tasks/{id}/activities
+```
+
+### Flashcards (autenticado)
+```
+GET    /api/flashcards
+POST   /api/flashcards/generate
+GET    /api/flashcards/{deck_id}
+POST   /api/flashcards/review
+POST   /api/flashcards/card/{card_id}/evaluate
+PUT    /api/flashcards/card/{card_id}/difficulty
+DELETE /api/flashcards/{deck_id}
+```
+
+### Pipeline / Estudo (autenticado)
+```
+POST   /api/studyplan
+POST   /api/pipeline/study-plan
+GET    /api/pipeline/study-plans
+DELETE /api/pipeline/study-plans/{plan_id}
+GET    /api/pipeline/daily-question
+POST   /api/pipeline/digest
+POST   /api/pipeline/extract-tasks
+POST   /api/pipeline/gap-analysis
+POST   /api/pipeline/evaluate-answer
+GET    /api/briefing
+GET    /api/jobs/{job_id}
+```
 
 ---
 
-## Autenticação
+## Variáveis de Ambiente
 
-### Configuração rápida
+### Backend (`.env`)
 
-```bash
-# 1. Gere um JWT_SECRET_KEY seguro
-python -c "import secrets; print(secrets.token_hex(32))"
-
-# 2. Adicione ao .env
-JWT_SECRET_KEY=<valor gerado acima>
+#### Obrigatórias
+```env
+GEMINI_API_KEY=          # Chave da API Google Gemini
+JWT_SECRET_KEY=          # Segredo JWT (gerar: python -c "import secrets; print(secrets.token_hex(32))")
 ```
 
-### Banco de dados
-
-Por padrão, o banco é um arquivo SQLite em `./data/app.db`. As tabelas são criadas automaticamente no startup — sem necessidade de rodar migrações em desenvolvimento.
-
-| Variável | Padrão | Descrição |
-|---|---|---|
-| `DATABASE_URL` | `sqlite:///./data/app.db` | URL de conexão SQLAlchemy |
-| `JWT_SECRET_KEY` | **(obrigatório)** | Segredo para assinar tokens JWT |
-| `JWT_ACCESS_TOKEN_EXPIRES_MINUTES` | `60` | Validade do access token (minutos) |
-| `INGEST_ALLOWED_DIRS` | `DOCS_DIR` | Diretórios permitidos para ingest por path |
-
-### Migração SQLite → PostgreSQL
-
-Quando estiver pronto para produção:
-
-```bash
-# 1. Instale o driver
-pip install psycopg2-binary
-
-# 2. Configure o .env
-DATABASE_URL=postgresql+psycopg2://usuario:senha@localhost:5432/docops
-
-# 3. Reinicie o servidor — as tabelas são criadas automaticamente
-python -m uvicorn docops.api.app:app
+#### Banco de Dados
+```env
+DATABASE_URL=sqlite:///./data/app.db   # SQLite (dev) ou postgresql://... (prod)
+JWT_ALGORITHM=HS256
+JWT_ACCESS_TOKEN_EXPIRES_MINUTES=60
 ```
 
-> **Nota:** O projeto usa SQLAlchemy 2.x, então a troca de banco é apenas mudança de `DATABASE_URL`. Nenhum código ORM precisa ser alterado.
+#### Caminhos
+```env
+CHROMA_DIR=./data/chroma
+DOCS_DIR=./docs
+UPLOADS_DIR=./uploads
+ARTIFACTS_DIR=./artifacts
+BM25_DIR=./data/bm25
+```
 
-### Rotas da API de auth
+#### RAG / Retrieval
+```env
+TOP_K=6
+CHUNK_SIZE=900
+CHUNK_OVERLAP=150
+RETRIEVAL_MODE=mmr          # mmr | similarity | hybrid
+MMR_LAMBDA=0.5
+CONTEXT_MAX_CHARS=1500
+MULTI_QUERY=false
+RERANKER=none               # none | local | llm
+HYBRID_ALPHA=0.5
+```
 
-| Método | Rota | Autenticação | Descrição |
-|---|---|---|---|
-| `POST` | `/api/auth/register` | Pública | Cadastra usuário (nome, email, senha ≥8 chars) |
-| `POST` | `/api/auth/login` | Pública | Retorna `access_token` JWT |
-| `GET` | `/api/auth/me` | Bearer token | Dados do usuário logado |
+#### Modelos LLM
+```env
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL_ROUTER_ENABLED=true
+GEMINI_MODEL_COMPLEX=gemini-3-flash-preview
+GEMINI_MODEL_CHEAP=gemini-3.1-flash-lite-preview
+```
 
-Todas as outras rotas (`/api/docs`, `/api/chat`, `/api/ingest`, etc.) exigem `Authorization: Bearer <token>`.
+#### Grounding & Verificação
+```env
+SEMANTIC_GROUNDING_ENABLED=true
+GROUNDED_VERIFIER_MODE=llm       # heuristic | llm | hybrid
+MIN_SUPPORT_RATE=0.5
+MAX_RETRIES=2
+MIN_CITATIONS=2
+```
 
-### Roadmap de segurança (MVP vs Produção)
+#### Ingestão
+```env
+STRUCTURED_CHUNKING=true
+INGEST_INCREMENTAL=false
+```
 
-> O MVP usa JWT em `localStorage` por simplicidade. Para produção, recomendamos:
+#### Pipeline Deep Summary
+```env
+SUMMARY_GROUP_SIZE=8
+SUMMARY_MAX_GROUPS=6
+SUMMARY_SECTION_THRESHOLD=0.70
+SUMMARY_MAX_SOURCES=12
+SUMMARY_GROUNDING_THRESHOLD=0.20
+SUMMARY_GROUNDING_REPAIR=false
+```
 
-| Item | MVP | Produção (futuro) |
-|---|---|---|
-| Token storage | `localStorage` | Cookie `httpOnly` + CSRF token |
-| Refresh token | Não | Sim (token rotation) |
-| Rate limiting | Não | Sim (ex: slowapi) |
-| HTTPS | Responsabilidade do infra | Obrigatório |
-| Senha mínima | 8 caracteres | zxcvbn score + regras de complexidade |
+#### Servidor
+```env
+CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+LOG_LEVEL=INFO
+```
+
+### Frontend (`web/.env.local`)
+```env
+VITE_API_URL=http://localhost:8000
+```
+> Em produção no Vercel, **não configure** `VITE_API_URL` — as chamadas são roteadas via rewrite para o backend.
 
 ---
 
-## Roadmap
+## Como Rodar Localmente
 
-- [x] Interface web (FastAPI + React)
-- [x] Multi-query retrieval
-- [x] Reranking (local + LLM)
-- [x] Hybrid search (BM25 + vector)
-- [x] Stable IDs + incremental ingest
-- [x] Citation improvements (evidence snippets)
-- [x] Better verifier (phantom citations)
-- [x] Structured chunking (MD/TXT heading-aware)
-- [x] Semantic grounding verifier (claimÃ¢â€ â€™evidence)
-- [x] Eval harness with YAML suites and JSON reports
-- [ ] Suporte a DOCX e HTML
-- [ ] Modo de comparaÃƒÂ§ÃƒÂ£o multi-documento expandido
-- [ ] Cache semÃƒÂ¢ntico de queries repetidas
-- [ ] ExportaÃƒÂ§ÃƒÂ£o de sessÃƒÂ£o de chat
+### Pré-requisitos
+- Python 3.11+
+- Node.js 20+
+- Chave da API Google Gemini ([aistudio.google.com](https://aistudio.google.com))
+
+### 1. Clonar e configurar
+
+```bash
+git clone https://github.com/rouggerxavier/DocOps_Agent.git
+cd DocOps_Agent
+```
+
+### 2. Backend
+
+```bash
+# Criar e ativar ambiente virtual
+python -m venv .venv
+source .venv/bin/activate        # Linux/macOS
+.venv\Scripts\activate           # Windows
+
+# Instalar dependências
+pip install -e ".[dev]"
+
+# Configurar variáveis de ambiente
+cp .env.example .env
+# Editar .env: GEMINI_API_KEY e JWT_SECRET_KEY
+
+# Iniciar servidor (cria banco automaticamente na primeira execução)
+python -m uvicorn docops.api.app:app --host 0.0.0.0 --port 8000 --reload
+```
+
+API disponível em: `http://localhost:8000`
+Documentação interativa: `http://localhost:8000/api/docs-ui`
+
+### 3. Frontend
+
+```bash
+cd web
+npm install
+
+# Configurar (opcional — padrão já aponta para localhost:8000)
+echo "VITE_API_URL=http://localhost:8000" > .env.local
+
+npm run dev
+```
+
+Frontend disponível em: `http://localhost:5173`
+
+### 4. Docker Compose (stack completa)
+
+```bash
+docker-compose up --build
+```
+
+- Backend: `http://localhost:8000`
+- Frontend: `http://localhost:5173`
+
+---
+
+## Deploy em Produção
+
+### Frontend — Vercel
+
+1. Conecte o repositório GitHub no Vercel
+2. Configure:
+   - **Root Directory:** *(deixe em branco — usa `vercel.json` na raiz)*
+   - **Build Command:** `cd web && npm install && npm run build`
+   - **Output Directory:** `web/dist`
+3. **Não configure** `VITE_API_URL` — o `vercel.json` já faz o proxy:
+   - `/api/*` → proxied para o backend Oracle (HTTP → rewrite server-side)
+   - Todas as outras rotas → `index.html` (SPA fallback)
+
+### Backend — Oracle Cloud (ou qualquer VM)
+
+```bash
+# No servidor
+git clone https://github.com/rouggerxavier/DocOps_Agent.git
+cd DocOps_Agent
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# Configurar .env com GEMINI_API_KEY, JWT_SECRET_KEY, DATABASE_URL
+
+# Subir com nohup (simples)
+nohup uvicorn docops.api.app:app --host 0.0.0.0 --port 8000 > ~/docops.log 2>&1 &
+
+# Ou configurar como serviço systemd (recomendado para produção)
+```
+
+**Security List Oracle:** libere a porta 8000 (TCP) nas regras de ingress.
+
+### CI/CD — GitHub Actions
+
+O workflow `.github/workflows/deploy-oracle.yml` faz deploy automático no Oracle a cada push em `main` que altere arquivos do backend. Ele:
+1. Conecta via SSH no servidor Oracle
+2. Faz `git pull`
+3. Reinstala dependências
+4. Reinicia o serviço systemd `docops`
+5. Verifica saúde via `/api/health`
+
+---
+
+## Testes
+
+```bash
+# Backend
+pytest tests/
+
+# Frontend E2E
+cd web
+npx playwright test
+```
+
+---
+
+## Páginas do Frontend
+
+| Página | Rota | Descrição |
+|--------|------|-----------|
+| Landing | `/` | Página pública com demo de IA |
+| Login | `/login` | Autenticação |
+| Register | `/register` | Criação de conta |
+| Dashboard | `/dashboard` | Painel principal |
+| Chat | `/chat` | QA sobre documentos |
+| Documentos | `/docs` | Lista + resumo + comparação |
+| Inserção | `/ingest` | Upload de arquivos (PDF, MD, TXT, CSV, XLSX) |
+| Artefatos | `/artifacts` | Visualizar e baixar artefatos gerados |
+| Notas | `/notes` | Notas pessoais em Markdown |
+| Tarefas | `/tasks` | Gerenciador de tarefas com checklist |
+| Calendário | `/schedule` | Lembretes + grade semanal |
+| Flashcards | `/flashcards` | Baralhos com repetição espaçada |
+| Plano de Estudos | `/study-plan` | Criação de planos vinculados a documentos |
+| Kanban de Leitura | `/reading` | Kanban: to_read → reading → done |
+
+---
+
+## Convenções do Projeto
+
+- **Config:** sempre `from docops.config import config` — nunca `os.getenv()` diretamente
+- **Logger:** `from docops.logging import get_logger; logger = get_logger("docops.módulo")`
+- **Imports pesados** (LLM, vectorstore): lazy, dentro das funções — evita lentidão no import
+- **Multi-tenancy:** `user_id` sempre passado para `retrieve`, `retrieve_for_doc`, `get_vectorstore_for_user`
+- **Ownership:** sempre chamar `require_user_document` antes de acessar chunks de um usuário
+- **Testes:** pytest com `monkeypatch` ou `unittest.mock`
