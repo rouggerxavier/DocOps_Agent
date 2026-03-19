@@ -1,0 +1,47 @@
+name: Deploy Oracle Backend
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "docops/**"
+      - "requirements.txt"
+      - "pyproject.toml"
+      - "Dockerfile.backend"
+      - "docker-compose.yml"
+      - ".github/workflows/deploy-oracle.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-oracle-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.ORACLE_HOST }}
+          username: ${{ secrets.ORACLE_USER }}
+          key: ${{ secrets.ORACLE_SSH_KEY }}
+          port: 22
+          script_stop: true
+          command_timeout: 30m
+          script: |
+            set -euo pipefail
+            cd /home/ubuntu/DocOps_Agent
+            git fetch --prune origin main
+            git checkout main
+            git pull --ff-only origin main
+            source .venv/bin/activate
+            pip install -r requirements.txt
+            sudo systemctl restart docops
+            sudo systemctl --no-pager --full status docops | head -n 20
+
+      - name: Healthcheck
+        run: curl -fsS "http://${{ secrets.ORACLE_HOST }}:8000/api/health"
