@@ -31,7 +31,7 @@ export function getDynamicDelay(index: number, yNorm = 0): number {
  * the normalized Y into getDynamicDelay. The ref must be attached to the
  * animated element so the measurement is accurate.
  */
-export function useDynamicDelay(index: number): [RefObject<HTMLDivElement>, number] {
+export function useDynamicDelay(index: number): [RefObject<HTMLDivElement | null>, number] {
   const ref   = useRef<HTMLDivElement>(null)
   const [delay, setDelay] = useState(() => getDynamicDelay(index))
 

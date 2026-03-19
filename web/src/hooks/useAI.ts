@@ -17,25 +17,51 @@ export interface AIResult {
   isMock: boolean
 }
 
-// ── Mock fallback (used when API is unavailable) ──
+// ── Mock fallback (generated dynamically from the prompt topic) ──
 
-const MOCK_CARDS: AICard[] = [
-  {
-    category: 'tasks',
-    title: 'Tarefas criadas',
-    items: ['Revisar capítulo 3 — Redes Neurais', 'Resolver exercícios de backpropagation', 'Preparar resumo para a prova'],
-  },
-  {
-    category: 'flashcards',
-    title: 'Flashcards gerados',
-    items: ['O que é gradient descent?', 'Diferença entre CNN e RNN?', 'O que é overfitting?'],
-  },
-  {
-    category: 'schedule',
-    title: 'Agenda organizada',
-    items: ['Seg 10h — Estudo de Redes Neurais', 'Qua 14h — Revisão de Flashcards', 'Sex 09h — Simulado final'],
-  },
-]
+function extractTopic(prompt: string): string {
+  // Strip common command words to isolate the subject
+  return prompt
+    .replace(/^(quero|preciso|me ajude a?|crie|gere|monte|organize|faça|elabore|liste|resuma)\s+/i, '')
+    .replace(/^(um|uma|o|a|os|as)\s+/i, '')
+    .replace(/\s+(para|sobre|de|do|da|dos|das)\s+/i, ' ')
+    .trim()
+    .slice(0, 60)
+}
+
+function buildMockCards(prompt: string): AICard[] {
+  const topic = extractTopic(prompt) || 'o tema solicitado'
+  const topicCap = topic.charAt(0).toUpperCase() + topic.slice(1)
+  return [
+    {
+      category: 'tasks',
+      title: 'Tarefas criadas',
+      items: [
+        `Estudar fundamentos de ${topic}`,
+        `Criar resumo dos pontos principais de ${topic}`,
+        `Praticar exercícios relacionados a ${topic}`,
+      ],
+    },
+    {
+      category: 'flashcards',
+      title: 'Flashcards gerados',
+      items: [
+        `O que é ${topic}?`,
+        `Quais são os conceitos-chave de ${topic}?`,
+        `Como aplicar ${topic} na prática?`,
+      ],
+    },
+    {
+      category: 'schedule',
+      title: 'Agenda organizada',
+      items: [
+        `Seg — Introdução a ${topicCap}`,
+        `Qua — Aprofundamento em ${topicCap}`,
+        `Sex — Revisão e prática de ${topicCap}`,
+      ],
+    },
+  ]
+}
 
 // ── Response parser ──
 
@@ -175,14 +201,14 @@ export function useAI() {
 
       const cards = parseResponse(response.answer)
       if (cards.length === 0) {
-        setResult({ cards: MOCK_CARDS, raw: response.answer, isMock: true })
+        setResult({ cards: buildMockCards(prompt), raw: response.answer, isMock: true })
       } else {
         setResult({ cards, raw: response.answer, isMock: false })
       }
     } catch {
       if (controller.signal.aborted) return
       await minDelay
-      setResult({ cards: MOCK_CARDS, raw: '', isMock: true })
+      setResult({ cards: buildMockCards(prompt), raw: '', isMock: true })
     } finally {
       if (!controller.signal.aborted) setLoading(false)
     }
