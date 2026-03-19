@@ -3,9 +3,19 @@ import { Canvas, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
 
 const PARTICLE_COUNT = 120
+const REPULSION_RADIUS = 2.5
+const CONNECTION_DIST = 2.5
+const CONNECTION_DIST_SQ = CONNECTION_DIST * CONNECTION_DIST
+const MAX_LINES = (PARTICLE_COUNT * (PARTICLE_COUNT - 1)) / 2
+
+// Line base color (blue-violet midpoint)
+const LINE_R = 0.35
+const LINE_G = 0.42
+const LINE_B = 0.95
 
 function Particles() {
-  const mesh = useRef<THREE.Points>(null!)
+  const pointsRef = useRef<THREE.Points>(null!)
+  const linesRef = useRef<THREE.LineSegments>(null!)
   // Canvas has pointerEvents:none so R3F `pointer` is always 0,0.
   // Track mouse at window level instead.
   const mouse = useRef({ x: 0, y: 0 })
@@ -49,14 +59,21 @@ function Particles() {
     return [pos, col, base]
   }, [])
 
+  // Pre-allocated line buffers (reused every frame, never recreated)
+  const [linePositions, lineColors] = useMemo(
+    () => [new Float32Array(MAX_LINES * 6), new Float32Array(MAX_LINES * 6)],
+    [],
+  )
+
   useFrame(({ clock, viewport }) => {
-    if (!mesh.current) return
+    if (!pointsRef.current || !linesRef.current) return
     const t = clock.getElapsedTime() * 0.15
-    const posAttr = mesh.current.geometry.attributes.position as THREE.BufferAttribute
+    const posAttr = pointsRef.current.geometry.attributes.position as THREE.BufferAttribute
     const arr = posAttr.array as Float32Array
     const mx = mouse.current.x * (viewport.width / 2)
     const my = mouse.current.y * (viewport.height / 2)
 
+    // ── Update particle positions (drift + mouse repulsion) ──
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       const i3 = i * 3
       arr[i3] = basePositions[i3] + Math.sin(t + i * 0.3) * 0.3
@@ -66,31 +83,84 @@ function Particles() {
       const dx = arr[i3] - mx
       const dy = arr[i3 + 1] - my
       const dist = Math.sqrt(dx * dx + dy * dy)
-      if (dist < 2.5) {
-        const force = (2.5 - dist) * 0.04
+      if (dist < REPULSION_RADIUS) {
+        const force = (REPULSION_RADIUS - dist) * 0.04
         arr[i3] += (dx / dist) * force
         arr[i3 + 1] += (dy / dist) * force
       }
     }
     posAttr.needsUpdate = true
+
+    // ── Build dynamic connections between nearby particles ──
+    let lineCount = 0
+    for (let i = 0; i < PARTICLE_COUNT; i++) {
+      const ix = i * 3
+      for (let j = i + 1; j < PARTICLE_COUNT; j++) {
+        const jx = j * 3
+        const dx = arr[ix] - arr[jx]
+        const dy = arr[ix + 1] - arr[jx + 1]
+        const dz = arr[ix + 2] - arr[jx + 2]
+        const distSq = dx * dx + dy * dy + dz * dz
+        if (distSq < CONNECTION_DIST_SQ) {
+          const alpha = 1 - distSq / CONNECTION_DIST_SQ // quadratic fade, no sqrt
+          const off = lineCount * 6
+          // Vertex A
+          linePositions[off] = arr[ix]
+          linePositions[off + 1] = arr[ix + 1]
+          linePositions[off + 2] = arr[ix + 2]
+          // Vertex B
+          linePositions[off + 3] = arr[jx]
+          linePositions[off + 4] = arr[jx + 1]
+          linePositions[off + 5] = arr[jx + 2]
+          // Color faded by distance (additive blending: darker = invisible)
+          const r = LINE_R * alpha
+          const g = LINE_G * alpha
+          const b = LINE_B * alpha
+          lineColors[off] = r;     lineColors[off + 1] = g;     lineColors[off + 2] = b
+          lineColors[off + 3] = r; lineColors[off + 4] = g; lineColors[off + 5] = b
+          lineCount++
+        }
+      }
+    }
+
+    const linePosAttr = linesRef.current.geometry.attributes.position as THREE.BufferAttribute
+    const lineColAttr = linesRef.current.geometry.attributes.color as THREE.BufferAttribute
+    linePosAttr.needsUpdate = true
+    lineColAttr.needsUpdate = true
+    linesRef.current.geometry.setDrawRange(0, lineCount * 2)
   })
 
   return (
-    <points ref={mesh}>
-      <bufferGeometry>
-        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
-        <bufferAttribute attach="attributes-color" args={[colors, 3]} />
-      </bufferGeometry>
-      <pointsMaterial
-        size={0.06}
-        vertexColors
-        transparent
-        opacity={0.6}
-        sizeAttenuation
-        depthWrite={false}
-        blending={THREE.AdditiveBlending}
-      />
-    </points>
+    <group>
+      <points ref={pointsRef}>
+        <bufferGeometry>
+          <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+          <bufferAttribute attach="attributes-color" args={[colors, 3]} />
+        </bufferGeometry>
+        <pointsMaterial
+          size={0.06}
+          vertexColors
+          transparent
+          opacity={0.6}
+          sizeAttenuation
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </points>
+      <lineSegments ref={linesRef}>
+        <bufferGeometry drawRange={{ start: 0, count: 0 }}>
+          <bufferAttribute attach="attributes-position" args={[linePositions, 3]} />
+          <bufferAttribute attach="attributes-color" args={[lineColors, 3]} />
+        </bufferGeometry>
+        <lineBasicMaterial
+          vertexColors
+          transparent
+          opacity={0.4}
+          depthWrite={false}
+          blending={THREE.AdditiveBlending}
+        />
+      </lineSegments>
+    </group>
   )
 }
 

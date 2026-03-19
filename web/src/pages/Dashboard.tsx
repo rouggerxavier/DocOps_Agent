@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation } from '@tanstack/react-query'
 import {
   CalendarClock, FileText, Layers, BookOpen,
   MessageSquare, Clock, ChevronRight, ArrowRight, ScrollText,
@@ -7,7 +7,6 @@ import {
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useMutation } from '@tanstack/react-query'
 import { apiClient, type CalendarOverview, type DocItem, type ArtifactItem, type BriefingResponse, type DailyQuestionResponse, type EvaluateAnswerResponse } from '@/api/client'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
@@ -438,7 +437,7 @@ export function Dashboard() {
             )}
             {!isCalLoading && calendar?.today_reminders.slice(0, 3).map(rem => (
               <div key={rem.id} className="mb-2 last:mb-0 flex items-start gap-2 rounded-lg bg-zinc-800/60 px-3 py-2">
-                <div className="mt-0.5 h-1.5 w-1.5 shrink-0 rounded-full bg-yellow-400 mt-2" />
+                <div className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-yellow-400" />
                 <div>
                   <p className="text-sm text-zinc-200">{rem.title}</p>
                   <p className="text-xs text-zinc-500">
@@ -481,10 +480,7 @@ export function Dashboard() {
                 className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900 px-4 py-3 hover:border-zinc-700 transition-colors"
               >
                 <FileText className="h-4 w-4 shrink-0 text-blue-400" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-zinc-100">{doc.file_name}</p>
-                  <p className="text-xs text-zinc-500">{doc.chunk_count} chunks</p>
-                </div>
+                <p className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-100">{doc.file_name}</p>
                 <span className="shrink-0 rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-500">
                   {doc.chunk_count} chunks
                 </span>

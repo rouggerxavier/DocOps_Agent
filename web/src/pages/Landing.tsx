@@ -119,9 +119,7 @@ export function Landing() {
     setTimeout(() => setDemoState('done'), 1200)
   }
 
-  function resetDemo() {
-    setDemoState('idle')
-  }
+  const resetDemo = () => setDemoState('idle')
 
   return (
     <BackgroundWrapper animatedLayer={<ParticlesBackground />}>

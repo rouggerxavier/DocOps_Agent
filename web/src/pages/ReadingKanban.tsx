@@ -7,7 +7,6 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { apiClient, type DocItem, type ReadingStatus, type GapAnalysisResponse } from '@/api/client'
 import { cn } from '@/lib/utils'
 
-
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 type Column = { key: ReadingStatus; label: string; icon: React.ComponentType<{ className?: string }>; color: string; bg: string }
@@ -22,10 +21,9 @@ const COLUMNS: Column[] = [
 
 function GapAnalysisModal({ onClose }: { onClose: () => void }) {
   const [result, setResult] = useState<GapAnalysisResponse | null>(null)
-  const [docNames] = useState<string[]>([])
 
   const mutation = useMutation({
-    mutationFn: () => apiClient.runGapAnalysis(docNames),
+    mutationFn: () => apiClient.runGapAnalysis([]),
     onSuccess: data => setResult(data),
     onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro na análise'),
   })
