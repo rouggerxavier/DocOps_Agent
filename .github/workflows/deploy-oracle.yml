@@ -42,4 +42,19 @@ jobs:
             pip install -r requirements.txt
             sudo systemctl restart docops
             sudo systemctl --no-pager --full status docops | head -n 20
-            curl -fsS "http://127.0.0.1:8000/api/health"
+            for i in $(seq 1 30); do
+              if curl -fsS "http://127.0.0.1:8000/api/health" >/dev/null; then
+                echo "Healthcheck OK"
+                exit 0
+              fi
+              if ! sudo systemctl is-active --quiet docops; then
+                echo "docops service is not active"
+                sudo journalctl -u docops -n 120 --no-pager || true
+                exit 1
+              fi
+              echo "Waiting for docops startup... attempt $i/30"
+              sleep 2
+            done
+            echo "Healthcheck timed out"
+            sudo journalctl -u docops -n 120 --no-pager || true
+            exit 1
