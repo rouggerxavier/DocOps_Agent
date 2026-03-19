@@ -1,6 +1,7 @@
 import { useRef, useMemo, useEffect } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
 import * as THREE from 'three'
+import { useScrollProgress } from '@/hooks/useScrollProgress'
 
 const PARTICLE_COUNT = 120
 const REPULSION_RADIUS = 2.5
@@ -12,6 +13,7 @@ const MOUSE_LERP = 0.08         // smooth mouse interpolation factor
 const ATTRACT_STRENGTH = 0.008  // gentle pull toward cursor
 const ATTRACT_MAX_FORCE = 0.06  // force cap — prevents chaos
 const OFFSET_DAMPING = 0.92     // per-frame velocity decay (lower = heavier feel)
+const SCROLL_LERP = 0.05        // smooth scroll interpolation
 const CONNECTION_DIST_SQ = CONNECTION_DIST * CONNECTION_DIST
 const REPULSION_RADIUS_SQ = REPULSION_RADIUS * REPULSION_RADIUS
 const MAX_LINES = (PARTICLE_COUNT * (PARTICLE_COUNT - 1)) / 2
@@ -28,6 +30,8 @@ function Particles() {
   // Track mouse at window level instead.
   const mouse = useRef({ x: 0, y: 0 })
   const smoothMouse = useRef({ x: 0, y: 0 })
+  const scrollRef = useScrollProgress()
+  const smoothScroll = useRef(0)
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -97,14 +101,22 @@ function Particles() {
     const smxW = smx * vhw
     const smyW = smy * vhh
 
+    // ── Smooth scroll tracking ──
+    smoothScroll.current += (scrollRef.current - smoothScroll.current) * SCROLL_LERP
+    const scroll = smoothScroll.current
+    const driftScale = 1 + scroll * 0.8    // drift amplitude increases with scroll
+    const lineBaseR = LINE_R + scroll * 0.2 // hoisted: scroll-tinted line colors (constant per frame)
+    const lineBaseG = LINE_G + scroll * 0.04
+    const lineBaseB = LINE_B - scroll * 0.12
+
     // ── Update particle positions (drift + parallax + attraction + repulsion) ──
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       const i3 = i * 3
       const i2 = i * 2
 
       const pf = depthFactors[i] * PARALLAX_STRENGTH
-      arr[i3] = basePositions[i3] + Math.sin(t + i * 0.3) * 0.3 + smx * pf
-      arr[i3 + 1] = basePositions[i3 + 1] + Math.cos(t + i * 0.2) * 0.25 + smy * pf
+      arr[i3] = basePositions[i3] + Math.sin(t + i * 0.3) * 0.3 * driftScale + smx * pf
+      arr[i3 + 1] = basePositions[i3 + 1] + Math.cos(t + i * 0.2) * 0.25 * driftScale + smy * pf
       arr[i3 + 2] = basePositions[i3 + 2] + Math.sin(t * 0.5 + i * 0.1) * 0.15
 
       // Attraction: gentle pull toward smooth mouse
@@ -159,10 +171,10 @@ function Particles() {
           linePositions[off + 3] = arr[jx]
           linePositions[off + 4] = arr[jx + 1]
           linePositions[off + 5] = arr[jx + 2]
-          // Color faded by distance (additive blending: darker = invisible)
-          const r = LINE_R * alpha
-          const g = LINE_G * alpha
-          const b = LINE_B * alpha
+          // Color faded by distance + scroll hue shift (additive blending: darker = invisible)
+          const r = lineBaseR * alpha
+          const g = lineBaseG * alpha
+          const b = lineBaseB * alpha
           lineColors[off] = r;     lineColors[off + 1] = g;     lineColors[off + 2] = b
           lineColors[off + 3] = r; lineColors[off + 4] = g; lineColors[off + 5] = b
           lineCount++
@@ -175,6 +187,15 @@ function Particles() {
     linePosAttr.needsUpdate = true
     lineColAttr.needsUpdate = true
     linesRef.current.geometry.setDrawRange(0, lineCount * 2)
+
+    // ── Scroll-reactive material properties ──
+    const ptMat = pointsRef.current.material as THREE.PointsMaterial
+    ptMat.size = 0.06 - scroll * 0.015
+    ptMat.opacity = 0.6 - scroll * 0.2
+    ptMat.color.setRGB(1 + scroll * 0.15, 1 - scroll * 0.05, 1 - scroll * 0.15)
+
+    const lnMat = linesRef.current.material as THREE.LineBasicMaterial
+    lnMat.opacity = 0.4 - scroll * 0.15
   })
 
   return (
