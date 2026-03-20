@@ -139,6 +139,11 @@ _TOPIC_PATTERNS: list[tuple[str, re.Pattern[str], str]] = [
 _DEFAULT_MAJOR_TOPIC_MIN_HITS = 2
 # Minimum chunk hits for a topic to be detected at all.
 _DEFAULT_TOPIC_MIN_HITS = 1
+# Topics that should become must-cover with a single strong hit.
+_ALWAYS_MAJOR_TOPICS: set[str] = {
+    "regularization",
+    "validation_tuning",
+}
 
 _TOPIC_PATTERN_MAP: dict[str, re.Pattern[str]] = {
     tid: pattern for tid, pattern, _label in _TOPIC_PATTERNS
@@ -221,7 +226,9 @@ def extract_document_topics(
         if hits < _DEFAULT_TOPIC_MIN_HITS:
             continue
 
-        is_major = hits >= major_topic_min_hits
+        is_major = hits >= major_topic_min_hits or (
+            topic_id in _ALWAYS_MAJOR_TOPICS and hits >= _DEFAULT_TOPIC_MIN_HITS
+        )
         detected_topics.append(topic_id)
         if is_major:
             must_cover_topics.append(topic_id)

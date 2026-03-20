@@ -129,6 +129,16 @@ class TestExtractDocumentTopics:
         assert "model_variants" in info["detected_topics"]
         assert "validation_tuning" in info["detected_topics"]
 
+    def test_single_hit_priority_topics_are_must_cover(self):
+        """Regularization/validation should be must-cover even with one hit."""
+        chunks = [
+            _make_chunk("Cost-complexity pruning with alpha_eff controls tree size.", 0),
+            _make_chunk("Cross-validation selects the best complexity parameter.", 1),
+        ]
+        info = extract_document_topics(chunks, major_topic_min_hits=2)
+        assert "regularization" in info["must_cover_topics"]
+        assert "validation_tuning" in info["must_cover_topics"]
+
 
 # ── Topic outline coverage scoring tests ──────────────────────────────────────
 

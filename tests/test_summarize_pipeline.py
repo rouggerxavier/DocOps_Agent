@@ -2100,6 +2100,18 @@ class TestSourceDumpSanitization:
         assert "[Fonte 1]" in result
         assert "algoritmo" in result
 
+    def test_removes_process_meta_sentence_inside_paragraph(self):
+        """Process/meta source commentary should be stripped from prose body."""
+        text = (
+            "O método cobre entropia e indução [Fonte 1]. "
+            "Algumas fontes estavam ausentes na lista de trechos fornecidos. "
+            "Também explica ganho de informação [Fonte 2]."
+        )
+        result = self.sanitize(text)
+        assert "ausentes na lista de trechos fornecidos" not in result
+        assert "entropia" in result
+        assert "ganho de informação" in result
+
     def test_source_dump_removed_from_deep_summary_answer(self):
         """Source dump lines in LLM output must not survive to the final answer."""
         from unittest.mock import MagicMock, patch
@@ -2220,6 +2232,31 @@ class TestApplyStructureFix:
         call_messages = mock_llm.invoke.call_args[0][0]
         full_content = " ".join(str(m.content) for m in call_messages)
         assert "RASCUNHO_IDENTIFICÁVEL_XYZ" in full_content
+
+
+class TestPruningLimitationCorrection:
+    """Tests for correction of false 'not detailed' pruning claims."""
+
+    def test_rewrites_false_pruning_limitation_when_evidence_exists(self):
+        from docops.summarize.pipeline import _fix_false_pruning_limitation_claims
+
+        text = (
+            "## Conceitos\n"
+            "O documento não detalha pruning com alpha_eff nos trechos disponíveis."
+        )
+        anchors = [
+            Document(
+                page_content=(
+                    "Minimal cost-complexity pruning usa alpha_eff e validação "
+                    "com cost_complexity_pruning_path no scikit-learn."
+                ),
+                metadata={"chunk_index": 0, "page": 23},
+            )
+        ]
+        fixed = _fix_false_pruning_limitation_claims(text, anchors, source_chunks=anchors)
+        assert "não detalha pruning" not in fixed.lower()
+        assert "poda de custo-complexidade" in fixed
+        assert "[Fonte 1]" in fixed
 
 
 class TestStructureFixPrompt:

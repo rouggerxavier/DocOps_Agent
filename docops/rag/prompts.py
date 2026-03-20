@@ -153,8 +153,9 @@ INSTRUÇÕES GERAIS:
 - Cite as fontes inline usando [Fonte N] sempre que fizer uma afirmação baseada num trecho.
 - Não omita seções, mesmo que pareçam introdutórias ou de recapitulação — elas podem \
   conter definições fundamentais.
-- Não invente informações. Se um trecho estiver incompleto, indique brevemente \
-  que "o documento não detalha este ponto nos trechos disponíveis".
+- Não invente informações. Se um ponto realmente não aparecer nas fontes, \
+  indique a limitação de forma breve. Antes disso, verifique se o tema não \
+  está coberto em outros trechos do documento.
 - Ao final, inclua uma seção de Síntese Geral conectando todos os temas.
 
 FORMATO DE SAÍDA:
@@ -360,8 +361,9 @@ INSTRUÇÕES OBRIGATÓRIAS:
   e MATEMÁTICAS (equações, variáveis, notação formal, fórmulas): cite [Fonte N]
   OBRIGATORIAMENTE e use APENAS os valores/relações EXATOS que aparecem literalmente
   na fonte citada. Não interpole, não generalize, não derive valores por inferência.
-  Quando a fonte não detalhar um valor ou relação, afirme a limitação: "o material não
-  especifica este ponto nos trechos disponíveis" — nunca complete por dedução própria.
+  Quando a fonte não detalhar um valor ou relação, afirme a limitação de forma
+  precisa e apenas se realmente não houver suporte em outras fontes do contexto
+  — nunca complete por dedução própria.
 - NÃO use fontes de baixo teor (Sumário, Índice, Conteúdo, Table of Contents) para
   sustentar detalhes técnicos, quantitativos, comparativos ou matemáticos.
   Essas fontes só podem sustentar escopo/roteiro do documento.
@@ -664,8 +666,8 @@ REGRAS OBRIGATORIAS:
 4. Para afirmacoes que nao podem ser verificadas: substitua por formulacao conceitual.
    Exemplo: "O material formaliza esta relacao matematicamente [Fonte N]" em vez de
    reproduzir uma equacao sem suporte.
-5. Quando a fonte nao detalhar um ponto tecnico, registre a limitacao:
-   "o documento nao especifica este detalhe nos trechos disponíveis."
+5. Quando a fonte nao detalhar um ponto tecnico, registre a limitacao apenas
+   se esse detalhe nao estiver coberto por nenhuma outra fonte do contexto.
 6. Nao remova afirmacoes DESCRITIVAS ou PROCEDURAIS bem sustentadas.
 7. Nao adicione conteudo novo — apenas remova ou reformule extrapolacoes.
 8. Nao inclua secao "Fontes:" no corpo — ela sera anexada separadamente.

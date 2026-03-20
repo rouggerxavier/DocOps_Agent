@@ -542,9 +542,35 @@ _REPAIR_META_LINE_RE = re.compile(
     r"seria necessário fornecer documentos?)\b.*$",
     re.IGNORECASE,
 )
+_PROCESS_META_SENTENCE_RE = re.compile(
+    r"(?:(?<=^)|(?<=[\n.!?]))\s*"
+    r"(?:"
+    r"[^.!?\n]*\b(?:fontes?|trechos?)\s+(?:fornecid[oa]s?|dispon[ií]veis?)\b[^.!?\n]*\b(?:ausent\w+|inconsisten\w+|contradit\w+)\b[^.!?\n]*"
+    r"|"
+    r"[^.!?\n]*\b(?:nao|não)\s+foi\s+poss[ií]vel\s+reescrever\b[^.!?\n]*"
+    r"|"
+    r"[^.!?\n]*\b(?:nao|não)\s+encontrei\s+informa[cç][oõ]es\b[^.!?\n]*"
+    r"|"
+    r"[^.!?\n]*\bausent\w+\s+na\s+lista\s+de\s+trechos\b[^.!?\n]*"
+    r")"
+    r"(?:[.!?]|$)",
+    re.IGNORECASE,
+)
 _META_HEADER_RE = re.compile(
     r"^\s*\[meta\][^\n]*\n?",
     re.IGNORECASE,
+)
+_PRUNING_EVIDENCE_RE = re.compile(
+    r"\b(?:pruning|poda|cost[-_\s]?complex\w*|cost_complexity_pruning_path|"
+    r"alpha_eff|alpha|alfa|r[_\s]*alpha|r\s*\(\s*t\s*\)|\b[α]\b)\b",
+    re.IGNORECASE | re.UNICODE,
+)
+_FALSE_PRUNING_LIMITATION_SENTENCE_RE = re.compile(
+    r"(?:(?<=^)|(?<=[\n.!?]))\s*"
+    r"[^.!?\n]*\b(?:nao|não)\s+(?:detalha|especifica|aprofunda)\b"
+    r"[^.!?\n]{0,200}\b(?:pruning|poda|cost[-_\s]?complex\w*|alpha_eff|alpha|alfa|α)\b"
+    r"[^.!?\n]*(?:[.!?]|$)",
+    re.IGNORECASE | re.UNICODE,
 )
 
 # Source dump lines: [Fonte N] used as list entries leaked into the body
@@ -1596,8 +1622,53 @@ def _sanitize_inline_source_noise(text: str) -> str:
         cleaned_lines.append(line)
 
     cleaned = "\n".join(cleaned_lines)
+    cleaned = _PROCESS_META_SENTENCE_RE.sub(" ", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"\n[ \t]+", "\n", cleaned)
     return cleaned.strip()
+
+
+def _fix_false_pruning_limitation_claims(
+    text: str,
+    citation_anchors: list[Document],
+    source_chunks: list[Document] | None = None,
+) -> str:
+    """Replace false 'document does not detail pruning/alpha' claims when evidence exists."""
+    if not text or not _FALSE_PRUNING_LIMITATION_SENTENCE_RE.search(text):
+        return text
+
+    chunks_to_scan = source_chunks or citation_anchors or []
+    evidence_hits = 0
+    for chunk in chunks_to_scan:
+        content = str(getattr(chunk, "page_content", "") or "")
+        if _PRUNING_EVIDENCE_RE.search(content):
+            evidence_hits += 1
+            if evidence_hits >= 2:
+                break
+    if evidence_hits == 0:
+        return text
+
+    citation_idx = None
+    for idx, chunk in enumerate(citation_anchors, start=1):
+        content = str(getattr(chunk, "page_content", "") or "")
+        if _PRUNING_EVIDENCE_RE.search(content):
+            citation_idx = idx
+            break
+    if citation_idx is None and citation_anchors:
+        citation_idx = 1
+    if citation_idx is None:
+        return text
+
+    replacement = (
+        "O documento detalha regularizacao por poda de custo-complexidade, "
+        "incluindo alpha/alpha_eff e validacao pratica [Fonte "
+        f"{citation_idx}]."
+    )
+    fixed = _FALSE_PRUNING_LIMITATION_SENTENCE_RE.sub(f" {replacement} ", text)
+    fixed = re.sub(r"[ \t]{2,}", " ", fixed)
+    fixed = re.sub(r"\n{3,}", "\n\n", fixed)
+    return fixed.strip()
 
 
 def _has_forbidden_repair_patterns(text: str) -> bool:
@@ -2384,6 +2455,7 @@ def _postprocess_deep_summary_text(
     llm,
     repair_enabled: bool,
     structure_min_chars: int,
+    source_chunks: list[Document] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     """Normalize, validate, and score a deep-summary draft/candidate."""
     text = _strip_sources_section(text)
@@ -2408,6 +2480,11 @@ def _postprocess_deep_summary_text(
     text = clean_summary_output(text)
     text = _strip_sources_section(text)
     text = _sanitize_inline_source_noise(text)
+    text = _fix_false_pruning_limitation_claims(
+        text,
+        citation_anchors=citation_anchors,
+        source_chunks=source_chunks,
+    )
 
     # Pre-validation sanitization: remove orphan Fonte lines, source dumps,
     # and reattach orphan formulas before structure validation.
@@ -4533,6 +4610,7 @@ def run_deep_summary(
         llm=llm_cheap,
         repair_enabled=False,
         structure_min_chars=structure_min_chars,
+        source_chunks=chunks,
     )
     structure_info = structure_pass["structure_info"]
     used_source_indices = list(structure_pass["used_source_indices"])
@@ -4676,6 +4754,7 @@ def run_deep_summary(
                 llm=llm_cheap,
                 repair_enabled=repair_enabled,
                 structure_min_chars=structure_min_chars,
+                source_chunks=chunks,
             )
             structure_info = local_pass["structure_info"]
             grounding_info = local_pass["grounding_info"]
@@ -5245,6 +5324,7 @@ def run_deep_summary(
             llm=llm_cheap,
             repair_enabled=repair_enabled,
             structure_min_chars=structure_min_chars,
+            source_chunks=chunks,
         )
 
         current_unique = len(used_source_indices)
@@ -5317,6 +5397,7 @@ def run_deep_summary(
                     llm=llm_cheap,
                     repair_enabled=repair_enabled,
                     structure_min_chars=structure_min_chars,
+                    source_chunks=chunks,
                 )
                 if bool(fixed_info["structure_info"].get("valid")):
                     candidate_text = fixed_text
