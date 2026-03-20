@@ -7,24 +7,16 @@ interface BackgroundWrapperProps {
 }
 
 export function BackgroundWrapper({ children, animatedLayer }: BackgroundWrapperProps) {
-  const glowRef = useRef<HTMLDivElement>(null)
   const orb1Ref = useRef<HTMLDivElement>(null)
   const orb2Ref = useRef<HTMLDivElement>(null)
   const orb3Ref = useRef<HTMLDivElement>(null)
   const [interactive, setInteractive] = useState(false)
-  const [cursorGlowEnabled, setCursorGlowEnabled] = useState(false)
 
   // Desktop + no reduced-motion → enable cursor glow & orb parallax
   useEffect(() => {
     const mqSize = window.matchMedia('(min-width: 768px)')
     const mqMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
-    const update = () => {
-      const baseInteractive = mqSize.matches && !mqMotion.matches
-      const host = window.location.hostname
-      const isLocalhost = host === 'localhost' || host === '127.0.0.1'
-      setInteractive(baseInteractive)
-      setCursorGlowEnabled(baseInteractive && !isLocalhost)
-    }
+    const update = () => setInteractive(mqSize.matches && !mqMotion.matches)
     update()
     mqSize.addEventListener('change', update)
     mqMotion.addEventListener('change', update)
@@ -40,13 +32,11 @@ export function BackgroundWrapper({ children, animatedLayer }: BackgroundWrapper
 
     const mouse = { x: 0, y: 0 }
     const smooth = { x: 0, y: 0 }
-    let hasMoved = false
     let raf = 0
 
     const onMove = (e: MouseEvent) => {
       mouse.x = e.clientX
       mouse.y = e.clientY
-      hasMoved = true
     }
     window.addEventListener('mousemove', onMove, { passive: true })
 
@@ -54,12 +44,6 @@ export function BackgroundWrapper({ children, animatedLayer }: BackgroundWrapper
       const lerp = 0.06
       smooth.x += (mouse.x - smooth.x) * lerp
       smooth.y += (mouse.y - smooth.y) * lerp
-
-      // Cursor glow — follows mouse with soft delay
-      if (cursorGlowEnabled && glowRef.current && hasMoved) {
-        glowRef.current.style.transform = `translate(${smooth.x - 200}px, ${smooth.y - 200}px)`
-        glowRef.current.style.opacity = '1'
-      }
 
       // Normalized mouse position (-1 to 1) for orb parallax
       const nx = (smooth.x / window.innerWidth - 0.5) * 2
@@ -96,9 +80,8 @@ export function BackgroundWrapper({ children, animatedLayer }: BackgroundWrapper
       ;[orb1Ref, orb2Ref, orb3Ref].forEach(ref => {
         if (ref.current) ref.current.style.transform = ''
       })
-      if (glowRef.current) glowRef.current.style.opacity = '0'
     }
-  }, [interactive, cursorGlowEnabled])
+  }, [interactive])
 
   return (
     <div className="relative min-h-screen overflow-x-hidden bg-zinc-950 text-zinc-100">
@@ -133,17 +116,6 @@ export function BackgroundWrapper({ children, animatedLayer }: BackgroundWrapper
         {/* Hero readability mask — recalibrated: tighter ellipse, lighter opacity */}
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_50%_45%_at_50%_30%,rgba(9,9,11,0.50),transparent_70%)]" />
 
-        {/* Cursor glow — soft atmospheric radial following mouse (desktop only) */}
-        {cursorGlowEnabled && (
-          <div
-            ref={glowRef}
-            className="absolute h-[400px] w-[400px] rounded-full opacity-0 transition-opacity duration-700"
-            style={{
-              background: 'radial-gradient(circle, rgba(59,130,246,0.15) 0%, rgba(139,92,246,0.08) 35%, transparent 70%)',
-              willChange: 'transform',
-            }}
-          />
-        )}
       </div>
 
       {/* Content layer — z-10, above background */}
