@@ -7,11 +7,17 @@ export function ParticlesBackground() {
 
   useEffect(() => {
     // Disable on mobile / small screens for performance
-    const mq = window.matchMedia('(min-width: 768px)')
-    const update = () => setEnabled(mq.matches)
+    const mqSize = window.matchMedia('(min-width: 768px)')
+    // Disable when user prefers reduced motion
+    const mqMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
+    const update = () => setEnabled(mqSize.matches && !mqMotion.matches)
     update()
-    mq.addEventListener('change', update)
-    return () => mq.removeEventListener('change', update)
+    mqSize.addEventListener('change', update)
+    mqMotion.addEventListener('change', update)
+    return () => {
+      mqSize.removeEventListener('change', update)
+      mqMotion.removeEventListener('change', update)
+    }
   }, [])
 
   if (!enabled) return null

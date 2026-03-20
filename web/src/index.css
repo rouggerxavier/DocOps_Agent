@@ -35,3 +35,29 @@
     -webkit-font-smoothing: antialiased;
   }
 }
+
+/* ── Background orb drift (mobile only — desktop handled by JS) ──────────── */
+@keyframes orbDrift1 {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(20px, -15px); }
+  50% { transform: translate(-10px, 20px); }
+  75% { transform: translate(15px, 10px); }
+}
+@keyframes orbDrift2 {
+  0%, 100% { transform: translate(0, 0); }
+  33% { transform: translate(-25px, 10px); }
+  66% { transform: translate(15px, -20px); }
+}
+@keyframes orbDrift3 {
+  0%, 100% { transform: translate(0, 0); }
+  20% { transform: translate(10px, 15px); }
+  40% { transform: translate(-15px, -10px); }
+  60% { transform: translate(20px, -5px); }
+  80% { transform: translate(-5px, 20px); }
+}
+
+@media (max-width: 767px) and (prefers-reduced-motion: no-preference) {
+  .orb-drift-1 { animation: orbDrift1 30s ease-in-out infinite; }
+  .orb-drift-2 { animation: orbDrift2 25s ease-in-out infinite; }
+  .orb-drift-3 { animation: orbDrift3 35s ease-in-out infinite; }
+}
