@@ -38,6 +38,7 @@ screenshot_*.png
 test_*.png
 audit_*.png
 dashboard-*.png
+!web/public/dashboard-preview.png
 
 # Docs (user's own documents, not committed — keep .gitkeep)
 docs/*
