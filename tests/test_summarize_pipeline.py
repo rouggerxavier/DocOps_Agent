@@ -6730,9 +6730,9 @@ class TestExecutionProfiles:
         from docops.summarize.pipeline import _resolve_profile
         assert _resolve_profile("fast") == "fast"
 
-    def test_resolve_profile_explicit_invalid_falls_back_model_first(self):
+    def test_resolve_profile_explicit_invalid_falls_back_balanced(self):
         from docops.summarize.pipeline import _resolve_profile
-        assert _resolve_profile("legacy_profile") == "model_first"
+        assert _resolve_profile("legacy_profile") == "balanced"
 
     def test_resolve_profile_explicit_strict(self):
         from docops.summarize.pipeline import _resolve_profile
@@ -6742,9 +6742,21 @@ class TestExecutionProfiles:
         from docops.summarize.pipeline import _resolve_profile
         assert _resolve_profile("model_first") == "model_first"
 
-    def test_resolve_profile_invalid_falls_back_to_model_first(self):
+    def test_resolve_profile_explicit_model_first_plus(self):
         from docops.summarize.pipeline import _resolve_profile
-        assert _resolve_profile("unknown_profile") == "model_first"
+        assert _resolve_profile("model_first_plus") == "model_first_plus"
+
+    def test_resolve_profile_explicit_model_first_plus_max(self):
+        from docops.summarize.pipeline import _resolve_profile
+        assert _resolve_profile("model_first_plus_max") == "model_first_plus_max"
+
+    def test_resolve_profile_explicit_balanced(self):
+        from docops.summarize.pipeline import _resolve_profile
+        assert _resolve_profile("balanced") == "balanced"
+
+    def test_resolve_profile_invalid_falls_back_to_balanced(self):
+        from docops.summarize.pipeline import _resolve_profile
+        assert _resolve_profile("unknown_profile") == "balanced"
 
     def test_resolve_profile_none_uses_config(self, monkeypatch):
         from docops.summarize.pipeline import _resolve_profile
@@ -6761,10 +6773,10 @@ class TestExecutionProfiles:
         monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "fast")
         assert _resolve_profile("strict") == "strict"
 
-    def test_resolve_profile_env_invalid_defaults_to_model_first(self, monkeypatch):
+    def test_resolve_profile_env_invalid_defaults_to_balanced(self, monkeypatch):
         from docops.summarize.pipeline import _resolve_profile
         monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "INVALID")
-        assert _resolve_profile(None) == "model_first"
+        assert _resolve_profile(None) == "balanced"
 
     # ── profile_used appears in diagnostics ───────────────────────────────────
 
@@ -7171,7 +7183,7 @@ class TestExecutionProfiles:
     def test_config_summary_deep_profile_default(self, monkeypatch):
         monkeypatch.delenv("SUMMARY_DEEP_PROFILE", raising=False)
         from docops.config import Config
-        assert Config().summary_deep_profile == "model_first"
+        assert Config().summary_deep_profile == "balanced"
 
     def test_config_summary_deep_profile_fast(self, monkeypatch):
         monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "fast")
@@ -7188,15 +7200,30 @@ class TestExecutionProfiles:
         from docops.config import Config
         assert Config().summary_deep_profile == "model_first"
 
+    def test_config_summary_deep_profile_model_first_plus(self, monkeypatch):
+        monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "model_first_plus")
+        from docops.config import Config
+        assert Config().summary_deep_profile == "model_first_plus"
+
+    def test_config_summary_deep_profile_model_first_plus_max(self, monkeypatch):
+        monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "model_first_plus_max")
+        from docops.config import Config
+        assert Config().summary_deep_profile == "model_first_plus_max"
+
+    def test_config_summary_deep_profile_balanced(self, monkeypatch):
+        monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "balanced")
+        from docops.config import Config
+        assert Config().summary_deep_profile == "balanced"
+
     def test_config_summary_deep_profile_legacy_value_falls_back(self, monkeypatch):
         monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "legacy_profile")
         from docops.config import Config
-        assert Config().summary_deep_profile == "model_first"
+        assert Config().summary_deep_profile == "balanced"
 
     def test_config_summary_deep_profile_invalid(self, monkeypatch):
         monkeypatch.setenv("SUMMARY_DEEP_PROFILE", "nope")
         from docops.config import Config
-        assert Config().summary_deep_profile == "model_first"
+        assert Config().summary_deep_profile == "balanced"
 
     def test_config_max_corrective_passes_default(self, monkeypatch):
         monkeypatch.delenv("SUMMARY_MAX_CORRECTIVE_PASSES", raising=False)

@@ -3805,19 +3805,33 @@ def _apply_structure_fix(draft: str, doc_name: str, llm) -> str:
 def _resolve_profile(profile_arg: str | None) -> str:
     """Resolve the effective execution profile.
 
-    Priority: explicit argument > SUMMARY_DEEP_PROFILE env var > 'model_first'.
-    Validates against known values; invalid values fall back to 'model_first'.
+    Priority: explicit argument > SUMMARY_DEEP_PROFILE env var > 'balanced'.
+    Validates against known values; invalid values fall back to 'balanced'.
     """
     if profile_arg:
         resolved = profile_arg.strip().lower()
-        if resolved in ("fast", "model_first", "strict"):
+        if resolved in (
+            "fast",
+            "balanced",
+            "model_first",
+            "model_first_plus",
+            "model_first_plus_max",
+            "strict",
+        ):
             return resolved
         # Explicit invalid value should not silently inherit env/config.
-        return "model_first"
-    cfg_val = str(getattr(config, "summary_deep_profile", "model_first")).strip().lower()
-    if cfg_val in ("fast", "model_first", "strict"):
+        return "balanced"
+    cfg_val = str(getattr(config, "summary_deep_profile", "balanced")).strip().lower()
+    if cfg_val in (
+        "fast",
+        "balanced",
+        "model_first",
+        "model_first_plus",
+        "model_first_plus_max",
+        "strict",
+    ):
         return cfg_val
-    return "model_first"
+    return "balanced"
 
 
 def run_deep_summary(
@@ -3834,8 +3848,9 @@ def run_deep_summary(
         doc_id:              Document UUID from the database (preferred filter for Chroma).
         user_id:             Authenticated user ID for multi-tenant isolation.
         include_diagnostics: When True, attach full diagnostics dict to the result.
-        profile:             Execution profile override: 'fast' | 'model_first' | 'strict'.
-                             When None, uses SUMMARY_DEEP_PROFILE env var (default: 'model_first').
+        profile:             Execution profile override: 'fast' | 'balanced' | 'model_first'
+                             | 'model_first_plus' | 'model_first_plus_max' | 'strict'.
+                             When None, uses SUMMARY_DEEP_PROFILE env var (default: 'balanced').
 
     Returns:
         Dict with keys:
@@ -3934,7 +3949,12 @@ def run_deep_summary(
     # ── Model-first path (primary) ───────────────────────────────────────────
     # Keep orchestration minimal (single synthesis call) while preserving
     # source-faithful coverage via deterministic topic/outline contracts.
-    if _active_profile == "model_first":
+    if _active_profile in ("model_first", "model_first_plus", "model_first_plus_max"):
+        _profile_allows_deoverreach = _active_profile in (
+            "model_first_plus",
+            "model_first_plus_max",
+        )
+        _profile_allows_micro_backfill = _active_profile == "model_first_plus_max"
         _, _, section_threshold = _get_tuning()
         section_cov_before = sum(
             1
@@ -3968,6 +3988,7 @@ def run_deep_summary(
         logger.info("Deep summary (model_first): %d groups formed.", len(groups))
 
         llm_complex = _get_llm(route="complex", temperature=0.2)
+        llm_cheap = None
         _stage_timings["partials"] = 0.0
         _stage_timings["consolidate"] = 0.0
         _stage_timings["style_polish"] = 0.0
@@ -4029,15 +4050,6 @@ def run_deep_summary(
         final_text = _sanitize_non_canonical_citations(final_text)
         final_text, _ = validate_summary_citations(final_text, citation_anchors)
         body_text = final_text
-        used_source_indices = _extract_used_citation_indices(
-            body_text, len(citation_anchors)
-        )
-        sources_section = build_anchor_sources_section(
-            citation_anchors,
-            source_indices=used_source_indices,
-        )
-        if sources_section:
-            final_text = body_text.rstrip() + "\n\n" + sources_section
 
         structure_min_chars = int(getattr(config, "summary_structure_min_chars", 160))
         structure_info = validate_summary_structure(
@@ -4050,6 +4062,165 @@ def run_deep_summary(
         claim_risk = classify_claim_risks(body_text, citation_anchors)
         claim_risk = check_formula_mode(claim_risk, citation_anchors, formula_mode)
         inference = compute_inference_density(claim_risk)
+
+        deoverreach_info: dict[str, Any] = {
+            "enabled": _profile_allows_deoverreach,
+            "triggered": False,
+            "accepted": False,
+        }
+        micro_backfill_info: dict[str, Any] = {
+            "enabled": _profile_allows_micro_backfill,
+            "triggered": False,
+            "accepted": False,
+            "paragraphs_attempted": 0,
+            "paragraphs_accepted": 0,
+            "missing_topics_before": [],
+            "missing_topics_after": [],
+            "skipped_reason": None,
+        }
+
+        # model_first_plus: de-overreach only.
+        if _profile_allows_deoverreach:
+            _deoverreach_trigger = (
+                not bool(inference.get("inference_gate_passed", True))
+                or int(claim_risk.get("unsupported_high_risk_count", 0)) > 0
+                or int(claim_risk.get("formula_claims_downgraded_to_concept", 0)) > 0
+            )
+            deoverreach_info["triggered"] = _deoverreach_trigger
+            if _deoverreach_trigger and not _corrective_budget_available():
+                deoverreach_info["skipped_reason"] = "corrective_budget_exhausted"
+            elif _deoverreach_trigger and _latency_budget_exceeded(reserve_s=15.0):
+                deoverreach_info["skipped_reason"] = "latency_budget_exhausted"
+            elif _deoverreach_trigger:
+                llm_cheap = llm_cheap or _get_llm(route="cheap", temperature=0.2)
+                with _t("corrective_pass_deoverreach"):
+                    _dor_text = run_deoverreach_pass(
+                        body_text, doc_name, citation_anchors, llm_cheap
+                    )
+                if _dor_text and _dor_text.strip() and _dor_text != body_text:
+                    _dor_text, _ = validate_summary_citations(_dor_text, citation_anchors)
+                    _dor_text, _dor_grounding = validate_summary_grounding(
+                        _dor_text, citation_anchors, grounding_threshold
+                    )
+                    _dor_claim_risk = classify_claim_risks(_dor_text, citation_anchors)
+                    _dor_claim_risk = check_formula_mode(
+                        _dor_claim_risk, citation_anchors, formula_mode
+                    )
+                    _dor_inference = compute_inference_density(_dor_claim_risk)
+                    _cur_inf = float(inference.get("inference_density", 0.0))
+                    _new_inf = float(_dor_inference.get("inference_density", 0.0))
+                    _cur_hr = int(claim_risk.get("unsupported_high_risk_count", 0))
+                    _new_hr = int(_dor_claim_risk.get("unsupported_high_risk_count", 0))
+                    if _new_inf < _cur_inf or _new_hr < _cur_hr:
+                        body_text = _dor_text
+                        grounding_info = _dor_grounding
+                        weak_ratio = _compute_weak_ratio(grounding_info)
+                        claim_risk = _dor_claim_risk
+                        inference = _dor_inference
+                        structure_info = validate_summary_structure(
+                            body_text,
+                            min_section_chars=structure_min_chars,
+                        )
+                        outline_coverage = score_topic_outline_coverage(
+                            body_text, topic_info
+                        )
+                        deoverreach_info["accepted"] = True
+                        _consume_corrective_pass("deoverreach")
+
+        # model_first_plus_max: de-overreach + micro-backfill.
+        if _profile_allows_micro_backfill:
+            _missing_before = list(outline_coverage.get("missing_topics", []))
+            if must_cover_topics and _missing_before:
+                micro_backfill_info["triggered"] = True
+                micro_backfill_info["missing_topics_before"] = list(_missing_before)
+                if not _corrective_budget_available():
+                    micro_backfill_info["skipped_reason"] = "corrective_budget_exhausted"
+                elif _latency_budget_exceeded(reserve_s=10.0):
+                    micro_backfill_info["skipped_reason"] = "latency_budget_exhausted"
+                else:
+                    llm_cheap = llm_cheap or _get_llm(route="cheap", temperature=0.2)
+                    _mb_max_topics = int(
+                        getattr(config, "summary_micro_backfill_max_topics", 3)
+                    )
+                    _mb_para_max = int(
+                        getattr(config, "summary_micro_backfill_paragraph_max_chars", 900)
+                    )
+                    with _t("micro_backfill"):
+                        _mb = _run_micro_topic_backfill(
+                            final_text=body_text,
+                            missing_topics=_missing_before,
+                            topic_info=topic_info,
+                            all_chunks=chunks,
+                            citation_anchors=citation_anchors,
+                            doc_name=doc_name,
+                            llm=llm_cheap,
+                            max_topics=_mb_max_topics,
+                            paragraph_max_chars=_mb_para_max,
+                        )
+                    micro_backfill_info["paragraphs_attempted"] = int(
+                        _mb.get("paragraphs_attempted", 0)
+                    )
+                    micro_backfill_info["paragraphs_accepted"] = int(
+                        _mb.get("paragraphs_accepted", 0)
+                    )
+                    _missing_after = list(_mb.get("missing_topics_after", []))
+                    micro_backfill_info["missing_topics_after"] = list(_missing_after)
+                    if int(_mb.get("paragraphs_accepted", 0)) > 0:
+                        _mb_text = _sanitize_non_canonical_citations(_mb.get("text", body_text))
+                        _mb_text, _ = validate_summary_citations(
+                            _mb_text, citation_anchors
+                        )
+                        _mb_text, _mb_grounding = validate_summary_grounding(
+                            _mb_text, citation_anchors, grounding_threshold
+                        )
+                        _mb_weak = _compute_weak_ratio(_mb_grounding)
+                        _mb_ceiling = float(
+                            getattr(
+                                config,
+                                "summary_resynthesis_max_accepted_weak_ratio",
+                                0.35,
+                            )
+                        )
+                        if _mb_weak <= _mb_ceiling and len(_missing_after) < len(_missing_before):
+                            body_text = _mb_text
+                            grounding_info = _mb_grounding
+                            weak_ratio = _mb_weak
+                            structure_info = validate_summary_structure(
+                                body_text,
+                                min_section_chars=structure_min_chars,
+                            )
+                            outline_coverage = score_topic_outline_coverage(
+                                body_text, topic_info
+                            )
+                            claim_risk = classify_claim_risks(
+                                body_text, citation_anchors
+                            )
+                            claim_risk = check_formula_mode(
+                                claim_risk, citation_anchors, formula_mode
+                            )
+                            inference = compute_inference_density(claim_risk)
+                            micro_backfill_info["accepted"] = True
+                            _consume_corrective_pass("micro_backfill")
+                        else:
+                            if _mb_weak > _mb_ceiling:
+                                micro_backfill_info["skipped_reason"] = (
+                                    "absolute_weak_ratio_exceeded"
+                                )
+                            elif len(_missing_after) >= len(_missing_before):
+                                micro_backfill_info["skipped_reason"] = (
+                                    "missing_topics_not_improved"
+                                )
+
+        used_source_indices = _extract_used_citation_indices(
+            body_text, len(citation_anchors)
+        )
+        sources_section = build_anchor_sources_section(
+            citation_anchors,
+            source_indices=used_source_indices,
+        )
+        final_text = body_text.rstrip() + (
+            "\n\n" + sources_section if sources_section else ""
+        )
 
         blocking_reasons: list[str] = []
         if not bool(structure_info.get("valid", False)):
@@ -4073,7 +4244,7 @@ def run_deep_summary(
 
         diagnostics = {
             "profile_used": _active_profile,
-            "mode": "model_first",
+            "mode": _active_profile,
             "document_profile": {
                 "required_facets": list(doc_profile.get("required_facets", [])),
                 "pdf_outline_sections": len(pdf_outline_entries),
@@ -4118,13 +4289,17 @@ def run_deep_summary(
                 "inference_threshold": float(inference.get("inference_threshold", 0.0)),
                 "inference_gate_passed": bool(inference.get("inference_gate_passed", True)),
             },
-            "corrective_timeline": [],
-            "corrective_passes_used": 0,
-            "max_corrective_passes": 0,
+            "corrective_timeline": list(_corrective_timeline),
+            "corrective_passes_used": _corrective_passes_used,
+            "max_corrective_passes": (
+                _max_corrective_passes
+                if _active_profile in ("model_first_plus", "model_first_plus_max")
+                else 0
+            ),
             "style_polish_enabled": False,
-            "deoverreach": {"enabled": False, "triggered": False, "accepted": False},
+            "deoverreach": deoverreach_info,
             "resynthesis": {"enabled": False, "triggered": False, "accepted": False},
-            "micro_backfill": {"enabled": False, "triggered": False, "accepted": False},
+            "micro_backfill": micro_backfill_info,
             "early_micro_backfill": {"enabled": False, "triggered": False, "accepted": False},
             "final": {
                 "accepted": len(blocking_reasons) == 0,
@@ -4139,7 +4314,8 @@ def run_deep_summary(
             "stage_timings_ms": dict(_stage_timings),
         }
         logger.info(
-            "Deep summary model_first completed for doc='%s' in %.1fs.",
+            "Deep summary %s completed for doc='%s' in %.1fs.",
+            _active_profile,
             doc_name,
             _total_ms / 1000,
         )

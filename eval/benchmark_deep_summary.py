@@ -5,7 +5,7 @@ Uso:
         --doc "documento.pdf" \
         --email user@example.com \
         --password senha \
-        --profiles fast,model_first,strict \
+        --profiles fast,balanced,model_first,model_first_plus,model_first_plus_max,strict \
         --runs 10 \
         --warmup 1
 
@@ -620,7 +620,7 @@ def _build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     p.add_argument("--doc", required=True, help="Nome do documento no sistema (file_name).")
-    p.add_argument("--profiles", default="fast,model_first,strict",
+    p.add_argument("--profiles", default="fast,balanced,model_first,model_first_plus,model_first_plus_max,strict",
                    help="Perfis separados por vírgula.")
     p.add_argument("--runs", type=int, default=10, help="Rodadas medidas por perfil.")
     p.add_argument("--warmup", type=int, default=1, help="Rodadas de warmup por perfil.")

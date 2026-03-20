@@ -320,7 +320,14 @@ GEMINI_MODEL=gemini-2.5-flash
 GEMINI_MODEL_ROUTER_ENABLED=true
 GEMINI_MODEL_COMPLEX=gemini-3-flash-preview
 GEMINI_MODEL_CHEAP=gemini-3.1-flash-lite-preview
+GEMINI_MODEL_QA_SIMPLE=gemini-2.5-flash
 ```
+
+Roteamento determinístico de modelos (resumo):
+- `GEMINI_MODEL`: fallback base quando o router está desligado (`GEMINI_MODEL_ROUTER_ENABLED=false`) ou quando a rota não é reconhecida.
+- `GEMINI_MODEL_COMPLEX` (rota `complex`): síntese pesada do deep summary (consolidação/finalização/re-synthesis) e intents de maior complexidade no grafo (`summary` deep, `comparison`, `study_plan`, `checklist`).
+- `GEMINI_MODEL_CHEAP` (rota `cheap`): passos auxiliares e baratos (classificação de intent, rewrites, rerank LLM, validações/grounding semântico, passes leves) e `summary` brief no grafo.
+- `GEMINI_MODEL_QA_SIMPLE` (rota `qa_simple`): resposta de Q&A direta e reparo de grounding no fluxo de chat.
 
 #### Grounding & Verificação
 ```env
@@ -339,6 +346,7 @@ INGEST_INCREMENTAL=false
 
 #### Pipeline Deep Summary
 ```env
+SUMMARY_DEEP_PROFILE=balanced     # fast | balanced | model_first | model_first_plus | model_first_plus_max | strict
 SUMMARY_GROUP_SIZE=8
 SUMMARY_MAX_GROUPS=6
 SUMMARY_SECTION_THRESHOLD=0.70
@@ -346,6 +354,14 @@ SUMMARY_MAX_SOURCES=12
 SUMMARY_GROUNDING_THRESHOLD=0.20
 SUMMARY_GROUNDING_REPAIR=false
 ```
+
+Perfis de execução do deep summary:
+- `fast`: menor latência, desativa passes corretivos caros.
+- `balanced` (padrão atual): equilíbrio entre qualidade e custo, com pipeline completo e sem fail-closed estrito.
+- `model_first`: caminho simplificado para modelos mais fortes (menos orquestração corretiva em cascata).
+- `model_first_plus`: model_first com passe de de-overreach habilitado.
+- `model_first_plus_max`: model_first_plus + micro-backfill para tópicos obrigatórios faltantes.
+- `strict`: mesmo fluxo com gate final fail-closed (pode retornar erro 422 quando a qualidade mínima não for atingida).
 
 #### Servidor
 ```env

@@ -680,17 +680,31 @@ class Config:
           - ``fast``      â€” caminho crÃ­tico sem passes caros (sem deoverreach,
                             resynthesis ou backfill extra). Apenas validaÃ§Ãµes
                             essenciais. Menor latÃªncia.
+          - ``balanced``  â€” perfil recomendado para produÃ§Ã£o: pipeline completo
+                            com gates de qualidade ativos, sem fail-closed
+                            estrito por padrÃ£o.
           - ``model_first`` â€” caminho ultrassimples para modelos modernos:
                             evita passes corretivos em cascata e prioriza
                             sÃ­ntese direta com validaÃ§Ãµes bÃ¡sicas.
+          - ``model_first_plus`` â€” igual ao model_first, mas habilita
+                            apenas o passe de de-overreach.
+          - ``model_first_plus_max`` â€” igual ao model_first_plus, com
+                            micro-backfill de tÃ³picos obrigatÃ³rios.
           - ``strict``    â€” 1 passe corretivo mÃ¡ximo + fail-closed real: se
                             diagnostics.final.accepted=False, retorna erro HTTP 422.
 
         Override with SUMMARY_DEEP_PROFILE env var.
         """
-        val = os.getenv("SUMMARY_DEEP_PROFILE", "model_first").strip().lower()
-        if val not in ("fast", "model_first", "strict"):
-            return "model_first"
+        val = os.getenv("SUMMARY_DEEP_PROFILE", "balanced").strip().lower()
+        if val not in (
+            "fast",
+            "balanced",
+            "model_first",
+            "model_first_plus",
+            "model_first_plus_max",
+            "strict",
+        ):
+            return "balanced"
         return val
 
     @property
@@ -809,4 +823,3 @@ class Config:
 
 # Singleton instance used throughout the package
 config = Config()
-

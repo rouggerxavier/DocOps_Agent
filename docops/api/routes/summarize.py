@@ -126,7 +126,7 @@ async def summarize(
                     "blocking_reasons": blocking,
                     "message": (
                         "O resumo aprofundado foi bloqueado pelo gate estrito de qualidade. "
-                        "Revise os limiares ou utilize o perfil 'model_first'."
+                        "Revise os limiares ou utilize os perfis 'balanced' ou 'model_first'."
                     ),
                 },
             )

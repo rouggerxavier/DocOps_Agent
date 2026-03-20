@@ -111,8 +111,9 @@ class SummarizeRequest(BaseModel):
     deep_profile: Optional[str] = Field(
         default=None,
         description=(
-            "Execution profile for deep summary: 'fast' | 'model_first' | 'strict'. "
-            "When None, uses SUMMARY_DEEP_PROFILE (default: 'model_first')."
+            "Execution profile for deep summary: 'fast' | 'balanced' | 'model_first' | "
+            "'model_first_plus' | 'model_first_plus_max' | 'strict'. "
+            "When None, uses SUMMARY_DEEP_PROFILE (default: 'balanced')."
         ),
     )
 
