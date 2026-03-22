@@ -219,7 +219,13 @@ def _is_youtube_url(url: str) -> bool:
 
 def _get_youtube_transcript(url: str) -> str:
     """Extrai transcrição de um vídeo do YouTube (compatível com youtube-transcript-api v1.x)."""
-    from youtube_transcript_api import YouTubeTranscriptApi
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Dependência ausente: youtube-transcript-api. "
+            "Adicione no requirements e reinstale o backend."
+        ) from exc
     import re as _re
 
     match = _re.search(r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})", url)
