@@ -11,6 +11,7 @@ import { apiClient, type CalendarOverview, type DocItem, type ArtifactItem, type
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { PageShell } from '@/components/ui/page-shell'
 
 // ── Morning Briefing card ──────────────────────────────────────────────────
 
@@ -340,7 +341,7 @@ export function Dashboard() {
   const todayLabel = now.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })
 
   return (
-    <div className="space-y-6">
+    <PageShell className="space-y-6">
 
       {/* Header + API status badge */}
       <div className="flex items-start justify-between">
@@ -490,6 +491,6 @@ export function Dashboard() {
         )}
       </div>
 
-    </div>
+    </PageShell>
   )
 }

@@ -10,6 +10,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
+import { PageHeader, PageShell } from '@/components/ui/page-shell'
 import { apiClient, type ArtifactItem, type DocItem } from '@/api/client'
 import { formatBytes, formatDate } from '@/lib/utils'
 
@@ -622,12 +623,11 @@ export function Artifacts() {
   }
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <h1 className="text-2xl font-bold text-zinc-100">Artefatos</h1>
-          <p className="mt-1 text-sm text-zinc-400">Resumos, checklists e outros artefatos gerados pelo agente</p>
-        </div>
+    <PageShell>
+      <PageHeader
+        title="Artefatos"
+        subtitle="Resumos, checklists e outros artefatos gerados pelo agente"
+        actions={(
         <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
@@ -649,7 +649,7 @@ export function Artifacts() {
           </Button>
           <Button
             variant="outline"
-            onClick={() => window.location.href = '/study-plan'}
+            onClick={() => window.location.href = '/studyplan'}
             className="border-emerald-700 text-emerald-400 hover:bg-emerald-900/20"
             title="Cria plano de estudos completo: sessões, tarefas, flashcards"
           >
@@ -661,7 +661,8 @@ export function Artifacts() {
             Novo Artefato
           </Button>
         </div>
-      </div>
+        )}
+      />
 
       {/* Descrições das ações principais */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
@@ -761,6 +762,6 @@ export function Artifacts() {
       {showDigest && <SmartDigestDialog onClose={() => setShowDigest(false)} />}
       {showCreate && <CreateArtifactDialog onClose={() => setShowCreate(false)} />}
       {previewFile && <PreviewDialog filename={previewFile} onClose={() => setPreviewFile(null)} />}
-    </div>
+    </PageShell>
   )
 }

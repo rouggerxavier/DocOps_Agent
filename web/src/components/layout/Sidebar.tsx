@@ -1,19 +1,19 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { NavLink } from 'react-router-dom'
 import {
-  LayoutDashboard,
-  Upload,
-  MessageSquare,
-  FileText,
   Archive,
-  CalendarDays,
   BookOpen,
-  LogOut,
-  StickyNote,
-  ListTodo,
-  Layers,
+  CalendarDays,
+  FileText,
   GraduationCap,
   KanbanSquare,
+  Layers,
+  LayoutDashboard,
+  ListTodo,
+  LogOut,
+  MessageSquare,
+  StickyNote,
+  Upload,
   X,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
@@ -24,21 +24,33 @@ import { FocusTimer, FocusTimerTrigger } from '@/components/FocusTimer'
 
 type SidebarProps = {
   mobileOpen: boolean
+  isDesktop: boolean
   onMobileClose: () => void
 }
 
-export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
+export function Sidebar({ mobileOpen, isDesktop, onMobileClose }: SidebarProps) {
   const { user, logout } = useAuth()
   const [focusOpen, setFocusOpen] = useState(false)
+  const sidebarRef = useRef<HTMLElement | null>(null)
 
   const { data: calendarOverview } = useQuery<CalendarOverview>({
     queryKey: ['calendar-overview', 'today'],
     queryFn: () => apiClient.getCalendarOverview(),
-    refetchInterval: 5 * 60 * 1000, // refetch every 5 min
+    refetchInterval: 5 * 60 * 1000,
     retry: 1,
   })
 
   const todayReminders = calendarOverview?.today_reminders.length ?? 0
+  const isMobileClosed = !mobileOpen && !isDesktop
+
+  useEffect(() => {
+    const sidebar = sidebarRef.current
+    if (!sidebar) return
+    ;(sidebar as HTMLElement & { inert?: boolean }).inert = isMobileClosed
+    return () => {
+      ;(sidebar as HTMLElement & { inert?: boolean }).inert = false
+    }
+  }, [isMobileClosed])
 
   const links = [
     { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, end: true, badge: null },
@@ -57,33 +69,38 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
   return (
     <>
       <aside
+        ref={sidebarRef}
+        id="app-sidebar"
         className={cn(
-          'fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-zinc-800 bg-zinc-950 transition-transform duration-200',
+          'fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r app-divider bg-[color:var(--ui-bg)]/96 backdrop-blur transition-transform duration-200',
+          mobileOpen || isDesktop ? 'pointer-events-auto' : 'pointer-events-none',
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
           'md:translate-x-0'
         )}
+        aria-hidden={isMobileClosed ? true : undefined}
       >
-        {/* Logo */}
-        <div className="flex h-16 items-center gap-3 border-b border-zinc-800 px-6">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600">
+        <div className="flex h-16 items-center gap-3 border-b app-divider px-5">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--ui-border-strong)] bg-[color:var(--ui-accent-soft)]">
             <BookOpen className="h-4 w-4 text-white" />
           </div>
           <div>
-            <p className="text-sm font-semibold text-zinc-100">DocOps Agent</p>
-            <p className="text-xs text-zinc-500">RAG Local</p>
+            <p className="text-sm font-semibold text-[color:var(--ui-text)]">DocOps Agent</p>
+            <p className="font-meta text-xs text-[color:var(--ui-text-meta)]">Workspace interno</p>
           </div>
           <button
             type="button"
             aria-label="Fechar menu"
-            className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-100 md:hidden"
+            className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border)] hover:bg-[color:var(--ui-surface-1)] hover:text-[color:var(--ui-text)] md:hidden"
             onClick={onMobileClose}
           >
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        {/* Navigation */}
         <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-4">
+          <p className="px-2 pb-2 font-meta text-[10px] font-semibold uppercase tracking-[0.2em] text-[color:var(--ui-text-meta)]">
+            Navegação
+          </p>
           {links.map(({ to, label, icon: Icon, end, badge }) => (
             <NavLink
               key={to}
@@ -91,10 +108,10 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
               end={end}
               className={({ isActive }) =>
                 cn(
-                  'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
+                  'flex items-center gap-3 rounded-lg border px-3 py-2 text-sm font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ui-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--ui-bg)]',
                   isActive
-                    ? 'bg-blue-600/20 text-blue-400'
-                    : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'
+                    ? 'border-[color:var(--ui-border-strong)] bg-[color:var(--ui-accent-soft)] text-[#8eaefc]'
+                    : 'border-transparent text-[color:var(--ui-text-dim)] hover:border-[color:var(--ui-border)] hover:bg-[color:var(--ui-surface-1)] hover:text-[color:var(--ui-text)]'
                 )
               }
               onClick={onMobileClose}
@@ -102,7 +119,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
               <Icon className="h-4 w-4 shrink-0" />
               <span className="flex-1">{label}</span>
               {badge !== null && (
-                <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-600 px-1 text-[10px] font-bold text-white">
+                <span className="flex h-4 min-w-4 items-center justify-center rounded-full border border-[color:var(--ui-border-strong)] bg-[color:var(--ui-accent)] px-1 text-[10px] font-bold text-white">
                   {badge}
                 </span>
               )}
@@ -110,23 +127,22 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
           ))}
         </nav>
 
-        {/* Footer */}
-        <div className="border-t border-zinc-800 px-4 py-4 space-y-1">
+        <div className="space-y-1 border-t app-divider px-4 py-4">
           {user && (
-            <div className="min-w-0 px-1 mb-2">
-              <p className="truncate text-xs font-medium text-zinc-300">{user.name}</p>
-              <p className="truncate text-xs text-zinc-600">{user.email}</p>
+            <div className="mb-2 min-w-0 px-1">
+              <p className="truncate text-xs font-medium text-[color:var(--ui-text-dim)]">{user.name}</p>
+              <p className="truncate text-xs text-[color:var(--ui-text-meta)]">{user.email}</p>
             </div>
           )}
           <FocusTimerTrigger onClick={() => setFocusOpen(true)} />
           <button
             onClick={logout}
-            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-red-400"
+            className="flex w-full items-center gap-2 rounded-lg border border-transparent px-3 py-2 text-xs font-medium text-[color:var(--ui-text-meta)] transition-colors hover:border-[#944747] hover:bg-[#8f3f3f]/15 hover:text-[#efb0b0]"
           >
             <LogOut className="h-3.5 w-3.5 shrink-0" />
             Sair
           </button>
-          <p className="px-1 text-xs text-zinc-700">v0.1.0 · Gemini + Chroma</p>
+          <p className="px-1 text-xs text-[color:var(--ui-text-meta)]">v0.1.0 · Gemini + Chroma</p>
         </div>
       </aside>
 
@@ -134,7 +150,7 @@ export function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
         <button
           type="button"
           aria-label="Fechar menu"
-          className="fixed inset-0 z-30 bg-zinc-950/70 md:hidden"
+          className="fixed inset-0 z-30 bg-[color:var(--ui-bg)]/72 md:hidden"
           onClick={onMobileClose}
         />
       )}

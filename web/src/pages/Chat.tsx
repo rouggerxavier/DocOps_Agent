@@ -414,11 +414,11 @@ export function Chat() {
   const isPending = mutation.isPending
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] gap-0 overflow-hidden">
+    <div className="flex h-[calc(100vh-4rem)] gap-0 overflow-hidden rounded-2xl border app-divider bg-[color:var(--ui-bg-alt)] shadow-[0_16px_36px_rgba(2,4,8,0.3)]">
       {/* ── Sidebar de sessões ────────────────────────────────────────────── */}
       {sidebarOpen && (
-        <div className="flex w-56 shrink-0 flex-col border-r border-zinc-800 bg-zinc-950">
-          <div className="flex items-center justify-between border-b border-zinc-800 px-3 py-3">
+        <div className="flex w-56 shrink-0 flex-col border-r app-divider bg-[color:var(--ui-bg)]">
+          <div className="flex items-center justify-between border-b app-divider px-3 py-3">
             <span className="text-xs font-semibold text-zinc-400">Conversas</span>
             <button
               onClick={createNewSession}
@@ -455,7 +455,7 @@ export function Chat() {
               </div>
             ))}
           </div>
-          <div className="border-t border-zinc-800 px-3 py-2">
+          <div className="border-t app-divider px-3 py-2">
             <p className="text-[10px] text-zinc-600">
               <Clock className="mr-1 inline h-3 w-3" />
               Salvo localmente
@@ -467,7 +467,7 @@ export function Chat() {
       {/* ── Área principal ────────────────────────────────────────────────── */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-center gap-3 border-b border-zinc-800 bg-zinc-950 px-4 py-3">
+        <div className="flex items-center gap-3 border-b app-divider bg-[color:var(--ui-bg)] px-4 py-3">
           <button
             onClick={() => setSidebarOpen(v => !v)}
             className="flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
@@ -489,7 +489,7 @@ export function Chat() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto bg-zinc-950 px-4 py-4 space-y-4">
+        <div className="flex-1 overflow-y-auto bg-[color:var(--ui-bg-alt)] px-4 py-4 space-y-4">
           {messages.length === 0 && (
             <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
               <Bot className="h-12 w-12 text-zinc-700" />
@@ -523,7 +523,7 @@ export function Chat() {
         </div>
 
         {/* Input area */}
-        <div className="border-t border-zinc-800 bg-zinc-950 p-4 space-y-2">
+        <div className="border-t app-divider bg-[color:var(--ui-bg)] p-4 space-y-2">
           {/* Filtros colapsáveis */}
           <button
             onClick={() => setFiltersOpen(v => !v)}
@@ -629,8 +629,8 @@ export function Chat() {
 
       {/* ── Painel de fontes — só aparece quando há fontes ────────────────── */}
       {hasSources && (
-        <div className="w-56 shrink-0 border-l border-zinc-800 bg-zinc-950 flex flex-col">
-          <CardHeader className="border-b border-zinc-800 py-3">
+        <div className="flex w-56 shrink-0 flex-col border-l app-divider bg-[color:var(--ui-bg)]">
+          <CardHeader className="border-b app-divider py-3">
             <CardTitle className="flex items-center gap-2 text-sm">
               <FileText className="h-4 w-4 text-blue-400" />
               Fontes Citadas

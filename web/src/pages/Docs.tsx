@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { PageHeader, PageShell } from '@/components/ui/page-shell'
 import { apiClient, type DocItem } from '@/api/client'
 
 function CompareDialog({
@@ -437,13 +438,11 @@ export function Docs() {
   )
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-zinc-100">Documentos Indexados</h1>
-        <p className="mt-1 text-sm text-zinc-400">
-          Gerencie e opere sobre seus documentos
-        </p>
-      </div>
+    <PageShell>
+      <PageHeader
+        title="Documentos Indexados"
+        subtitle="Gerencie e opere sobre seus documentos"
+      />
 
       {/* Search */}
       <div className="relative">
@@ -553,6 +552,6 @@ export function Docs() {
       {digestDoc && (
         <SmartDigestDialog doc={digestDoc} onClose={() => setDigestDoc(null)} />
       )}
-    </div>
+    </PageShell>
   )
 }

@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { PageShell } from '@/components/ui/page-shell'
 import { apiClient, type IngestResponse } from '@/api/client'
 import { cn } from '@/lib/utils'
 import * as XLSX from 'xlsx'
@@ -248,7 +249,7 @@ export function Ingest() {
   }, [previewIndex, selectedFiles])
 
   return (
-    <div className="space-y-8">
+    <PageShell>
       <div>
         <h1 className="text-2xl font-bold text-zinc-100">Inserção de Documentos</h1>
         <p className="mt-1 text-sm text-zinc-400">
@@ -747,7 +748,6 @@ export function Ingest() {
           </CardContent>
         </Card>
       )}
-    </div>
+    </PageShell>
   )
 }
-

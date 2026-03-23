@@ -4,22 +4,28 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '@/lib/utils'
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg border text-sm font-medium transition-colors duration-150 touch-manipulation focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ui-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--ui-bg)] disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       variant: {
-        default: 'bg-blue-600 text-white hover:bg-blue-700',
-        destructive: 'bg-red-600 text-white hover:bg-red-700',
-        outline: 'border border-zinc-700 bg-transparent text-zinc-100 hover:bg-zinc-800',
-        secondary: 'bg-zinc-800 text-zinc-100 hover:bg-zinc-700',
-        ghost: 'text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100',
-        link: 'text-blue-400 underline-offset-4 hover:underline',
+        default:
+          'border-[color:var(--ui-accent)] bg-[color:var(--ui-accent)] text-white shadow-[0_0_0_1px_rgba(11,14,18,0.32)_inset] hover:border-[color:var(--ui-accent-strong)] hover:bg-[color:var(--ui-accent-strong)]',
+        destructive:
+          'border-[#944747] bg-[#8f3f3f] text-[#fde6e6] hover:border-[#a65050] hover:bg-[#9f4b4b]',
+        outline:
+          'border-[color:var(--ui-border-strong)] bg-transparent text-[color:var(--ui-text)] hover:border-[color:var(--ui-accent)] hover:bg-[color:var(--ui-accent-soft)]',
+        secondary:
+          'border-[color:var(--ui-border)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text)] hover:border-[color:var(--ui-border-strong)] hover:bg-[color:var(--ui-surface-3)]',
+        ghost:
+          'border-transparent bg-transparent text-[color:var(--ui-text-dim)] hover:border-[color:var(--ui-border)] hover:bg-[color:var(--ui-surface-1)] hover:text-[color:var(--ui-text)]',
+        link:
+          'border-transparent bg-transparent p-0 text-[#7ea1ff] underline-offset-4 hover:text-[#9bb7ff] hover:underline',
       },
       size: {
-        default: 'h-9 px-4 py-2',
-        sm: 'h-8 rounded-md px-3 text-xs',
-        lg: 'h-10 rounded-md px-8',
-        icon: 'h-9 w-9',
+        default: 'min-h-11 px-4 py-2 md:h-9 md:min-h-0',
+        sm: 'min-h-11 px-3 py-2 text-xs md:h-8 md:min-h-0',
+        lg: 'min-h-11 px-8 py-2.5 md:h-10 md:min-h-0',
+        icon: 'h-11 w-11 md:h-9 md:w-9',
       },
     },
     defaultVariants: {

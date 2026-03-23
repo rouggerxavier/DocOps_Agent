@@ -847,11 +847,11 @@ export function Schedule() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] gap-0 overflow-hidden">
+    <div className="flex h-[calc(100vh-4rem)] gap-0 overflow-hidden rounded-2xl border app-divider bg-[color:var(--ui-bg-alt)] shadow-[0_16px_36px_rgba(2,4,8,0.3)]">
       {/* ── COLUNA ESQUERDA: Calendário ─────────────────────────────────────── */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Header do calendário */}
-        <div className="flex items-center justify-between border-b border-zinc-800 bg-zinc-950 px-6 py-4">
+        <div className="flex items-center justify-between border-b app-divider bg-[color:var(--ui-bg)] px-6 py-4">
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600/20">
               <Calendar className="h-4 w-4 text-blue-400" />
@@ -1006,9 +1006,9 @@ export function Schedule() {
       </div>
 
       {/* ── COLUNA DIREITA: Detalhes + Formulários ───────────────────────────── */}
-      <div className="flex w-80 shrink-0 flex-col gap-0 overflow-hidden border-l border-zinc-800">
+      <div className="flex w-80 shrink-0 flex-col gap-0 overflow-hidden border-l app-divider">
         {/* Cabeçalho do painel lateral */}
-        <div className="border-b border-zinc-800 bg-zinc-950 px-4 py-4">
+        <div className="border-b app-divider bg-[color:var(--ui-bg)] px-4 py-4">
           <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Selecionado</p>
           <p className="mt-0.5 text-sm font-semibold capitalize text-zinc-200">{selectedDateLabel}</p>
         </div>

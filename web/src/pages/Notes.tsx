@@ -239,11 +239,11 @@ export function Notes() {
   }
 
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-[calc(100vh-4rem)] overflow-hidden rounded-2xl border app-divider bg-[color:var(--ui-bg-alt)] shadow-[0_16px_36px_rgba(2,4,8,0.3)]">
       {/* Sidebar de notas */}
-      <aside className="flex w-72 flex-col border-r border-zinc-800 bg-zinc-950">
+      <aside className="flex w-72 flex-col border-r app-divider bg-[color:var(--ui-bg)]">
         {/* Header */}
-        <div className="border-b border-zinc-800 px-4 py-4">
+        <div className="border-b app-divider px-4 py-4">
           <div className="flex items-center justify-between mb-3">
             <h1 className="text-sm font-semibold text-zinc-100">Notas</h1>
             <Button
@@ -294,13 +294,13 @@ export function Notes() {
         </div>
 
         {/* Footer */}
-        <div className="border-t border-zinc-800 px-4 py-2">
+        <div className="border-t app-divider px-4 py-2">
           <p className="text-xs text-zinc-700">{notes.length} {notes.length === 1 ? 'nota' : 'notas'}</p>
         </div>
       </aside>
 
       {/* Editor */}
-      <main className="flex flex-1 flex-col bg-zinc-950">
+      <main className="flex flex-1 flex-col bg-[color:var(--ui-bg-alt)]">
         {(creating || activeNote) ? (
           <NoteEditor
             key={creating ? 'new' : activeNote?.id}

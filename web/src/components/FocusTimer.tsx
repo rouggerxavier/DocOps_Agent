@@ -266,7 +266,7 @@ export function FocusTimerTrigger({ onClick }: { onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-medium text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+      className="flex items-center gap-2 rounded-lg border border-transparent px-3 py-2 text-xs font-medium text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border)] hover:bg-[color:var(--ui-surface-1)] hover:text-[color:var(--ui-text-dim)]"
       title="Modo Foco"
     >
       <Timer className="h-3.5 w-3.5 shrink-0" />

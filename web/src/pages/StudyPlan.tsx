@@ -9,6 +9,7 @@ import ReactMarkdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
+import { PageShell } from '@/components/ui/page-shell'
 import { apiClient, type DocItem, type StudyPlanItem, type StudyPlanDocResponse } from '@/api/client'
 
 // ── Create Study Plan Dialog ──────────────────────────────────────────────────
@@ -344,7 +345,7 @@ export function StudyPlan() {
   }
 
   return (
-    <div className="space-y-8">
+    <PageShell>
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-zinc-100">Plano de Estudos</h1>
@@ -403,6 +404,6 @@ export function StudyPlan() {
           onCreated={() => qc.invalidateQueries({ queryKey: ['study-plans'] })}
         />
       )}
-    </div>
+    </PageShell>
   )
 }

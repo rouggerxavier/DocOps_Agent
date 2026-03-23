@@ -1,27 +1,50 @@
+@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Source+Sans+3:wght@400;500;600;700&display=swap');
 @import "tailwindcss";
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-    --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-    --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221.2 83.2% 53.3%;
-    --primary-foreground: 210 40% 98%;
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-    --destructive: 0 84.2% 60.2%;
+    color-scheme: dark;
+    --background: 220 20% 5%;
+    --foreground: 40 22% 93%;
+    --card: 221 28% 10%;
+    --card-foreground: 40 22% 93%;
+    --popover: 221 28% 10%;
+    --popover-foreground: 40 22% 93%;
+    --primary: 221 100% 59%;
+    --primary-foreground: 40 22% 93%;
+    --secondary: 218 30% 9%;
+    --secondary-foreground: 40 22% 93%;
+    --muted: 218 27% 8%;
+    --muted-foreground: 215 15% 61%;
+    --accent: 221 100% 59%;
+    --accent-foreground: 40 22% 93%;
+    --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 221.2 83.2% 53.3%;
-    --radius: 0.5rem;
+    --border: 214 18% 19%;
+    --input: 214 18% 19%;
+    --ring: 221 100% 59%;
+    --radius: 0.75rem;
+    --font-display: 'EB Garamond', Georgia, serif;
+    --font-body: 'Source Sans 3', 'Segoe UI', sans-serif;
+    --font-meta: 'IBM Plex Mono', 'Consolas', monospace;
+
+    --ui-bg: #0b0e12;
+    --ui-bg-alt: #0f141b;
+    --ui-surface-1: #121821;
+    --ui-surface-2: #171f29;
+    --ui-surface-3: #1b2531;
+    --ui-border: #27303a;
+    --ui-border-soft: #212a34;
+    --ui-border-strong: #33404f;
+    --ui-text: #f3f1eb;
+    --ui-text-dim: #aab3bf;
+    --ui-text-meta: #7e8896;
+    --ui-accent: #2f6bff;
+    --ui-accent-strong: #2457d6;
+    --ui-accent-soft: rgba(47, 107, 255, 0.16);
+    --ui-success: #30b07a;
+    --ui-warning: #d2a04a;
+    --ui-danger: #d16262;
   }
 
   * {
@@ -29,35 +52,191 @@
   }
 
   body {
-    background-color: hsl(240 10% 3.9%);
-    color: hsl(0 0% 95%);
-    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    min-height: 100vh;
+    background-color: var(--ui-bg);
+    color: var(--ui-text);
+    font-family: var(--font-body);
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    line-height: 1.5;
+  }
+
+  ::selection {
+    background-color: hsl(var(--primary) / 0.25);
+    color: hsl(var(--foreground));
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background: color-mix(in srgb, var(--ui-border-strong) 88%, transparent);
+    background-clip: padding-box;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--ui-border-strong) 100%, transparent);
+    background-clip: padding-box;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
   }
 }
 
-/* ── Background orb drift (mobile only — desktop handled by JS) ──────────── */
-@keyframes orbDrift1 {
-  0%, 100% { transform: translate(0, 0); }
-  25% { transform: translate(20px, -15px); }
-  50% { transform: translate(-10px, 20px); }
-  75% { transform: translate(15px, 10px); }
-}
-@keyframes orbDrift2 {
-  0%, 100% { transform: translate(0, 0); }
-  33% { transform: translate(-25px, 10px); }
-  66% { transform: translate(15px, -20px); }
-}
-@keyframes orbDrift3 {
-  0%, 100% { transform: translate(0, 0); }
-  20% { transform: translate(10px, 15px); }
-  40% { transform: translate(-15px, -10px); }
-  60% { transform: translate(20px, -5px); }
-  80% { transform: translate(-5px, 20px); }
-}
+@layer utilities {
+  .font-display {
+    font-family: var(--font-display);
+  }
 
-@media (max-width: 767px) and (prefers-reduced-motion: no-preference) {
-  .orb-drift-1 { animation: orbDrift1 30s ease-in-out infinite; }
-  .orb-drift-2 { animation: orbDrift2 25s ease-in-out infinite; }
-  .orb-drift-3 { animation: orbDrift3 35s ease-in-out infinite; }
+  .font-meta {
+    font-family: var(--font-meta);
+  }
+
+  .app-page {
+    @apply space-y-8;
+  }
+
+  .app-page-header {
+    @apply flex flex-wrap items-start justify-between gap-4 border-b pb-5;
+    border-color: color-mix(in srgb, var(--ui-border) 78%, transparent);
+  }
+
+  .app-page-title {
+    @apply text-2xl font-semibold tracking-tight;
+    color: var(--ui-text);
+  }
+
+  .app-page-subtitle {
+    @apply mt-1 text-sm;
+    color: var(--ui-text-dim);
+  }
+
+  .app-kicker {
+    @apply text-[11px] font-semibold uppercase tracking-[0.16em];
+    font-family: var(--font-meta);
+    color: var(--ui-text-meta);
+  }
+
+  .app-surface {
+    @apply rounded-xl border;
+    border-color: color-mix(in srgb, var(--ui-border) 86%, transparent);
+    background-color: var(--ui-surface-1);
+    box-shadow: 0 1px 0 rgba(11, 14, 18, 0.5), 0 18px 36px rgba(2, 4, 8, 0.28);
+  }
+
+  .app-surface-muted {
+    @apply rounded-xl border;
+    border-color: color-mix(in srgb, var(--ui-border-soft) 82%, transparent);
+    background-color: color-mix(in srgb, var(--ui-surface-1) 62%, var(--ui-bg-alt));
+  }
+
+  .app-surface-strong {
+    @apply rounded-xl border;
+    border-color: color-mix(in srgb, var(--ui-border-strong) 84%, transparent);
+    background-color: var(--ui-surface-2);
+    box-shadow: inset 0 1px 0 rgba(243, 241, 235, 0.03);
+  }
+
+  .app-divider {
+    border-color: color-mix(in srgb, var(--ui-border) 80%, transparent);
+  }
+
+  .app-chip {
+    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium;
+    border-color: color-mix(in srgb, var(--ui-border) 92%, transparent);
+    color: var(--ui-text-dim);
+    background-color: color-mix(in srgb, var(--ui-surface-2) 72%, transparent);
+  }
+
+  .app-editorial {
+    @apply relative;
+    background-color: var(--ui-bg);
+  }
+
+  .app-editorial::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(76% 40% at 88% 8%, rgba(47, 107, 255, 0.07), transparent 70%),
+      radial-gradient(62% 34% at 7% 84%, rgba(82, 114, 158, 0.08), transparent 74%),
+      linear-gradient(180deg, #0b0e12 0%, #0f141b 34%, #0f151d 66%, #0b0e12 100%);
+  }
+
+  .app-editorial::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.14;
+    background-image:
+      linear-gradient(to right, rgba(126, 136, 150, 0.24) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(126, 136, 150, 0.1) 1px, transparent 1px);
+    background-size: 144px 100%, 100% 144px;
+    mask-image: linear-gradient(to bottom, transparent, black 18%, black 86%, transparent);
+  }
+
+  .app-editorial .bg-zinc-950 {
+    background-color: var(--ui-bg) !important;
+  }
+
+  .app-editorial .bg-zinc-900 {
+    background-color: var(--ui-surface-1) !important;
+  }
+
+  .app-editorial .bg-zinc-800 {
+    background-color: color-mix(in srgb, var(--ui-surface-2) 92%, black) !important;
+  }
+
+  .app-editorial .border-zinc-800 {
+    border-color: color-mix(in srgb, var(--ui-border) 85%, transparent) !important;
+  }
+
+  .app-editorial .border-zinc-700 {
+    border-color: color-mix(in srgb, var(--ui-border-strong) 76%, transparent) !important;
+  }
+
+  .app-editorial .text-zinc-100 {
+    color: var(--ui-text) !important;
+  }
+
+  .app-editorial .text-zinc-400 {
+    color: var(--ui-text-dim) !important;
+  }
+
+  .app-editorial .text-zinc-500,
+  .app-editorial .text-zinc-600,
+  .app-editorial .text-zinc-700 {
+    color: var(--ui-text-meta) !important;
+  }
+
+  .app-editorial .text-blue-400 {
+    color: #7ea1ff !important;
+  }
+
+  .app-editorial .bg-blue-600 {
+    background-color: var(--ui-accent) !important;
+  }
+
+  .app-editorial .hover\:bg-blue-700:hover {
+    background-color: var(--ui-accent-strong) !important;
+  }
 }

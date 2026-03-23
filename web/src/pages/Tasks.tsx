@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
@@ -8,8 +8,46 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { PageShell } from '@/components/ui/page-shell'
 import { apiClient, type TaskItem, type TaskChecklistItem, type TaskActivityLog } from '@/api/client'
 import { cn } from '@/lib/utils'
+
+type BodyScrollLockState = {
+  count: number
+  overflow: string
+}
+
+type ScrollLockWindow = Window & {
+  __docopsBodyScrollLockState?: BodyScrollLockState
+}
+
+function acquireBodyScrollLock() {
+  const scrollLockWindow = window as ScrollLockWindow
+  const state = scrollLockWindow.__docopsBodyScrollLockState ??= {
+    count: 0,
+    overflow: '',
+  }
+
+  if (state.count === 0) {
+    state.overflow = document.body.style.overflow
+  }
+
+  state.count += 1
+  document.body.style.overflow = 'hidden'
+
+  return () => {
+    const currentState = scrollLockWindow.__docopsBodyScrollLockState
+
+    if (!currentState) return
+
+    currentState.count = Math.max(0, currentState.count - 1)
+
+    if (currentState.count === 0) {
+      document.body.style.overflow = currentState.overflow
+      currentState.overflow = ''
+    }
+  }
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -57,6 +95,8 @@ function TaskDrawer({ task, onClose }: { task: TaskItem; onClose: () => void }) 
   const qc = useQueryClient()
   const [newItem, setNewItem] = useState('')
   const [activityText, setActivityText] = useState('')
+
+  useEffect(() => acquireBodyScrollLock(), [])
 
   const { data: checklist = [], isLoading: loadingChecklist } = useQuery<TaskChecklistItem[]>({
     queryKey: ['task-checklist', task.id],
@@ -640,7 +680,7 @@ export function Tasks() {
 
   return (
     <>
-      <div className="space-y-6">
+      <PageShell className="space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -706,7 +746,7 @@ export function Tasks() {
             />
           ))}
         </div>
-      </div>
+      </PageShell>
 
       {/* Task drawer */}
       {drawerTask && (

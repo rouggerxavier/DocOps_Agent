@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { FileText, BookOpen, CheckCircle2, Clock, ChevronRight, ChevronLeft, GraduationCap, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { PageShell } from '@/components/ui/page-shell'
 import { apiClient, type DocItem, type ReadingStatus, type GapAnalysisResponse } from '@/api/client'
 import { cn } from '@/lib/utils'
 
@@ -193,7 +194,7 @@ export function ReadingKanban() {
 
   return (
     <>
-      <div className="space-y-6">
+      <PageShell className="space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
@@ -284,7 +285,7 @@ export function ReadingKanban() {
             })}
           </div>
         )}
-      </div>
+      </PageShell>
 
       {gapOpen && <GapAnalysisModal onClose={() => setGapOpen(false)} />}
     </>

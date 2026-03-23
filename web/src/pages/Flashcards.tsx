@@ -8,6 +8,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent } from '@/components/ui/card'
+import { PageShell } from '@/components/ui/page-shell'
 import { apiClient, type FlashcardDeck, type FlashcardDeckListItem, type DocItem } from '@/api/client'
 import { cn } from '@/lib/utils'
 
@@ -603,7 +604,7 @@ export function Flashcards() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <PageShell className="mx-auto max-w-3xl space-y-6">
       <div className="flex items-center justify-between">
         <div className="text-center flex-1">
           <h1 className="text-2xl font-bold text-zinc-100">Flashcards</h1>
@@ -677,6 +678,6 @@ export function Flashcards() {
           onClose={() => setShowGenerate(false)}
         />
       )}
-    </div>
+    </PageShell>
   )
 }

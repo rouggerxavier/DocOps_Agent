@@ -1,23 +1,23 @@
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'sonner'
 import { useEffect } from 'react'
 import { AuthProvider, useAuth } from '@/auth/AuthProvider'
 import { Layout } from '@/components/layout/Layout'
-import { Dashboard } from '@/pages/Dashboard'
-import { Ingest } from '@/pages/Ingest'
-import { Chat } from '@/pages/Chat'
-import { Docs } from '@/pages/Docs'
 import { Artifacts } from '@/pages/Artifacts'
-import { Schedule } from '@/pages/Schedule'
-import { Notes } from '@/pages/Notes'
-import { Tasks } from '@/pages/Tasks'
+import { Chat } from '@/pages/Chat'
+import { Dashboard } from '@/pages/Dashboard'
+import { Docs } from '@/pages/Docs'
 import { Flashcards } from '@/pages/Flashcards'
-import { StudyPlan } from '@/pages/StudyPlan'
-import { ReadingKanban } from '@/pages/ReadingKanban'
-import { Login } from '@/pages/Login'
-import { Register } from '@/pages/Register'
+import { Ingest } from '@/pages/Ingest'
 import { Landing } from '@/pages/Landing'
+import { Login } from '@/pages/Login'
+import { Notes } from '@/pages/Notes'
+import { ReadingKanban } from '@/pages/ReadingKanban'
+import { Register } from '@/pages/Register'
+import { Schedule } from '@/pages/Schedule'
+import { StudyPlan } from '@/pages/StudyPlan'
+import { Tasks } from '@/pages/Tasks'
 
 const PAGE_TITLES: Record<string, string> = {
   '/': 'DocOps Agent',
@@ -96,7 +96,11 @@ export default function App() {
             theme="dark"
             position="top-right"
             toastOptions={{
-              style: { background: '#18181b', border: '1px solid #27272a', color: '#f4f4f5' },
+              style: {
+                background: '#121821',
+                border: '1px solid #27303A',
+                color: '#F3F1EB',
+              },
             }}
           />
         </AuthProvider>
