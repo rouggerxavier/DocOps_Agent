@@ -3,7 +3,7 @@ services:
     name: docops-agent
     runtime: docker
     # O Dockerfile unificado faz o build do React (Node) + sobe o Python num único container
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./docker/production/Dockerfile
     envVars:
       # ── Obrigatórias ──────────────────────────────────────────────────────
       - key: GEMINI_API_KEY

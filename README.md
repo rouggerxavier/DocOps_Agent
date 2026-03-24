@@ -153,7 +153,11 @@ DocOps_Agent/
 │       └── components/         # Layout, Sidebar, UI primitives
 ├── vercel.json                 # Rewrites Vercel (SPA + proxy /api/* → Oracle)
 ├── docker-compose.yml
-├── Dockerfile
+├── docker/
+│   ├── backend/Dockerfile
+│   ├── frontend/Dockerfile
+│   ├── production/Dockerfile
+│   └── nginx.conf
 ├── pyproject.toml
 └── .env                        # Não commitado
 ```
