@@ -37,6 +37,11 @@ htmlcov/
 screenshot_*.png
 test_*.png
 audit_*.png
+audit-*.png
+landing_*.png
+bg-*.png
+phase*.png
+v2_*.png
 dashboard-*.png
 !web/public/dashboard-preview.png
 
