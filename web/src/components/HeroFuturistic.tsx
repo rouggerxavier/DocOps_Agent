@@ -192,7 +192,7 @@ export function HeroFuturistic({
     setSupportsWebGPU(typeof navigator !== 'undefined' && 'gpu' in navigator)
   }, [])
 
-  const showFallback = prefersReducedMotion || !supportsWebGPU
+  const showFallback = !supportsWebGPU
 
   return (
     <div
@@ -217,8 +217,8 @@ export function HeroFuturistic({
           }}
         >
           <Suspense fallback={null}>
-            <PostProcessing animated={!prefersReducedMotion} />
-            <Scene animated={!prefersReducedMotion} interactive={interactive} />
+            <PostProcessing animated={true} />
+            <Scene animated={true} interactive={interactive} />
           </Suspense>
         </Canvas>
       )}
