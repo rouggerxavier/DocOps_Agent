@@ -21,7 +21,6 @@ import {
   vec2,
   vec3,
 } from 'three/tsl'
-import { useReducedMotion } from '@/hooks/useReducedMotion'
 import { cn } from '@/lib/utils'
 
 const TEXTUREMAP = { src: 'https://i.postimg.cc/XYwvXN8D/img-4.png' }
@@ -185,7 +184,6 @@ export function HeroFuturistic({
   interactive = true,
   fallbackMode = 'still',
 }: HeroFuturisticProps) {
-  const prefersReducedMotion = useReducedMotion()
   const [supportsWebGPU, setSupportsWebGPU] = useState(false)
 
   useEffect(() => {
