@@ -33,53 +33,53 @@ type EvidenceCard = {
 }
 
 const PROOF_CHIPS: ProofChip[] = [
-  { icon: FileText, label: 'Resposta com fonte' },
+  { icon: FileText, label: 'PDF, Word, texto' },
   { icon: Shield, label: 'Execução local' },
-  { icon: Layers, label: 'Multiformato' },
+  { icon: CalendarDays, label: 'Agenda integrada' },
 ]
 
 const PILLARS: Pillar[] = [
   {
     n: '01',
     icon: FileText,
-    title: 'Pergunte',
-    description: 'Use linguagem natural e volte direto ao trecho que sustenta a resposta.',
+    title: 'Suba seus documentos',
+    description: 'PDF, Word ou texto puro. O agente indexa, fragmenta e mantém tudo pronto para consulta.',
   },
   {
     n: '02',
     icon: CheckCircle2,
-    title: 'Comprove',
-    description: 'Cada saída é apresentada como evidência operacional, não como texto solto.',
+    title: 'Pergunte em linguagem natural',
+    description: 'A resposta vem com a fonte exata — página e documento — para você conferir antes de agir.',
   },
   {
     n: '03',
-    icon: Layers,
-    title: 'Organize',
-    description: 'Resumo, plano e revisão passam a existir no mesmo fluxo de trabalho.',
+    icon: CalendarDays,
+    title: 'Planeje e agende',
+    description: 'Peça um plano de estudos ou crie lembretes. O agente organiza na sua agenda direto pelo chat.',
   },
 ]
 
 const EVIDENCE_CARDS: EvidenceCard[] = [
   {
     icon: FileText,
-    eyebrow: 'Citação',
-    title: 'A origem aparece junto da resposta',
-    description: 'A decisão fica auditável antes de virar ação.',
-    lines: ['"Cláusula 4.2 exige registro rastreável para cada evidência."', 'Manual_operacional.pdf · pág. 18'],
+    eyebrow: 'Resposta rastreável',
+    title: 'Fonte junto da resposta',
+    description: 'Cada resposta indica o documento e o trecho exato que a sustenta.',
+    lines: ['"O prazo de entrega é de 30 dias corridos após assinatura."', 'Contrato_servicos.pdf · pág. 4'],
   },
   {
     icon: CalendarDays,
-    eyebrow: 'Plano',
-    title: 'O material vira sequência de execução',
-    description: 'O produto organiza o próximo passo com prioridade clara.',
-    lines: ['Seg · revisar conceitos críticos', 'Qua · consolidar nota de referência', 'Sex · gerar revisão ativa'],
+    eyebrow: 'Agenda',
+    title: 'Lembretes pelo chat',
+    description: 'Crie, edite e consulte eventos sem sair da conversa.',
+    lines: ['Criar lembrete para amanhã às 9h', '→ Lembrete criado: Revisão de contrato · seg 09:00'],
   },
   {
     icon: Layers,
-    eyebrow: 'Revisão',
-    title: 'Retenção sem excesso de interface',
-    description: 'Os artefatos de estudo aparecem de forma curta e acionável.',
-    lines: ['Frente · Qual requisito mínimo precisa ser provado?', 'Verso · Fonte explícita + contexto verificável'],
+    eyebrow: 'Plano de estudos',
+    title: 'Material vira cronograma',
+    description: 'O agente distribui o conteúdo dos seus documentos em sessões de estudo com prazo definido.',
+    lines: ['Seg · Cap. 1 — Fundamentos (2h)', 'Qua · Cap. 2 — Aplicações (2h)', 'Sex · Revisão geral (1h)'],
   },
 ]
 
@@ -210,13 +210,13 @@ export function Landing() {
                 className="max-w-[38rem] pt-3 sm:pt-4 lg:pt-0"
               >
                 <p className="font-meta text-[11px] uppercase tracking-[0.22em] text-[color:var(--ui-accent)]">
-                  Documento em contexto, não em excesso
+                  Agente de documentos com IA
                 </p>
                 <h1 className="font-display mt-4 text-[2.65rem] leading-[0.95] text-[color:var(--ui-text)] sm:mt-5 sm:text-[4.5rem] lg:text-[5.5rem]">
-                  Entenda o seu acervo sem carregar a interface junto.
+                  Seus documentos respondem. Com fonte.
                 </h1>
                 <p className="mt-5 max-w-[34rem] text-[0.98rem] leading-7 text-[color:var(--ui-text-dim)] sm:mt-6 sm:text-[1.08rem] sm:leading-8">
-                  O DocOps transforma documentos em resposta verificável, plano de execução e revisão contínua. Menos ruído na tela. Mais clareza no próximo passo.
+                  Suba PDFs e textos, faça perguntas em linguagem natural e receba respostas rastreáveis. O DocOps Agent ainda cria planos de estudo e gerencia sua agenda pelo chat.
                 </p>
 
                 <div className="mt-6 flex flex-col gap-3 sm:mt-8 sm:flex-row sm:items-center">
@@ -267,9 +267,9 @@ export function Landing() {
               transition={{ duration: 0.44, ease: EASE }}
               className="mb-8 max-w-[38rem] sm:mb-10"
             >
-              <p className="font-meta text-[11px] uppercase tracking-[0.2em] text-[color:var(--ui-text-meta)]">Valor essencial</p>
+              <p className="font-meta text-[11px] uppercase tracking-[0.2em] text-[color:var(--ui-text-meta)]">Como funciona</p>
               <h2 id="valor-heading" className="font-display mt-4 text-[2.7rem] leading-[0.96] text-[color:var(--ui-text)] sm:text-[3.4rem]">
-                O produto explica pouco e entrega o que importa.
+                Do documento à resposta em três passos.
               </h2>
             </motion.div>
 
@@ -289,12 +289,12 @@ export function Landing() {
                 transition={{ duration: 0.44, ease: EASE }}
                 className="mb-8 max-w-[40rem]"
               >
-                <p className="font-meta text-[11px] uppercase tracking-[0.2em] text-[color:var(--ui-accent)]">Prova curta</p>
+                <p className="font-meta text-[11px] uppercase tracking-[0.2em] text-[color:var(--ui-accent)]">Na prática</p>
                 <h2 id="prova-heading" className="font-display mt-4 text-[2.7rem] leading-[0.98] text-[color:var(--ui-text)] sm:text-[3.4rem]">
-                  A home mostra o comportamento do produto sem pedir uma demo inteira.
+                  O que o agente entrega no dia a dia.
                 </h2>
                 <p className="mt-4 max-w-[36rem] text-sm leading-7 text-[color:var(--ui-text-dim)] sm:text-base">
-                  Em vez de abrir uma interface densa na primeira dobra, a landing antecipa o que o DocOps produz quando a pergunta já precisa virar decisão.
+                  Respostas com fonte, agenda pelo chat e planos de estudo gerados direto do seu material.
                 </p>
               </motion.div>
 
@@ -315,12 +315,12 @@ export function Landing() {
               className="flex flex-col gap-6 rounded-[2rem] border border-[color:var(--ui-border)] bg-[rgba(255,255,255,0.03)] p-7 sm:p-9 lg:flex-row lg:items-end lg:justify-between"
             >
               <div className="max-w-[36rem]">
-                <p className="font-meta text-[11px] uppercase tracking-[0.2em] text-[color:var(--ui-text-meta)]">Pronto para começar</p>
+                <p className="font-meta text-[11px] uppercase tracking-[0.2em] text-[color:var(--ui-text-meta)]">Comece agora</p>
                 <h2 id="cta-heading" className="font-display mt-4 text-[2.5rem] leading-[0.98] text-[color:var(--ui-text)] sm:text-[3.2rem]">
-                  Menos interface para explicar. Mais produto para usar.
+                  Crie a conta e suba seu primeiro documento.
                 </h2>
                 <p className="mt-4 text-sm leading-7 text-[color:var(--ui-text-dim)] sm:text-base">
-                  Crie a conta, suba o material e deixe o acervo responder com contexto, prova e organização.
+                  Em minutos o agente já responde perguntas sobre o seu material, com a fonte de cada informação.
                 </p>
               </div>
 
@@ -345,7 +345,7 @@ export function Landing() {
 
         <footer className="border-t border-[color:var(--ui-border)]" role="contentinfo">
           <div className="mx-auto flex max-w-[1280px] flex-col gap-4 px-6 py-6 text-sm text-[color:var(--ui-text-dim)] sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10">
-            <p>© {new Date().getFullYear()} DocOps Agent. IA local para resposta rastreável.</p>
+            <p>© {new Date().getFullYear()} DocOps Agent. Agente de documentos com IA.</p>
             <div className="flex flex-wrap items-center gap-4">
               {FOOTER_LINKS.map((link) => (
                 <a
