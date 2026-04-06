@@ -325,14 +325,21 @@ export function Chat() {
   }, [activeSessionId])
 
   const mutation = useMutation({
-    mutationFn: (message: string) =>
-      apiClient.chat(
+    mutationFn: (message: string) => {
+      // Envia as últimas 6 mensagens como histórico para o backend resolver referências anafóricas
+      const recentHistory = (activeSession?.messages ?? [])
+        .filter(m => !m.streaming)
+        .slice(-6)
+        .map(m => ({ role: m.role, content: m.content }))
+      return apiClient.chat(
         message,
         activeSession?.id,
         undefined,
         selectedDocs.map(doc => doc.doc_id),
-        strictGrounding
-      ),
+        strictGrounding,
+        recentHistory
+      )
+    },
     onSuccess: (data: ChatResponse) => {
       if (streamTimerRef.current) clearTimeout(streamTimerRef.current)
       streamMessage(data.answer, data.sources, data.intent, data.calendar_action ?? null)

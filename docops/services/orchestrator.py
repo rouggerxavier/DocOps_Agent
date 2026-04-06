@@ -46,20 +46,44 @@ Intents possíveis:
 - "cascade_doc_review"   → usuário quer revisar/estudar um documento específico com flashcards
 - "cascade_task_deadline"→ usuário menciona entrega, deadline, prazo de um trabalho/projeto
 - "schedule_fc_reviews"  → usuário quer agendar revisões de flashcards já existentes
-- "create_task"          → criar tarefa simples sem prazo específico
+- "create_task"          → criar tarefa simples sem prazo específico (afazer, to-do, pendência)
 - "list_tasks"           → listar tarefas pendentes
 - "flashcard_hint"       → pede flashcards de um documento sem cascade
-- "cascade_create_note"  → usuário quer criar/salvar uma anotação, nota ou lembrete textual
+- "cascade_create_note"  → usuário quer criar/salvar uma ANOTAÇÃO ou NOTA textual (explicitamente menciona "nota", "anotação")
 - "cascade_create_summary" → usuário quer fazer um resumo de um documento específico
+- "calendar"             → qualquer coisa relacionada a calendário, agenda, lembrete, rotina, cronograma, horário fixo, blocos semanais, compromisso, evento
 - "rag"                  → pergunta sobre documentos, dúvida, QA — deve ir pro RAG
 
-Regras:
-- Se a mensagem for uma pergunta factual ou pedir informação de documento → "rag"
-- Se mencionar prova/exame/teste + data → "cascade_study_event"
-- Se mencionar "plano de estudos", "cronograma de estudos", "me ajuda a estudar [doc]", "estudar [doc] até [data]" → "cascade_study_plan"
-- Se mencionar entrega/prazo/deadline de projeto/trabalho + data → "cascade_task_deadline"
-- Se mencionar "cria uma nota", "salva essa anotação", "anota isso", "registra isso" → "cascade_create_note"
-- Se mencionar "resumo de", "resumir [doc]", "faz um resumo", "sumarize" → "cascade_create_summary"
+Regras PRIORITÁRIAS (em ordem de prioridade):
+1. CALENDÁRIO tem prioridade máxima sobre notas e tarefas. Use "calendar" se qualquer uma dessas condições for verdadeira:
+   - Menciona "calendário", "agenda", "cronograma", "rotina", "horário fixo", "bloco", "recorrente"
+   - Menciona "lembrete" (mesmo sem mencionar "calendário" explicitamente) → "calendar"
+   - Menciona dias da semana com horários (ex: "segunda das 8 às 12", "de segunda a sexta")
+   - Menciona horários fixos com frequência (ex: "todo dia", "toda semana", "de manhã")
+   - Pede para "organizar minha semana", "criar minha rotina", "montar meu cronograma"
+   - O usuário corrigiu explicitamente dizendo "não é nota", "não é tarefa", "é no calendário", "é na agenda"
+
+2. Use "cascade_create_note" SOMENTE se o usuário mencionar EXPLICITAMENTE "nota", "anotação", "anotar" — e NÃO houver menção a calendário/lembrete/rotina/horário.
+
+3. Use "create_task" SOMENTE se o usuário mencionar EXPLICITAMENTE "tarefa", "to-do", "afazer", "pendência" — e NÃO houver menção a calendário/lembrete/rotina/horário.
+
+4. Se a mensagem for uma pergunta factual ou pedir informação de documento → "rag"
+5. Se mencionar prova/exame/teste + data → "cascade_study_event"
+6. Se mencionar "plano de estudos", "cronograma de estudos", "me ajuda a estudar [doc]", "estudar [doc] até [data]" → "cascade_study_plan"
+7. Se mencionar entrega/prazo/deadline de projeto/trabalho + data → "cascade_task_deadline"
+8. Se mencionar "resumo de", "resumir [doc]", "faz um resumo", "sumarize" → "cascade_create_summary"
+
+Exemplos para calibração:
+- "lembrete no calendário para as 14h" → "calendar"
+- "criar um lembrete" → "calendar"
+- "criar minha rotina" → "calendar"
+- "segunda a sexta das 8 às 12 estágio" → "calendar"
+- "organizar minha semana" → "calendar"
+- "não é nas notas, é no calendário" → "calendar"
+- "anota isso: revisar capítulo 3" → "cascade_create_note"
+- "criar tarefa: entregar trabalho amanhã" → "create_task"  (sem deadline específico → "create_task"; com deadline → "cascade_task_deadline")
+- "tenho prova de física sexta" → "cascade_study_event"
+
 - Datas relativas: "amanhã"=+1d, "depois de amanhã"=+2d, "semana que vem"=+7d, "próxima semana"=+7d
 - Se não houver data clara, deadline_iso = null
 - doc_hint: nome ou parte do nome do documento mencionado, null se não mencionado
@@ -84,7 +108,7 @@ Formato de resposta:
   }}
 }}
 
-Mensagem do usuário: {{MESSAGE}}
+{{HISTORY_BLOCK}}Mensagem do usuário: {{MESSAGE}}
 """
 
 
@@ -121,6 +145,22 @@ def _parse_date_from_text(text: str) -> datetime | None:
                 # Se a data já passou neste ano, avança para o próximo
                 if candidate < now and not m.group(3):
                     candidate = datetime(year + 1, month, day, tzinfo=timezone.utc)
+                return candidate
+            except ValueError:
+                pass
+
+    # "dia DD" sem mês (ex: "até dia 08", "dia 8") → assume mês atual, ou próximo se já passou
+    m_day_only = re.search(r"(?:até\s+)?dia\s+(\d{1,2})(?!\s+de\s+\w)", t)
+    if m_day_only:
+        day = int(m_day_only.group(1))
+        if 1 <= day <= 31:
+            try:
+                candidate = datetime(now.year, now.month, day, tzinfo=timezone.utc)
+                if candidate < now:
+                    # Avança para o próximo mês
+                    next_month = now.month % 12 + 1
+                    next_year = now.year + (1 if now.month == 12 else 0)
+                    candidate = datetime(next_year, next_month, day, tzinfo=timezone.utc)
                 return candidate
             except ValueError:
                 pass
@@ -218,7 +258,7 @@ def _srs_review_times(from_dt: datetime) -> list[tuple[str, datetime]]:
 # Parser LLM
 # ---------------------------------------------------------------------------
 
-def _llm_parse(message: str) -> dict[str, Any] | None:
+def _llm_parse(message: str, history: list[dict] | None = None) -> dict[str, Any] | None:
     """Chama o LLM barato para parsear a intenção. Retorna dict ou None se erro."""
     try:
         from docops.config import config
@@ -226,7 +266,17 @@ def _llm_parse(message: str) -> dict[str, Any] | None:
 
         client = genai.Client(api_key=config.gemini_api_key)
         model = getattr(config, "gemini_model_cheap", None) or config.gemini_model
-        prompt = _PARSER_PROMPT.replace("{MESSAGE}", message)
+
+        history_block = ""
+        if history:
+            lines = ["Histórico recente da conversa (use para resolver referências anafóricas):"]
+            for turn in history[-8:]:
+                role_label = "Usuário" if turn.get("role") == "user" else "Assistente"
+                content = str(turn.get("content", ""))[:300]
+                lines.append(f"{role_label}: {content}")
+            history_block = "\n".join(lines) + "\n\n"
+
+        prompt = _PARSER_PROMPT.replace("{MESSAGE}", message).replace("{HISTORY_BLOCK}", history_block)
         logger.info("Orchestrator: chamando LLM parser (model=%s)", model)
         response = client.models.generate_content(model=model, contents=prompt)
         raw = response.text.strip()
@@ -761,7 +811,7 @@ _SIMPLE_INTENTS = {"create_task", "list_tasks", "flashcard_hint"}
 _PASSTHROUGH_INTENTS = {"rag", "calendar"}
 
 
-def maybe_orchestrate(message: str, user_id: int, db: Session) -> dict | None:  # noqa: C901
+def maybe_orchestrate(message: str, user_id: int, db: Session, history: list[dict] | None = None) -> dict | None:  # noqa: C901
     """Tenta orquestrar a mensagem com parser LLM + cascades.
 
     Returns:
@@ -772,19 +822,50 @@ def maybe_orchestrate(message: str, user_id: int, db: Session) -> dict | None:  
     if len(message.strip()) < 10:
         return None
 
+    # ── Early-exit: calendário/update-reminder têm prioridade sobre TUDO ──
+    # Isso inclui pending study plans — não deixar que o LLM ou pending state
+    # intercepte mensagens claramente direcionadas ao calendar_assistant.
+    _CALENDAR_PRIORITY_RE = re.compile(
+        # Correção explícita de destino
+        r"(?:não\s+(?:é|era|foi)\s+(?:nas?\s+)?(?:nota[s]?|tarefa[s]?|anotação|to.?do))"
+        r"|(?:(?:é|quero)\s+(?:no\s+)?(?:calendário|agenda))"
+        r"|(?:coloca\s+(?:no\s+)?(?:calendário|agenda))"
+        # Update de lembrete: "mude/altere/muda/modifique + (o lembrete|para as Xh|horário)"
+        r"|(?:(?:mud[ea]|alter[ea]|modifiqu[ea]|atualiz[ea])\s+(?:o\s+)?(?:lembrete|horário|a\s+hora))"
+        r"|(?:(?:mud[ea]|alter[ea]|modifiqu[ea]|atualiz[ea]).*(?:para\s+as?\s+\d{1,2}h?))"
+        # Lembrete com referência direta
+        r"|(?:lembrete.*(?:para|de)\s+(?:as?\s+)?\d{1,2}(?:h|:\d{2}))"
+        r"|(?:criar?\s+(?:um\s+)?lembrete)"
+        r"|(?:adicionar?\s+(?:um\s+)?lembrete)",
+        re.IGNORECASE,
+    )
+    if _CALENDAR_PRIORITY_RE.search(message):
+        logger.info("Orchestrator: mensagem de calendário/lembrete → pass-through imediato")
+        return None  # Deixa o calendar_assistant processar
+
     # ── Verifica se há um plano de estudos pendente para este usuário ──────
     if user_id in _pending_study_plans:
         pending = _pending_study_plans[user_id]
         followup = _extract_followup_info(message)
+        if not followup:
+            # Tenta extrair via LLM com contexto do pending (ex: "até dia 08" sem horas)
+            llm_result = _llm_parse(message, history=history)
+            if llm_result and llm_result.get("intent") in ("cascade_study_plan", "rag", "create_task", "cascade_task_deadline"):
+                ents = llm_result.get("entities", {})
+                if ents.get("deadline_iso"):
+                    followup["deadline_iso"] = ents["deadline_iso"]
+                    followup["deadline_label"] = ents.get("deadline_label") or ents["deadline_iso"]
+                if ents.get("hours_per_day"):
+                    followup["hours_per_day"] = ents["hours_per_day"]
         if followup:
             # Mescla o que o usuário respondeu com as entidades já coletadas
             merged_entities = {**pending["entities"], **followup}
             logger.info("Orchestrator: follow-up study_plan para user=%d, merged=%s", user_id, merged_entities)
             return _exec_cascade_study_plan(merged_entities, user_id, db)
-        # Resposta não parseável — cancela o pending e trata normalmente
+        # Resposta verdadeiramente não parseável — cancela o pending e trata normalmente
         _pending_study_plans.pop(user_id, None)
 
-    parsed = _llm_parse(message)
+    parsed = _llm_parse(message, history=history)
     if not parsed:
         logger.debug("Parser LLM não retornou JSON válido.")
         return None
@@ -836,4 +917,9 @@ def maybe_orchestrate(message: str, user_id: int, db: Session) -> dict | None:  
             return _handle_flashcard_hint(hint, user_id, db)
 
     # intent == "rag" ou "calendar" → retorna None para cair no fluxo normal
+    # "calendar" passa para o calendar_assistant (Stage 2) que tem a lógica correta
+    if intent == "calendar":
+        logger.info("Orchestrator: intent=calendar → pass-through para calendar_assistant")
+        return None
+
     return None

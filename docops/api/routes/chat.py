@@ -133,8 +133,11 @@ async def chat(
     """Run chat pipeline with retrieval scoped to current_user."""
     logger.info("Chat request from user %s: '%s'", current_user.id, body.message[:80])
 
+    # Converte history do schema para lista de dicts simples
+    history = [{"role": m.role, "content": m.content} for m in (body.history or [])]
+
     from docops.services.orchestrator import maybe_orchestrate
-    orch_answer = await asyncio.to_thread(maybe_orchestrate, body.message, current_user.id, db)
+    orch_answer = await asyncio.to_thread(maybe_orchestrate, body.message, current_user.id, db, history)
     if orch_answer:
         return ChatResponse(
             answer=orch_answer["answer"],
@@ -144,7 +147,7 @@ async def chat(
             grounding=None,
         )
 
-    calendar_answer = maybe_answer_calendar_query(body.message, current_user.id, db)
+    calendar_answer = maybe_answer_calendar_query(body.message, current_user.id, db, history=history)
     if calendar_answer:
         return ChatResponse(
             answer=calendar_answer["answer"],

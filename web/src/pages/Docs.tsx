@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { BookOpen, Brain, CalendarDays, CheckSquare, FileText, GitCompare, GraduationCap, Loader2, Search, Trash2, Zap } from 'lucide-react'
+import { BookOpen, Brain, CalendarDays, CheckSquare, Eye, FileText, GitCompare, GraduationCap, Loader2, Search, Trash2, Zap } from 'lucide-react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import { Card, CardContent } from '@/components/ui/card'
@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { PageHeader, PageShell } from '@/components/ui/page-shell'
-import { apiClient, type DocItem } from '@/api/client'
+import { api, apiClient, type DocItem } from '@/api/client'
 
 function CompareDialog({
   doc1,
@@ -412,11 +412,65 @@ function SmartDigestDialog({ doc, onClose }: { doc: string; onClose: () => void 
   )
 }
 
+function PdfViewerModal({ doc, onClose }: { doc: DocItem; onClose: () => void }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let objectUrl: string | null = null
+    setLoading(true)
+    setError(null)
+
+    api.get(`/api/docs/${doc.doc_id}/file`, { responseType: 'blob' })
+      .then(res => {
+        objectUrl = URL.createObjectURL(res.data)
+        setBlobUrl(objectUrl)
+      })
+      .catch(() => setError('Não foi possível carregar o arquivo.'))
+      .finally(() => setLoading(false))
+
+    return () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
+  }, [doc.doc_id])
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col bg-zinc-950">
+      <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-3 shrink-0">
+        <div className="flex items-center gap-2">
+          <Eye className="h-4 w-4 text-blue-400" />
+          <span className="text-sm font-medium text-zinc-100 truncate max-w-lg">{doc.file_name}</span>
+        </div>
+        <Button variant="ghost" size="sm" onClick={onClose}>✕ Fechar</Button>
+      </div>
+      <div className="flex-1 overflow-hidden">
+        {loading && (
+          <div className="flex h-full items-center justify-center">
+            <Loader2 className="h-8 w-8 animate-spin text-zinc-500" />
+          </div>
+        )}
+        {error && (
+          <div className="flex h-full items-center justify-center text-red-400 text-sm">{error}</div>
+        )}
+        {blobUrl && !loading && (
+          <iframe
+            src={blobUrl}
+            className="h-full w-full border-0"
+            title={doc.file_name}
+          />
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function Docs() {
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
   const [compareDoc, setCompareDoc] = useState<string | null>(null)
   const [digestDoc, setDigestDoc] = useState<string | null>(null)
+  const [viewDoc, setViewDoc] = useState<DocItem | null>(null)
 
   const { data: docs, isLoading, error } = useQuery<DocItem[]>({
     queryKey: ['docs'],
@@ -504,6 +558,15 @@ export function Docs() {
                   <Button
                     variant="ghost"
                     size="sm"
+                    onClick={() => setViewDoc(doc)}
+                    className="text-blue-400 hover:text-blue-300"
+                    title="Visualizar documento"
+                  >
+                    <Eye className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
                     onClick={() => setDigestDoc(doc.file_name)}
                     className="text-amber-400 hover:text-amber-300"
                     title="Smart Digest: resumo + flashcards + tarefas"
@@ -551,6 +614,9 @@ export function Docs() {
       )}
       {digestDoc && (
         <SmartDigestDialog doc={digestDoc} onClose={() => setDigestDoc(null)} />
+      )}
+      {viewDoc && (
+        <PdfViewerModal doc={viewDoc} onClose={() => setViewDoc(null)} />
       )}
     </PageShell>
   )

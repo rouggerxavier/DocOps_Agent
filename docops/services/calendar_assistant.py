@@ -21,6 +21,7 @@ from docops.db.crud import (
     create_schedule_record,
     list_reminders_for_user,
     list_schedules_for_user,
+    update_reminder_record,
 )
 
 _WEEKDAY_NAMES = [
@@ -34,6 +35,7 @@ Você é um assistente de calendário. Analise a mensagem do usuário e responda
 
 Hoje é {today}. Dia da semana de hoje: {today_weekday}.
 
+{history_block}
 Identifique a intenção e extraia dados conforme o esquema abaixo.
 
 ---
@@ -43,6 +45,7 @@ INTENÇÕES POSSÍVEIS:
 - "read_calendar": usuário quer saber o que tem na agenda (hoje, amanhã, semana, etc.)
 - "create_reminder": usuário quer criar UM lembrete/evento pontual (data+hora específica)
 - "create_schedule": usuário quer criar blocos fixos/recorrentes na semana (rotina semanal)
+- "update_reminder": usuário quer alterar/atualizar um lembrete existente (mudar horário, título, data)
 - "clarification_needed": a mensagem é ambígua e seria necessário perguntar de volta para agir corretamente
 
 ---
@@ -67,6 +70,15 @@ Para "create_reminder":
   "end_time": "HH:MM"
 }}
 
+Para "update_reminder":
+{{
+  "intent": "update_reminder",
+  "title": "título atual do lembrete (extraído do histórico)",
+  "new_start_time": "HH:MM",
+  "new_end_time": "HH:MM",
+  "new_date": "YYYY-MM-DD"
+}}
+
 Para "create_schedule":
 {{
   "intent": "create_schedule",
@@ -86,14 +98,27 @@ LEGENDA de "days": 0=segunda, 1=terça, 2=quarta, 3=quinta, 4=sexta, 5=sábado, 
 
 REGRAS IMPORTANTES:
 - Responda APENAS com JSON. Nenhum texto antes ou depois.
+- USE O HISTÓRICO para resolver referências anafóricas ("ele", "isso", "mude", "altere", "o lembrete", "para as X horas").
+- Se no histórico recente o assistente criou um lembrete com título X, e o usuário diz "mude para as 14h" ou "altere o horário", use "update_reminder" com o título do histórico.
+- Se o usuário responde a uma clarificação do assistente (ex: assistente perguntou "qual o título?" e usuário respondeu), resolva a ação original com a nova informação.
 - Para "create_schedule", extraia TODOS os blocos mencionados. Cada combinação única de (título, horário) vira um bloco com os dias correspondentes.
 - Se o usuário disser "todo dia menos X", inclua todos os dias exceto X.
 - Se o usuário disser "segunda a quinta", inclua segunda(0), terça(1), quarta(2), quinta(3).
+- Se o usuário disser "segunda a sexta", inclua segunda(0), terça(1), quarta(2), quinta(3), sexta(4).
 - "horário livre" NÃO é um bloco — ignore.
 - Datas relativas: "hoje"={today}, "amanhã"={tomorrow}, "próxima segunda"=calcule.
 - Se a hora de fim não for mencionada, assuma 1 hora depois do início.
 - Se a data não for mencionada para lembrete, assuma hoje.
-- Se a mensagem for ambígua e você não conseguir extrair os dados necessários com confiança, use "clarification_needed" com uma pergunta direta e concisa. Exemplos: "Você quer criar um lembrete pontual ou um bloco recorrente na semana?", "Em qual data você quer o lembrete?"
+
+REGRAS DE CLASSIFICAÇÃO:
+- "criar minha rotina" ou "criar rotina" SEM detalhes de horários → use "clarification_needed" com pergunta sobre os horários da rotina.
+- "criar minha rotina" COM detalhes de horários (ex: "das 8 às 12 estágio") → use "create_schedule".
+- "lembrete" + horário específico (ex: "lembrete para as 14h") → use "create_reminder".
+- Qualquer mensagem com padrão "das HH às HH [atividade] [dias]" → use "create_schedule".
+- "mude", "altere", "muda", "modifique" + referência a lembrete/evento → use "update_reminder".
+- Se o usuário disse "não é nota/tarefa, é calendário/agenda" → trate como pedido de calendário e peça mais detalhes se necessário com "clarification_needed".
+
+- Se a mensagem for ambígua e você não conseguir extrair os dados necessários com confiança, use "clarification_needed" com uma pergunta direta e concisa. Exemplos: "Você quer criar um lembrete pontual ou um bloco recorrente na semana?", "Quais são os horários da sua rotina?"
 - Só use "clarification_needed" quando for realmente impossível inferir a intenção. Se houver informação suficiente, mesmo que incompleta, tente extrair e use defaults razoáveis.
 
 ---
@@ -135,19 +160,38 @@ def _parse_llm_json(raw: str) -> dict:
     return json.loads(text)
 
 
-def maybe_answer_calendar_query(message: str, user_id: int, db: Session) -> dict | None:
+def maybe_answer_calendar_query(
+    message: str,
+    user_id: int,
+    db: Session,
+    history: list[dict] | None = None,
+) -> dict | None:
     """
     Use Gemini to detect calendar intent and extract structured data.
     Returns a response dict if this is a calendar message, or None to pass through to RAG.
+
+    `history` is a list of {"role": "user"|"assistant", "content": str} dicts
+    representing recent turns, used to resolve references like "mude para as 14h".
     """
     tz = _local_tz()
     today = datetime.now(tz).date()
     tomorrow = today + timedelta(days=1)
 
+    # Build history context block for the prompt
+    history_block = ""
+    if history:
+        lines = ["Histórico recente da conversa (use para resolver referências como 'ele', 'isso', 'mude', etc.):"]
+        for turn in history[-6:]:  # máximo 6 turnos anteriores
+            role_label = "Usuário" if turn.get("role") == "user" else "Assistente"
+            lines.append(f"{role_label}: {turn.get('content', '')}")
+        lines.append("")
+        history_block = "\n".join(lines) + "\n"
+
     prompt = _CALENDAR_LLM_PROMPT.format(
         today=today.isoformat(),
         today_weekday=_WEEKDAY_NAMES[today.weekday()],
         tomorrow=tomorrow.isoformat(),
+        history_block=history_block,
         message=message,
     )
 
@@ -180,6 +224,9 @@ def maybe_answer_calendar_query(message: str, user_id: int, db: Session) -> dict
 
     if intent == "create_reminder":
         return _handle_create_reminder(data, user_id, db, today, tz)
+
+    if intent == "update_reminder":
+        return _handle_update_reminder(data, user_id, db, today, tz)
 
     if intent == "create_schedule":
         return _handle_create_schedule(data, user_id, db)
@@ -348,5 +395,78 @@ def _handle_create_schedule(data: dict, user_id: int, db: Session) -> dict:
         "calendar_action": {
             "type": "schedule_created",
             "blocks": created,
+        },
+    }
+
+
+def _handle_update_reminder(data: dict, user_id: int, db: Session, today: date, tz: Any) -> dict:
+    """Find an existing reminder by title and update its time/date."""
+    title_hint = (data.get("title") or "").strip().lower()
+
+    # Find the most recent reminder matching the title hint
+    all_reminders = list_reminders_for_user(db, user_id)
+    matched = None
+    if title_hint:
+        # Exact or partial match
+        for r in reversed(all_reminders):
+            if title_hint in r.title.lower() or r.title.lower() in title_hint:
+                matched = r
+                break
+    if matched is None and all_reminders:
+        # Fall back to most recent reminder
+        matched = all_reminders[-1]
+
+    if matched is None:
+        return {
+            "answer": "Não encontrei nenhum lembrete para atualizar. Pode me dizer o título do lembrete?",
+            "intent": "calendar_clarification",
+            "sources": [],
+            "calendar_action": None,
+        }
+
+    # Parse new times
+    raw_start = data.get("new_start_time") or data.get("start_time") or "09:00"
+    raw_end = data.get("new_end_time") or data.get("end_time") or ""
+    raw_date = data.get("new_date") or data.get("date")
+
+    try:
+        target_date = date.fromisoformat(raw_date) if raw_date else matched.starts_at.astimezone(tz).date()
+    except ValueError:
+        target_date = matched.starts_at.astimezone(tz).date()
+
+    try:
+        sh, sm = (int(x) for x in raw_start.split(":"))
+    except Exception:
+        sh, sm = 9, 0
+    try:
+        eh, em = (int(x) for x in raw_end.split(":")) if raw_end else (min(sh + 1, 23), sm)
+    except Exception:
+        eh, em = min(sh + 1, 23), sm
+
+    new_starts_at = datetime.combine(target_date, time(sh, sm), tzinfo=tz)
+    new_ends_at = datetime.combine(target_date, time(eh, em), tzinfo=tz)
+
+    update_reminder_record(
+        db,
+        matched,
+        title=matched.title,
+        starts_at=new_starts_at,
+        ends_at=new_ends_at,
+        note=matched.note,
+        all_day=False,
+    )
+
+    date_label = target_date.strftime("%d/%m/%Y")
+    time_label = f"{sh:02d}:{sm:02d}"
+    return {
+        "answer": f"✅ Lembrete atualizado!\n\n**{matched.title}**\n📅 {date_label} às {time_label}",
+        "intent": "calendar_update_reminder",
+        "sources": [],
+        "calendar_action": {
+            "type": "reminder_updated",
+            "id": matched.id,
+            "title": matched.title,
+            "date": date_label,
+            "time": time_label,
         },
     }

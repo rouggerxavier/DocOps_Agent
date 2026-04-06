@@ -126,3 +126,37 @@ async def update_reading_status(
         raise HTTPException(status_code=404, detail="Documento não encontrado.")
     record = _crud.upsert_reading_status(db, current_user.id, doc_id, body.status)
     return {"doc_id": doc_id, "status": record.status}
+
+
+# ── File serving ───────────────────────────────────────────────────────────────
+
+from fastapi.responses import FileResponse as _FileResponse
+import mimetypes as _mimetypes
+
+
+@router.get("/docs/{doc_id}/file")
+async def get_doc_file(
+    doc_id: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Serve o arquivo original do documento para visualização no browser."""
+    doc = get_document_by_user_and_doc_id(db, current_user.id, doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento não encontrado.")
+
+    from pathlib import Path as _P
+    src = _P(doc.source_path) if doc.source_path else None
+    if not src or not src.exists() or not src.is_file():
+        raise HTTPException(status_code=404, detail="Arquivo não disponível no servidor.")
+
+    mime, _ = _mimetypes.guess_type(str(src))
+    if not mime:
+        mime = "application/octet-stream"
+
+    return _FileResponse(
+        path=str(src),
+        media_type=mime,
+        filename=doc.file_name,
+        headers={"Content-Disposition": f'inline; filename="{doc.file_name}"'},
+    )

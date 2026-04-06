@@ -426,6 +426,20 @@ def test_chat_calendar_query_bypasses_llm(monkeypatch):
         raise AssertionError("_run_chat should not be called for calendar query")
 
     monkeypatch.setattr("docops.api.routes.chat._run_chat", _fail_llm)
+    # Mock orchestrator (pass-through) e calendar assistant (resposta sem chamar Gemini)
+    monkeypatch.setattr(
+        "docops.services.orchestrator.maybe_orchestrate",
+        lambda msg, uid, db: None,
+    )
+    monkeypatch.setattr(
+        "docops.api.routes.chat.maybe_answer_calendar_query",
+        lambda msg, uid, db, history=None: {
+            "answer": "Para hoje, não encontrei compromissos no seu calendário.",
+            "intent": "calendar",
+            "sources": [],
+            "calendar_action": None,
+        },
+    )
     resp = auth_client.post("/api/chat", json={"message": "Tenho compromisso hoje na agenda?"})
     assert resp.status_code == 200
     payload = resp.json()

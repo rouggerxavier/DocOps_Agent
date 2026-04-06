@@ -298,9 +298,10 @@ export const apiClient = {
     session_id?: string,
     top_k?: number,
     doc_names?: string[],
-    strict_grounding?: boolean
+    strict_grounding?: boolean,
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>
   ): Promise<ChatResponse> =>
-    api.post('/api/chat', { message, session_id, top_k, doc_names, strict_grounding }, { timeout: 180000 }).then(r => r.data),
+    api.post('/api/chat', { message, session_id, top_k, doc_names, strict_grounding, history }, { timeout: 180000 }).then(r => r.data),
 
   ingestPath: (path: string, chunk_size = 0, chunk_overlap = 0): Promise<IngestResponse> =>
     api.post('/api/ingest', { path, chunk_size, chunk_overlap }, { timeout: INGEST_TIMEOUT_MS }).then(r => r.data),

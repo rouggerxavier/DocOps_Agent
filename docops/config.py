@@ -108,7 +108,7 @@ class Config:
     @property
     def gemini_model_qa_simple(self) -> str:
         """Model for simple QA responses (default: gemini-2.5-flash)."""
-        return os.getenv("GEMINI_MODEL_QA_SIMPLE", "gemini-2.5-flash")
+        return os.getenv("GEMINI_MODEL_QA_SIMPLE", "gemini-3-flash-preview")
 
     @property
     def max_retries(self) -> int:

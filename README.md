@@ -3,6 +3,19 @@
 Assistente RAG (Retrieval-Augmented Generation) para documentos, com sumarização profunda, comparação, flashcards, plano de estudos, tarefas, calendário e muito mais.
 
 ---
+# como rodar
+
+Terminal 1 — API (backend):
+
+
+cd c:/dev/DocOps_Agent
+.venv/Scripts/uvicorn docops.api.app:app --reload --port 8000
+Terminal 2 — Web (frontend):
+
+
+cd c:/dev/DocOps_Agent/web
+npm run dev
+
 
 ## Stack
 

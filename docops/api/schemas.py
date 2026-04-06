@@ -77,6 +77,12 @@ class DocItem(BaseModel):
 
 # ── /api/chat ─────────────────────────────────────────────────────────────────
 
+class ChatMessage(BaseModel):
+    """A single turn in the conversation history."""
+    role: str  # "user" | "assistant"
+    content: str
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     session_id: Optional[str] = None
@@ -84,6 +90,8 @@ class ChatRequest(BaseModel):
     doc_names: List[str] = Field(default_factory=list)
     debug_grounding: bool = False
     strict_grounding: bool = False
+    # Últimas N mensagens do histórico (frontend envia para dar contexto ao backend)
+    history: List[ChatMessage] = Field(default_factory=list)
 
 
 class ChatResponse(BaseModel):

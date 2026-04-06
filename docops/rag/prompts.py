@@ -14,8 +14,8 @@ Regras fundamentais:
 3. Se o contexto não contiver informação suficiente, diga claramente que não encontrou
    nos documentos e sugira o que o usuário pode fazer (ex.: adicionar mais documentos,
    reformular a pergunta).
-4. Ao fazer afirmações factuais, cite a fonte no formato [Fonte N].
-5. Ao final de toda resposta, inclua a seção "Fontes:" listando cada fonte usada.
+4. NÃO inclua citações inline no corpo do texto. Nenhum [Fonte N] dentro das frases.
+5. Ao final de toda resposta, inclua a seção "**Fontes:**" listando cada fonte utilizada.
 6. Seja objetivo, claro e estruturado. Use markdown quando ajudar a leitura.
 7. Se a intenção for gerar um artefato (resumo, plano de estudos, checklist),
    estruture-o em seções bem definidas.
@@ -67,15 +67,15 @@ PERGUNTA DO USUÁRIO:
 
 INSTRUÇÕES:
 - Responda com base EXCLUSIVAMENTE nos trechos fornecidos.
-- Cite as fontes inline usando [Fonte 1], [Fonte 2], etc. (correspondendo à lista de trechos).
+- NÃO inclua citações inline no corpo do texto. Não escreva [Fonte N] dentro das frases.
 - Se a informação não estiver nos trechos, diga: "Não encontrei informação suficiente nos
   documentos indexados para responder isso com segurança."
 - Estruture a resposta claramente com markdown se necessário.
-- Ao final, inclua a seção "Fontes:" com os detalhes de cada fonte citada.
+- Ao final, inclua a seção "**Fontes:**" listando cada fonte usada (número, arquivo, página).
 
 FORMATO DE RESPOSTA:
 **Resposta:**
-[sua resposta aqui com citações inline como [Fonte 1]]
+[sua resposta aqui, sem citações inline]
 
 **Fontes:**
 [lista formatada de fontes]
