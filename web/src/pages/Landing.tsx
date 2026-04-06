@@ -1,388 +1,199 @@
-import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
-import { motion, AnimatePresence, MotionConfig } from 'framer-motion'
+import { motion, MotionConfig } from 'framer-motion'
+import { ArrowRight, BookOpen, CalendarDays, CheckCircle2, FileText, Layers, Shield } from 'lucide-react'
 import { HeroFuturistic } from '@/components/HeroFuturistic'
-import {
-  BookOpen,
-  MessageSquare,
-  Layers,
-  ListTodo,
-  KanbanSquare,
-  GraduationCap,
-  Zap,
-  FileText,
-  CalendarDays,
-  ArrowRight,
-  Brain,
-  Play,
-  Loader2,
-  CheckCircle2,
-  Shield,
-  Clock,
-  FileStack,
-  Lock,
-} from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { BackgroundWrapper } from '@/components/BackgroundWrapper'
-import { useAI, type AICard, type AICategory } from '@/hooks/useAI'
-import { getDynamicDelay, useDynamicDelay } from '@/lib/stagger'
+import { Button } from '@/components/ui/button'
 
 const EASE = [0.2, 0.8, 0.2, 1] as const
-const VIEWPORT = { once: true, margin: '-40px' } as const
+const VIEWPORT = { once: true, margin: '-48px' } as const
+const FOCUS_VISIBLE =
+  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ui-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--ui-bg)]'
 
-const CARD_STYLES: Record<AICategory, { icon: typeof ListTodo; label: string }> = {
-  tasks: { icon: ListTodo, label: 'Plano de execução' },
-  flashcards: { icon: Layers, label: 'Revisão ativa' },
-  schedule: { icon: CalendarDays, label: 'Rotina recomendada' },
-  summary: { icon: FileText, label: 'Resumo rastreável' },
-  suggestions: { icon: Zap, label: 'Ajustes sugeridos' },
-  general: { icon: Brain, label: 'Contexto geral' },
+type LandingIcon = typeof BookOpen
+
+type ProofChip = {
+  icon: LandingIcon
+  label: string
 }
 
-type LandingFeature = {
-  code: string
-  icon: typeof MessageSquare
-  title: string
-  desc: string
-  evidence: string
-}
-
-type FeatureVariant = 'primary' | 'secondary'
-
-type LandingStep = {
+type Pillar = {
   n: string
+  icon: LandingIcon
   title: string
-  desc: string
+  description: string
 }
 
-const FEATURES: LandingFeature[] = [
-  {
-    code: 'R01',
-    icon: MessageSquare,
-    title: 'Perguntas com fonte explícita',
-    desc: 'Cada resposta aponta o trecho usado. Você valida rapidamente sem depender de memória ou intuição.',
-    evidence: 'Rastreabilidade por citação de origem',
-  },
-  {
-    code: 'R02',
-    icon: FileText,
-    title: 'Resumos com estrutura útil',
-    desc: 'Resumo breve ou aprofundado com organização por seções para facilitar estudo, revisão e consulta.',
-    evidence: 'Contexto consolidado por seção',
-  },
-  {
-    code: 'R03',
-    icon: Layers,
-    title: 'Flashcards e revisão contínua',
-    desc: 'Gera cards a partir dos seus materiais e organiza revisões para manter retenção sem sobrecarga.',
-    evidence: 'Ciclo de revisão orientado por conteúdo',
-  },
-  {
-    code: 'R04',
-    icon: GraduationCap,
-    title: 'Plano de estudo acionável',
-    desc: 'Transforma matéria extensa em blocos diários com prioridades claras e progresso visível.',
-    evidence: 'Planejamento por meta e tempo',
-  },
-  {
-    code: 'R05',
-    icon: KanbanSquare,
-    title: 'Leitura com estado rastreado',
-    desc: 'Organiza o que está pendente, em andamento e concluído, com visão objetiva do seu acervo.',
-    evidence: 'Status operacional de documentos',
-  },
-  {
-    code: 'R06',
-    icon: CalendarDays,
-    title: 'Multiformato sem fricção',
-    desc: 'PDF, markdown, planilha, imagem com OCR, URL e vídeo. Tudo entra no mesmo fluxo de estudo.',
-    evidence: 'Ingestão unificada de formatos',
-  },
+type EvidenceCard = {
+  icon: LandingIcon
+  eyebrow: string
+  title: string
+  description: string
+  lines: string[]
+}
+
+const PROOF_CHIPS: ProofChip[] = [
+  { icon: FileText, label: 'Resposta com fonte' },
+  { icon: Shield, label: 'Execução local' },
+  { icon: Layers, label: 'Multiformato' },
 ]
 
-const STEPS: LandingStep[] = [
+const PILLARS: Pillar[] = [
   {
     n: '01',
-    title: 'Ingestão do material',
-    desc: 'Envie arquivos, links ou textos. O DocOps organiza e indexa automaticamente.',
+    icon: FileText,
+    title: 'Pergunte',
+    description: 'Use linguagem natural e volte direto ao trecho que sustenta a resposta.',
   },
   {
     n: '02',
-    title: 'Consulta com prova',
-    desc: 'Pergunte em linguagem natural e receba resposta com referência direta ao conteúdo original.',
+    icon: CheckCircle2,
+    title: 'Comprove',
+    description: 'Cada saída é apresentada como evidência operacional, não como texto solto.',
   },
   {
     n: '03',
-    title: 'Estudo em ciclo contínuo',
-    desc: 'Resumo, tarefas, flashcards e agenda trabalham em conjunto para manter constância.',
+    icon: Layers,
+    title: 'Organize',
+    description: 'Resumo, plano e revisão passam a existir no mesmo fluxo de trabalho.',
   },
 ]
 
-const METRICS = [
+const EVIDENCE_CARDS: EvidenceCard[] = [
   {
-    icon: FileStack,
-    value: '10+',
-    label: 'formatos suportados',
-    desc: 'PDF, Markdown, CSV, XLSX, imagem, URL e vídeo',
+    icon: FileText,
+    eyebrow: 'Citação',
+    title: 'A origem aparece junto da resposta',
+    description: 'A decisão fica auditável antes de virar ação.',
+    lines: ['"Cláusula 4.2 exige registro rastreável para cada evidência."', 'Manual_operacional.pdf · pág. 18'],
   },
   {
-    icon: Clock,
-    value: '< 2s',
-    label: 'resposta média',
-    desc: 'Busca híbrida com foco em rapidez e consistência',
+    icon: CalendarDays,
+    eyebrow: 'Plano',
+    title: 'O material vira sequência de execução',
+    description: 'O produto organiza o próximo passo com prioridade clara.',
+    lines: ['Seg · revisar conceitos críticos', 'Qua · consolidar nota de referência', 'Sex · gerar revisão ativa'],
   },
   {
-    icon: Shield,
-    value: '100%',
-    label: 'execução local',
-    desc: 'Dados do usuário permanecem no próprio ambiente',
+    icon: Layers,
+    eyebrow: 'Revisão',
+    title: 'Retenção sem excesso de interface',
+    description: 'Os artefatos de estudo aparecem de forma curta e acionável.',
+    lines: ['Frente · Qual requisito mínimo precisa ser provado?', 'Verso · Fonte explícita + contexto verificável'],
   },
+]
+
+const FOOTER_LINKS = [
+  { label: 'GitHub', href: 'https://github.com/DocOps-Agent/DocOps_Agent' },
+  { label: 'Licença MIT', href: 'https://github.com/DocOps-Agent/DocOps_Agent/blob/main/LICENSE' },
 ] as const
-
-const FOOTER_LINKS = {
-  Produto: [
-    { label: 'Chat com documentos', href: '#recursos' },
-    { label: 'Plano de estudo', href: '#recursos' },
-    { label: 'Revisão e flashcards', href: '#recursos' },
-  ],
-  Recursos: [
-    { label: 'Como funciona', href: '#como-funciona' },
-    { label: 'Demo', href: '#demo' },
-    { label: 'Repositório', href: 'https://github.com/DocOps-Agent/DocOps_Agent', external: true },
-  ],
-  Legal: [
-    { label: 'Termos', href: '#' },
-    { label: 'Privacidade', href: '#' },
-    { label: 'Licença MIT', href: 'https://github.com/DocOps-Agent/DocOps_Agent/blob/main/LICENSE', external: true },
-  ],
-}
-
-const NAV_ITEMS = [
-  { id: 'recursos', label: 'Recursos' },
-  { id: 'como-funciona', label: 'Como funciona' },
-  { id: 'demo', label: 'Demo' },
-] as const
-
-const FOCUS_VISIBLE =
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2F6BFF] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0E12]'
 
 function scrollToSection(id: string) {
-  const el = document.getElementById(id)
-  if (!el) return
+  const element = document.getElementById(id)
+  if (!element) return
 
   const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  el.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'start' })
+  element.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'start' })
 }
 
-function FeatureCard({
-  feature,
-  index,
-  variant,
-}: {
-  feature: LandingFeature
-  index: number
-  variant: FeatureVariant
-}) {
-  const [ref, delay] = useDynamicDelay(index)
-  const Icon = feature.icon
-  const isPrimary = variant === 'primary'
+function ProofChip({ chip, index }: { chip: ProofChip; index: number }) {
+  const Icon = chip.icon
 
   return (
-    <motion.article
-      ref={ref}
-      initial={{ opacity: 0, y: 18 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={VIEWPORT}
-      transition={{ duration: 0.45, delay, ease: EASE }}
-      className={[
-        'group relative rounded-sm border p-5 shadow-[0_1px_0_rgba(243,241,235,0.02)] transition-all duration-200',
-        'hover:-translate-y-0.5 hover:border-[#4B5970]',
-        isPrimary
-          ? 'border-[#324057] bg-[linear-gradient(180deg,rgba(18,24,33,0.96),rgba(14,22,34,0.94))] sm:p-6'
-          : 'border-[#27303A] bg-[#121821]/88 sm:p-5',
-      ].join(' ')}
-    >
-      <span className={`absolute inset-y-0 left-0 ${isPrimary ? 'w-[3px]' : 'w-[2px]'} bg-[#2F6BFF]`} />
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="font-meta text-[11px] font-medium tracking-[0.14em] text-[#93A0B2]">{feature.code}</p>
-          <h3 className={`mt-2 ${isPrimary ? 'text-[1.38rem] leading-tight' : 'text-lg'} font-semibold text-[#F3F1EB]`}>
-            {feature.title}
-          </h3>
-        </div>
-        <div
-          className={`flex ${isPrimary ? 'h-10 w-10' : 'h-9 w-9'} items-center justify-center rounded-sm border border-[#324057] bg-[#0E141E] text-[#AAB3BF]`}
-        >
-          <Icon className="h-4 w-4" aria-hidden="true" />
-        </div>
-      </div>
-      <p className={`mt-4 ${isPrimary ? 'text-[16px]' : 'text-[15px]'} leading-relaxed text-[#B6C0CD]`}>{feature.desc}</p>
-      <div className="mt-5 border-t border-[#2E3847] pt-3">
-        <p className="font-meta text-[11px] tracking-[0.12em] text-[#8A96A9]">Evidência operacional</p>
-        <p className="mt-1 text-xs leading-relaxed text-[#AAB3BF]">{feature.evidence}</p>
-      </div>
-    </motion.article>
-  )
-}
-
-function StepItem({ step, index }: { step: LandingStep; index: number }) {
-  const [ref, delay] = useDynamicDelay(index)
-
-  return (
-    <motion.article
-      ref={ref}
-      initial={{ opacity: 0, y: 16 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={VIEWPORT}
-      transition={{ duration: 0.45, delay, ease: EASE }}
-      className="relative rounded-sm border border-[#324057] bg-[#101823]/90 p-5 sm:p-6"
-    >
-      <div className="flex items-center gap-3 border-b border-[#2D3747] pb-3">
-        <span className="font-meta flex h-6 w-6 items-center justify-center rounded-sm border border-[#35507E] bg-[#121E31] text-[11px] tracking-[0.06em] text-[#D7E2F4]">
-          {step.n}
-        </span>
-        <p className="font-meta text-[11px] tracking-[0.12em] text-[#8A96A9]">Etapa sequencial</p>
-      </div>
-      <h3 className="mt-4 text-lg font-semibold text-[#F3F1EB]">{step.title}</h3>
-      <p className="mt-3 text-[15px] leading-relaxed text-[#B1BBC8]">{step.desc}</p>
-    </motion.article>
-  )
-}
-
-function ResultCard({ card, index }: { card: AICard; index: number }) {
-  const [ref, cardDelay] = useDynamicDelay(index)
-  const style = CARD_STYLES[card.category]
-  const Icon = style.icon
-  const isLead = index === 0
-
-  return (
-    <motion.article
-      ref={ref}
-      key={`card-${index}`}
-      initial={{ opacity: 0, y: 18 }}
+    <motion.li
+      initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -8, transition: { duration: 0.22, ease: EASE } }}
-      transition={{ duration: 0.38, delay: cardDelay, ease: EASE }}
-      className={[
-        'rounded-sm border p-4 sm:p-5',
-        isLead ? 'border-[#35507E] bg-[#121C2A]' : 'border-[#2E3847] bg-[#111926]',
-      ].join(' ')}
+      transition={{ duration: 0.34, delay: index * 0.06, ease: EASE }}
+      className="inline-flex items-center gap-2 rounded-full border border-[color:var(--ui-border)] bg-[rgba(255,255,255,0.03)] px-4 py-2 text-sm text-[color:var(--ui-text-dim)] backdrop-blur"
     >
-      <div className={`flex items-center gap-2.5 border-b ${isLead ? 'border-[#33445F]' : 'border-[#2D3747]'} pb-3`}>
-        <Icon className="h-4 w-4 text-[#9DB0CC]" aria-hidden="true" />
-        <div>
-          <p className="font-meta text-[10px] tracking-[0.1em] text-[#8D9BB0]">{style.label}</p>
-          <h3 className="mt-0.5 text-sm font-semibold text-[#F3F1EB]">{card.title}</h3>
+      <Icon className="h-4 w-4 text-[color:var(--ui-accent)]" aria-hidden="true" />
+      <span>{chip.label}</span>
+    </motion.li>
+  )
+}
+
+function PillarCard({ pillar, index }: { pillar: Pillar; index: number }) {
+  const Icon = pillar.icon
+
+  return (
+    <motion.article
+      initial={{ opacity: 0, y: 18 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={VIEWPORT}
+      transition={{ duration: 0.4, delay: index * 0.08, ease: EASE }}
+      className="rounded-[1.75rem] border border-[color:var(--ui-border)] bg-[color:var(--ui-surface)] p-6 shadow-[0_18px_48px_rgba(0,0,0,0.22)]"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span className="font-meta text-[11px] tracking-[0.18em] text-[color:var(--ui-text-meta)]">{pillar.n}</span>
+        <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[color:var(--ui-border)] bg-[color:var(--ui-surface-2)]">
+          <Icon className="h-4 w-4 text-[color:var(--ui-accent)]" aria-hidden="true" />
         </div>
       </div>
-      <ul className="mt-4 space-y-2.5">
-        {card.items.map((item, j) => (
-          <motion.li
-            key={item}
-            initial={{ opacity: 0, x: -8 }}
-            animate={{ opacity: 1, x: 0 }}
-            transition={{ duration: 0.28, delay: cardDelay + getDynamicDelay(j) * 0.4 + 0.06, ease: EASE }}
-            className="flex items-start gap-2 text-xs leading-relaxed text-[#AAB3BF]"
-          >
-            <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#2F6BFF]" aria-hidden="true" />
-            {item}
-          </motion.li>
-        ))}
-      </ul>
+      <h3 className="mt-8 text-2xl font-semibold text-[color:var(--ui-text)]">{pillar.title}</h3>
+      <p className="mt-3 max-w-[28ch] text-sm leading-7 text-[color:var(--ui-text-dim)]">{pillar.description}</p>
+    </motion.article>
+  )
+}
+
+function EvidenceCard({ card, index }: { card: EvidenceCard; index: number }) {
+  const Icon = card.icon
+
+  return (
+    <motion.article
+      initial={{ opacity: 0, y: 18 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={VIEWPORT}
+      transition={{ duration: 0.42, delay: index * 0.08, ease: EASE }}
+      className="rounded-[1.75rem] border border-[color:var(--ui-border)] bg-[rgba(255,255,255,0.02)] p-6"
+    >
+      <div className="flex items-center gap-3">
+        <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[color:var(--ui-border)] bg-[color:var(--ui-surface-2)]">
+          <Icon className="h-4 w-4 text-[color:var(--ui-accent)]" aria-hidden="true" />
+        </div>
+        <p className="font-meta text-[11px] tracking-[0.16em] text-[color:var(--ui-text-meta)]">{card.eyebrow}</p>
+      </div>
+      <h3 className="mt-6 text-xl font-semibold text-[color:var(--ui-text)]">{card.title}</h3>
+      <p className="mt-3 text-sm leading-7 text-[color:var(--ui-text-dim)]">{card.description}</p>
+      <div className="mt-6 rounded-[1.4rem] border border-[color:var(--ui-border)] bg-[rgba(0,0,0,0.18)] p-4">
+        <div className="space-y-3 text-sm leading-6 text-[color:var(--ui-text)]">
+          {card.lines.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+        </div>
+      </div>
     </motion.article>
   )
 }
 
 export function Landing() {
-  const [demoInput, setDemoInput] = useState('Organize meu estudo de machine learning')
-  const [activeSection, setActiveSection] = useState<(typeof NAV_ITEMS)[number]['id']>('recursos')
-  const ai = useAI()
-  const demoState = ai.loading ? 'loading' : ai.result ? 'done' : 'idle'
-
-  const autoTriggered = useCallback(() => {
-    if (!ai.result && !ai.loading) ai.run(demoInput)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {
-    autoTriggered()
-  }, [autoTriggered])
-
-  useEffect(() => {
-    const handler = () => {
-      const threshold = window.innerHeight * 0.34
-      let current: (typeof NAV_ITEMS)[number]['id'] = 'recursos'
-
-      NAV_ITEMS.forEach((item) => {
-        const node = document.getElementById(item.id)
-        if (!node) return
-        const top = node.getBoundingClientRect().top
-        if (top <= threshold) current = item.id
-      })
-
-      setActiveSection(current)
-    }
-
-    handler()
-    window.addEventListener('scroll', handler, { passive: true })
-    window.addEventListener('resize', handler)
-    return () => {
-      window.removeEventListener('scroll', handler)
-      window.removeEventListener('resize', handler)
-    }
-  }, [])
-
-  const primaryFeatures = FEATURES.slice(0, 2)
-  const secondaryFeatures = FEATURES.slice(2)
-
   return (
     <MotionConfig reducedMotion="user">
       <BackgroundWrapper>
         <a
           href="#content"
-          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-sm focus:bg-[#2457D6] focus:px-4 focus:py-2 focus:text-sm focus:text-white focus:outline-none"
+          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-full focus:bg-[color:var(--ui-accent)] focus:px-4 focus:py-2 focus:text-sm focus:text-[#0e1012] focus:outline-none"
         >
           Pular para conteúdo
         </a>
 
-        <header className="relative border-b border-[#27303A]/90 bg-[#0B0E12]/95">
-          <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
-            <div className="flex items-center gap-3">
-              <div className="flex h-8 w-8 items-center justify-center rounded-sm bg-[#2457D6]">
-                <BookOpen className="h-4 w-4 text-white" aria-hidden="true" />
+        <header className="sticky top-0 z-30 border-b border-[color:var(--ui-border)] bg-[rgba(14,16,18,0.78)] backdrop-blur-xl">
+          <div className="mx-auto flex h-18 max-w-[1280px] items-center justify-between px-6 sm:px-8 lg:px-10">
+            <Link to="/" className={`flex items-center gap-3 text-[color:var(--ui-text)] ${FOCUS_VISIBLE} rounded-full`}>
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[color:var(--ui-accent)] text-[#0e1012] shadow-[0_10px_30px_rgba(201,139,94,0.24)]">
+                <BookOpen className="h-4 w-4" aria-hidden="true" />
               </div>
-              <span className="text-sm font-semibold tracking-wide text-[#F3F1EB]">DocOps Agent</span>
-            </div>
-            <nav className="hidden items-center gap-6 sm:flex" aria-label="Navegação principal">
-              {NAV_ITEMS.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => scrollToSection(item.id)}
-                  aria-current={activeSection === item.id ? 'page' : undefined}
-                  className={`relative pb-1 text-sm transition-colors ${FOCUS_VISIBLE} ${
-                    activeSection === item.id ? 'text-[#F3F1EB]' : 'text-[#AAB3BF] hover:text-[#F3F1EB]'
-                  }`}
-                >
-                  {item.label}
-                  <span
-                    aria-hidden="true"
-                    className={`absolute -bottom-2 left-0 right-0 h-px bg-[#2F6BFF] transition-opacity ${
-                      activeSection === item.id ? 'opacity-100' : 'opacity-0'
-                    }`}
-                  />
-                </button>
-              ))}
-            </nav>
-            <div className="flex items-center gap-3">
-              <Button
-                asChild
-                variant="ghost"
-                size="sm"
-                className="border border-transparent text-[#AAB3BF] hover:border-[#27303A] hover:bg-[#121821] hover:text-[#F3F1EB]"
-              >
+              <span className="text-sm font-semibold tracking-[0.08em]">DocOps Agent</span>
+            </Link>
+
+            <div className="flex items-center gap-2 sm:gap-3">
+              <Button asChild variant="ghost" size="sm" className="rounded-full px-4 text-[color:var(--ui-text-dim)]">
                 <Link to="/login">Entrar</Link>
               </Button>
-              <Button asChild size="sm" className="bg-[#2457D6] text-white hover:bg-[#1F4FC8]">
+              <Button
+                asChild
+                size="sm"
+                className="rounded-full border-[color:var(--ui-accent)] bg-[color:var(--ui-accent)] px-5 text-[#0e1012] hover:border-[color:var(--ui-accent-strong)] hover:bg-[color:var(--ui-accent-strong)]"
+              >
                 <Link to="/register">Criar conta</Link>
               </Button>
             </div>
@@ -390,343 +201,163 @@ export function Landing() {
         </header>
 
         <main id="content">
-          <HeroFuturistic
-            titleLine1="respostas confiáveis para cada"
-            titleLine2="um dos seus documentos"
-            subtitle="Análise inteligente de documentos com inteligência artificial."
-            onExploreClick={() => scrollToSection('recursos')}
-          />
-
-          <section className="mx-auto max-w-6xl px-6 pb-14 sm:pb-16" aria-label="Ponte de confiança">
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={VIEWPORT}
-              transition={{ duration: 0.36, ease: EASE }}
-              className="rounded-sm border border-[#2D3948] bg-[#0F141C]/90 px-5 py-4 sm:px-6"
-            >
-              <div className="grid gap-3 sm:grid-cols-3 sm:gap-5">
-                <div className="border-l-2 border-[#35507E] pl-3">
-                  <p className="font-meta text-[10px] tracking-[0.1em] text-[#8EA2BF]">Rastreabilidade</p>
-                  <p className="mt-1 text-sm text-[#C8D2DF]">Resposta sempre ligada a um trecho verificável.</p>
-                </div>
-                <div className="border-l-2 border-[#35507E] pl-3">
-                  <p className="font-meta text-[10px] tracking-[0.1em] text-[#8EA2BF]">Privacidade operacional</p>
-                  <p className="mt-1 text-sm text-[#C8D2DF]">Processamento local e controle total do acervo.</p>
-                </div>
-                <div className="border-l-2 border-[#35507E] pl-3">
-                  <p className="font-meta text-[10px] tracking-[0.1em] text-[#8EA2BF]">Ato seguinte</p>
-                  <p className="mt-1 text-sm text-[#C8D2DF]">Abaixo, recursos organizados por impacto operacional.</p>
-                </div>
-              </div>
-            </motion.div>
-          </section>
-
-          <section id="recursos" className="mx-auto max-w-6xl px-6 pb-14 scroll-mt-20 sm:pb-18" aria-labelledby="recursos-heading">
-            <div className="rounded-sm border border-[#2B3544] bg-[#0F151E]/88 px-5 py-6 sm:px-7 sm:py-7">
+          <section className="mx-auto flex min-h-[calc(100svh-73px)] max-w-[1280px] items-center px-6 py-10 sm:px-8 sm:py-14 lg:px-10 lg:py-16">
+            <div className="grid w-full items-center gap-10 lg:grid-cols-[minmax(0,1.05fr)_minmax(420px,0.95fr)] lg:gap-14">
               <motion.div
-                initial={{ opacity: 0, y: 14 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={VIEWPORT}
-                transition={{ duration: 0.42, ease: EASE }}
-                className="mb-8"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.55, ease: EASE }}
+                className="max-w-[38rem]"
               >
-                <p className="font-meta text-[11px] tracking-[0.12em] text-[#8A96A9]">Capacidades principais</p>
-                <h2 id="recursos-heading" className="font-display mt-3 text-[2.05rem] leading-tight text-[#F3F1EB] sm:text-4xl">
-                  Funcionalidades tratadas como evidência operacional
-                </h2>
-              </motion.div>
+                <p className="font-meta text-[11px] uppercase tracking-[0.22em] text-[color:var(--ui-accent)]">
+                  Documento em contexto, não em excesso
+                </p>
+                <h1 className="font-display mt-5 text-[3.15rem] leading-[0.95] text-[color:var(--ui-text)] sm:text-[4.5rem] lg:text-[5.5rem]">
+                  Entenda o seu acervo sem carregar a interface junto.
+                </h1>
+                <p className="mt-6 max-w-[34rem] text-[1.03rem] leading-8 text-[color:var(--ui-text-dim)] sm:text-[1.08rem]">
+                  O DocOps transforma documentos em resposta verificável, plano de execução e revisão contínua. Menos ruído na tela. Mais clareza no próximo passo.
+                </p>
 
-              <div className="grid gap-5 lg:grid-cols-2">
-                {primaryFeatures.map((feature, i) => (
-                  <FeatureCard key={feature.code} feature={feature} index={i} variant="primary" />
-                ))}
-              </div>
-              <div className="mt-5 grid gap-4 sm:grid-cols-2">
-                {secondaryFeatures.map((feature, i) => (
-                  <FeatureCard key={feature.code} feature={feature} index={i + primaryFeatures.length} variant="secondary" />
-                ))}
-              </div>
-            </div>
-          </section>
-
-          <section className="mx-auto max-w-6xl px-6 pb-14 sm:pb-18" aria-label="Métricas do produto">
-            <motion.div
-              initial={{ opacity: 0, y: 12 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={VIEWPORT}
-              transition={{ duration: 0.38, ease: EASE }}
-              className="rounded-sm border border-[#2F3A4B] bg-[#111925]/90 p-4 sm:p-5"
-            >
-              <div className="mb-4 flex flex-wrap items-center justify-between gap-3 border-b border-[#2E3949] pb-3">
-                <p className="font-meta text-[11px] tracking-[0.12em] text-[#8A96A9]">Indicadores operacionais</p>
-                <p className="font-meta text-[11px] tracking-[0.1em] text-[#7E8896]">Recorte da experiência principal</p>
-              </div>
-              <div className="grid gap-0 sm:grid-cols-3">
-                {METRICS.map((metric, i) => {
-                  const Icon = metric.icon
-                  return (
-                    <motion.article
-                      key={metric.label}
-                      initial={{ opacity: 0, y: 10 }}
-                      whileInView={{ opacity: 1, y: 0 }}
-                      viewport={VIEWPORT}
-                      transition={{ duration: 0.34, delay: getDynamicDelay(i), ease: EASE }}
-                      className={`px-4 py-4 sm:px-5 ${i > 0 ? 'border-t border-[#2E3949] sm:border-l sm:border-t-0' : ''}`}
-                    >
-                      <div className="flex items-center gap-2">
-                        <Icon className="h-4 w-4 text-[#9AB0CF]" aria-hidden="true" />
-                        <p className="font-meta text-[11px] tracking-[0.1em] text-[#8795A8]">Sinal</p>
-                      </div>
-                      <p className="mt-3 text-4xl font-semibold text-[#F3F1EB]">{metric.value}</p>
-                      <p className="mt-1 text-sm font-semibold text-[#E9EDF3]">{metric.label}</p>
-                      <p className="mt-2 text-xs leading-relaxed text-[#AEB8C6]">{metric.desc}</p>
-                    </motion.article>
-                  )
-                })}
-              </div>
-            </motion.div>
-          </section>
-
-          <section id="como-funciona" className="mx-auto max-w-6xl px-6 pb-14 scroll-mt-20 sm:pb-18" aria-labelledby="como-funciona-heading">
-            <div className="rounded-sm border border-[#2D3948] bg-[#101722]/86 px-5 py-6 sm:px-7 sm:py-7">
-              <motion.div
-                initial={{ opacity: 0, y: 14 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={VIEWPORT}
-                transition={{ duration: 0.42, ease: EASE }}
-                className="mb-8"
-              >
-                <p className="font-meta text-[11px] tracking-[0.12em] text-[#8A96A9]">Fluxo de trabalho</p>
-                <h2 id="como-funciona-heading" className="font-display mt-3 text-[2.05rem] leading-tight text-[#F3F1EB] sm:text-4xl">
-                  Método simples, verificável e contínuo
-                </h2>
-              </motion.div>
-              <div className="relative">
-                <div className="pointer-events-none absolute left-[12%] right-[12%] top-8 hidden h-px bg-[linear-gradient(90deg,transparent,rgba(53,80,126,0.68)_15%,rgba(53,80,126,0.68)_85%,transparent)] md:block" />
-                <div className="grid gap-4 md:grid-cols-3 md:gap-5">
-                  {STEPS.map((step, i) => (
-                    <StepItem key={step.n} step={step} index={i} />
-                  ))}
-                </div>
-              </div>
-            </div>
-          </section>
-
-          <section id="demo" className="mx-auto max-w-6xl px-6 pb-18 scroll-mt-20 sm:pb-24" aria-labelledby="demo-heading">
-            <div className="rounded-sm border border-[#31405A] bg-[#0E151F]/92 px-5 py-6 sm:px-7 sm:py-7">
-              <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={VIEWPORT}
-                transition={{ duration: 0.42, ease: EASE }}
-                className="mb-7"
-              >
-                <p className="font-meta text-[11px] tracking-[0.12em] text-[#8EA2BF]">Demo funcional</p>
-                <h2 id="demo-heading" className="font-display mt-3 text-[2.05rem] leading-tight text-[#F3F1EB] sm:text-4xl">
-                  Teste uma consulta e veja o retorno estruturado
-                </h2>
-              </motion.div>
-
-              <motion.form
-                initial={{ opacity: 0, y: 10 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={VIEWPORT}
-                transition={{ duration: 0.35, delay: getDynamicDelay(0), ease: EASE }}
-                className="rounded-sm border border-[#2F3B4E] bg-[#101A27] p-4"
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  if (!demoInput.trim() || demoState === 'loading') return
-                  ai.run(demoInput)
-                }}
-              >
-                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 border-b border-[#2F3B4E] pb-3">
-                  <p className="font-meta text-[11px] tracking-[0.1em] text-[#8EA2BF]">Entrada de comando</p>
-                  <p className="font-meta text-[11px] tracking-[0.1em] text-[#7E8896]">Saída estruturada em tarefas, revisão e agenda</p>
-                </div>
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                  <Input
-                    type="text"
-                    value={demoInput}
-                    onChange={(event) => {
-                      setDemoInput(event.target.value)
-                      if (ai.result) ai.reset()
-                    }}
-                    placeholder="Ex: organizar revisão para prova de algoritmos"
-                    aria-label="Comando para a demonstração de IA"
-                    className="h-12 rounded-sm border-[#38465C] bg-[#111C2B] px-4 text-sm text-[#F3F1EB] placeholder:text-[#7E8896] focus-visible:border-[#2F6BFF] focus-visible:ring-[#2F6BFF]"
-                    disabled={demoState === 'loading'}
-                  />
+                <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
                   <Button
-                    type="submit"
-                    disabled={demoState === 'loading' || !demoInput.trim()}
-                    className="h-12 w-full rounded-sm bg-[#2457D6] px-6 text-sm text-white hover:bg-[#1F4FC8] disabled:opacity-50 sm:w-auto"
+                    asChild
+                    size="lg"
+                    className="rounded-full border-[color:var(--ui-accent)] bg-[color:var(--ui-accent)] px-7 text-[#0e1012] hover:border-[color:var(--ui-accent-strong)] hover:bg-[color:var(--ui-accent-strong)]"
                   >
-                    {demoState === 'loading' ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" /> Processando
-                      </>
-                    ) : demoState === 'done' ? (
-                      <>
-                        <CheckCircle2 className="h-4 w-4" aria-hidden="true" /> Concluído
-                      </>
-                    ) : (
-                      <>
-                        <Play className="h-4 w-4" aria-hidden="true" /> Executar
-                      </>
-                    )}
+                    <Link to="/register">
+                      Criar conta
+                      <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                    </Link>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="lg"
+                    onClick={() => scrollToSection('prova')}
+                    className="rounded-full border-[color:var(--ui-border-strong)] px-7"
+                  >
+                    Ver como funciona
                   </Button>
                 </div>
-              </motion.form>
 
-              <div className="mt-6" role="status" aria-live="polite" aria-atomic="true" aria-busy={demoState === 'loading'}>
-                <AnimatePresence mode="wait">
-                  {demoState === 'loading' ? (
-                    <motion.div
-                      key="loading"
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -8 }}
-                      transition={{ duration: 0.25, ease: EASE }}
-                      className="rounded-sm border border-[#2F3B4E] bg-[#111A27] p-5 text-sm text-[#B8C2D1]"
-                    >
-                      Processando sua solicitação...
-                    </motion.div>
-                  ) : ai.result ? (
-                    <motion.div
-                      key="result"
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -8 }}
-                      transition={{ duration: 0.25, ease: EASE }}
-                    >
-                      <div className="rounded-sm border border-[#2F3B4E] bg-[#0F1723] p-3">
-                        <p className="font-meta mb-3 text-[11px] tracking-[0.1em] text-[#8EA2BF]">Resultado operacional</p>
-                        <div className="grid gap-4 md:grid-cols-3">
-                          <AnimatePresence>
-                            {ai.result.cards.map((card, i) => (
-                              <ResultCard key={`card-${i}`} card={card} index={i} />
-                            ))}
-                          </AnimatePresence>
-                        </div>
-                      </div>
-                      <div className="mt-5">
-                        <button
-                          type="button"
-                          onClick={ai.reset}
-                          className={`font-meta text-[11px] tracking-[0.1em] text-[#8B97AA] transition-colors hover:text-[#F3F1EB] ${FOCUS_VISIBLE} focus-visible:rounded-sm`}
-                        >
-                          Resetar demonstração
-                        </button>
-                      </div>
-                    </motion.div>
-                  ) : (
-                    <motion.div
-                      key="empty"
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -8 }}
-                      transition={{ duration: 0.25, ease: EASE }}
-                      className="rounded-sm border border-dashed border-[#33445C] bg-[#111A27] p-5"
-                    >
-                      <p className="text-sm font-semibold text-[#F3F1EB]">Nenhum resultado ainda.</p>
-                      <p className="mt-1 text-sm text-[#AAB3BF]">Digite um objetivo de estudo e execute a consulta.</p>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                <ul className="mt-8 flex flex-wrap gap-3">
+                  {PROOF_CHIPS.map((chip, index) => (
+                    <ProofChip key={chip.label} chip={chip} index={index} />
+                  ))}
+                </ul>
+              </motion.div>
+
+              <motion.div
+                initial={{ opacity: 0, y: 24 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.6, delay: 0.08, ease: EASE }}
+                className="order-last lg:order-none"
+              >
+                <HeroFuturistic className="h-[380px] sm:h-[460px] lg:h-[620px]" interactive fallbackMode="still" />
+              </motion.div>
+            </div>
+          </section>
+
+          <section id="valor" className="mx-auto max-w-[1280px] scroll-mt-28 px-6 py-8 sm:px-8 sm:py-12 lg:px-10 lg:py-16" aria-labelledby="valor-heading">
+            <motion.div
+              initial={{ opacity: 0, y: 16 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={VIEWPORT}
+              transition={{ duration: 0.44, ease: EASE }}
+              className="mb-8 max-w-[38rem] sm:mb-10"
+            >
+              <p className="font-meta text-[11px] uppercase tracking-[0.2em] text-[color:var(--ui-text-meta)]">Valor essencial</p>
+              <h2 id="valor-heading" className="font-display mt-4 text-[2.7rem] leading-[0.96] text-[color:var(--ui-text)] sm:text-[3.4rem]">
+                O produto explica pouco e entrega o que importa.
+              </h2>
+            </motion.div>
+
+            <div className="grid gap-5 lg:grid-cols-3">
+              {PILLARS.map((pillar, index) => (
+                <PillarCard key={pillar.title} pillar={pillar} index={index} />
+              ))}
+            </div>
+          </section>
+
+          <section id="prova" className="mx-auto max-w-[1280px] scroll-mt-28 px-6 py-8 sm:px-8 sm:py-12 lg:px-10 lg:py-16" aria-labelledby="prova-heading">
+            <div className="rounded-[2rem] border border-[color:var(--ui-border)] bg-[linear-gradient(180deg,rgba(21,24,27,0.9),rgba(16,18,20,0.96))] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.3)] sm:p-8 lg:p-10">
+              <motion.div
+                initial={{ opacity: 0, y: 16 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={VIEWPORT}
+                transition={{ duration: 0.44, ease: EASE }}
+                className="mb-8 max-w-[40rem]"
+              >
+                <p className="font-meta text-[11px] uppercase tracking-[0.2em] text-[color:var(--ui-accent)]">Prova curta</p>
+                <h2 id="prova-heading" className="font-display mt-4 text-[2.7rem] leading-[0.98] text-[color:var(--ui-text)] sm:text-[3.4rem]">
+                  A home mostra o comportamento do produto sem pedir uma demo inteira.
+                </h2>
+                <p className="mt-4 max-w-[36rem] text-sm leading-7 text-[color:var(--ui-text-dim)] sm:text-base">
+                  Em vez de abrir uma interface densa na primeira dobra, a landing antecipa o que o DocOps produz quando a pergunta já precisa virar decisão.
+                </p>
+              </motion.div>
+
+              <div className="grid gap-5 lg:grid-cols-3">
+                {EVIDENCE_CARDS.map((card, index) => (
+                  <EvidenceCard key={card.title} card={card} index={index} />
+                ))}
               </div>
             </div>
           </section>
 
-          <section className="mx-auto max-w-6xl px-6 pb-20 sm:pb-24" aria-label="Chamada para ação">
+          <section className="mx-auto max-w-[1280px] px-6 py-10 sm:px-8 sm:py-14 lg:px-10 lg:py-18" aria-labelledby="cta-heading">
             <motion.div
-              initial={{ opacity: 0, y: 14 }}
+              initial={{ opacity: 0, y: 16 }}
               whileInView={{ opacity: 1, y: 0 }}
               viewport={VIEWPORT}
-              transition={{ duration: 0.42, ease: EASE }}
-              className="rounded-sm border border-[#3A4A61] bg-[linear-gradient(165deg,rgba(16,24,36,0.97),rgba(13,20,31,0.98))] p-8 text-[#F3F1EB] sm:p-10"
+              transition={{ duration: 0.44, ease: EASE }}
+              className="flex flex-col gap-6 rounded-[2rem] border border-[color:var(--ui-border)] bg-[rgba(255,255,255,0.03)] p-7 sm:p-9 lg:flex-row lg:items-end lg:justify-between"
             >
-              <div className="mb-7 h-px bg-[linear-gradient(90deg,rgba(47,107,255,0.9),rgba(47,107,255,0.12)_48%,transparent)]" />
-              <p className="font-meta text-[11px] tracking-[0.12em] text-[#AFC0D8]">Início rápido</p>
-              <h2 className="font-display mt-3 text-[2.35rem] leading-tight sm:text-4xl">Transforme seus documentos em um sistema de estudo confiável</h2>
-              <p className="mt-4 max-w-2xl text-sm leading-relaxed text-[#B5C0CF]">
-                Crie a conta, envie o material e valide respostas com fonte citada. Operação técnica sem ruído visual.
-              </p>
-              <div className="mt-7 flex flex-wrap items-center gap-4">
-                <Button asChild size="lg" className="h-11 rounded-sm bg-[#2457D6] px-7 text-sm text-white hover:bg-[#1F4FC8]">
-                  <Link to="/register">
-                    Criar conta grátis <ArrowRight className="h-4 w-4" aria-hidden="true" />
-                  </Link>
-                </Button>
+              <div className="max-w-[36rem]">
+                <p className="font-meta text-[11px] uppercase tracking-[0.2em] text-[color:var(--ui-text-meta)]">Pronto para começar</p>
+                <h2 id="cta-heading" className="font-display mt-4 text-[2.5rem] leading-[0.98] text-[color:var(--ui-text)] sm:text-[3.2rem]">
+                  Menos interface para explicar. Mais produto para usar.
+                </h2>
+                <p className="mt-4 text-sm leading-7 text-[color:var(--ui-text-dim)] sm:text-base">
+                  Crie a conta, suba o material e deixe o acervo responder com contexto, prova e organização.
+                </p>
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                 <Button
                   asChild
-                  variant="ghost"
                   size="lg"
-                  className="h-11 rounded-sm border border-[#44556D] px-6 text-sm text-[#F3F1EB] hover:bg-[#1A2637]"
+                  className="rounded-full border-[color:var(--ui-accent)] bg-[color:var(--ui-accent)] px-7 text-[#0e1012] hover:border-[color:var(--ui-accent-strong)] hover:bg-[color:var(--ui-accent-strong)]"
                 >
+                  <Link to="/register">
+                    Criar conta
+                    <ArrowRight className="h-4 w-4" aria-hidden="true" />
+                  </Link>
+                </Button>
+                <Button asChild variant="ghost" size="lg" className="rounded-full px-6 text-[color:var(--ui-text)]">
                   <Link to="/login">Entrar</Link>
                 </Button>
               </div>
-              <p className="mt-4 flex items-center gap-1.5 text-xs text-[#8A96A9]">
-                <Lock className="h-3 w-3" aria-hidden="true" /> Sem cartão de crédito
-              </p>
             </motion.div>
           </section>
         </main>
 
-        <footer className="relative border-t border-[#27303A]/90 bg-[#0F141B]" role="contentinfo">
-          <div className="mx-auto max-w-6xl px-6 py-12">
-            <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="space-y-4">
-                <div className="flex items-center gap-2.5">
-                  <div className="flex h-7 w-7 items-center justify-center rounded-sm bg-[#2457D6]">
-                    <BookOpen className="h-3.5 w-3.5 text-white" aria-hidden="true" />
-                  </div>
-                  <span className="text-sm font-semibold text-[#F3F1EB]">DocOps Agent</span>
-                </div>
-                <p className="max-w-[240px] text-sm leading-relaxed text-[#AAB3BF]">
-                  Plataforma de documentos com respostas rastreáveis, estudo guiado e operação local.
-                </p>
-              </div>
-
-              {Object.entries(FOOTER_LINKS).map(([title, links]) => (
-                <div key={title}>
-                  <h4 className="font-meta mb-3 text-[11px] font-medium uppercase tracking-[0.16em] text-[#7E8896]">{title}</h4>
-                  <ul className="space-y-2">
-                    {links.map((link) => (
-                      <li key={link.label}>
-                        {'external' in link && link.external ? (
-                          <a
-                            href={link.href}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className={`text-sm text-[#AAB3BF] transition-colors hover:text-[#F3F1EB] ${FOCUS_VISIBLE} focus-visible:rounded-sm`}
-                          >
-                            {link.label}
-                          </a>
-                        ) : link.href.startsWith('#') ? (
-                          <button
-                            type="button"
-                            onClick={() => scrollToSection(link.href.slice(1))}
-                            className={`text-sm text-[#AAB3BF] transition-colors hover:text-[#F3F1EB] ${FOCUS_VISIBLE} focus-visible:rounded-sm`}
-                          >
-                            {link.label}
-                          </button>
-                        ) : (
-                          <a href={link.href} className={`text-sm text-[#AAB3BF] transition-colors hover:text-[#F3F1EB] ${FOCUS_VISIBLE} focus-visible:rounded-sm`}>
-                            {link.label}
-                          </a>
-                        )}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+        <footer className="border-t border-[color:var(--ui-border)]" role="contentinfo">
+          <div className="mx-auto flex max-w-[1280px] flex-col gap-4 px-6 py-6 text-sm text-[color:var(--ui-text-dim)] sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10">
+            <p>© {new Date().getFullYear()} DocOps Agent. IA local para resposta rastreável.</p>
+            <div className="flex flex-wrap items-center gap-4">
+              {FOOTER_LINKS.map((link) => (
+                <a
+                  key={link.label}
+                  href={link.href}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className={`transition-colors hover:text-[color:var(--ui-text)] ${FOCUS_VISIBLE} rounded-full`}
+                >
+                  {link.label}
+                </a>
               ))}
-            </div>
-
-            <div className="mt-10 flex flex-col items-center justify-between gap-3 border-t border-[#27303A] pt-6 sm:flex-row">
-              <p className="text-xs text-[#AAB3BF]">&copy; {new Date().getFullYear()} DocOps Agent. Todos os direitos reservados.</p>
-              <p className="font-meta text-[11px] uppercase tracking-[0.12em] text-[#7E8896]">IA local - busca semântica + vetorial</p>
             </div>
           </div>
         </footer>
@@ -734,4 +365,3 @@ export function Landing() {
     </MotionConfig>
   )
 }
-

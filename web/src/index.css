@@ -1,54 +1,59 @@
-@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Source+Sans+3:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
 @layer base {
   :root {
     color-scheme: dark;
-    --background: 220 20% 5%;
-    --foreground: 40 22% 93%;
-    --card: 221 28% 10%;
-    --card-foreground: 40 22% 93%;
-    --popover: 221 28% 10%;
-    --popover-foreground: 40 22% 93%;
-    --primary: 221 100% 59%;
-    --primary-foreground: 40 22% 93%;
-    --secondary: 218 30% 9%;
-    --secondary-foreground: 40 22% 93%;
-    --muted: 218 27% 8%;
-    --muted-foreground: 215 15% 61%;
-    --accent: 221 100% 59%;
-    --accent-foreground: 40 22% 93%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 214 18% 19%;
-    --input: 214 18% 19%;
-    --ring: 221 100% 59%;
-    --radius: 0.75rem;
+    --background: 210 8% 6%;
+    --foreground: 36 29% 94%;
+    --card: 215 10% 10%;
+    --card-foreground: 36 29% 94%;
+    --popover: 215 10% 10%;
+    --popover-foreground: 36 29% 94%;
+    --primary: 28 49% 58%;
+    --primary-foreground: 210 9% 7%;
+    --secondary: 215 10% 12%;
+    --secondary-foreground: 36 29% 94%;
+    --muted: 215 10% 12%;
+    --muted-foreground: 120 3% 66%;
+    --accent: 28 49% 58%;
+    --accent-foreground: 210 9% 7%;
+    --destructive: 0 54% 44%;
+    --destructive-foreground: 36 29% 94%;
+    --border: 220 9% 17%;
+    --input: 220 9% 17%;
+    --ring: 28 49% 58%;
+    --radius: 1rem;
     --font-display: 'EB Garamond', Georgia, serif;
-    --font-body: 'Source Sans 3', 'Segoe UI', sans-serif;
+    --font-body: 'Manrope', 'Segoe UI', sans-serif;
     --font-meta: 'IBM Plex Mono', 'Consolas', monospace;
 
-    --ui-bg: #0b0e12;
-    --ui-bg-alt: #0f141b;
-    --ui-surface-1: #121821;
-    --ui-surface-2: #171f29;
-    --ui-surface-3: #1b2531;
-    --ui-border: #27303a;
-    --ui-border-soft: #212a34;
-    --ui-border-strong: #33404f;
-    --ui-text: #f3f1eb;
-    --ui-text-dim: #aab3bf;
-    --ui-text-meta: #7e8896;
-    --ui-accent: #2f6bff;
-    --ui-accent-strong: #2457d6;
-    --ui-accent-soft: rgba(47, 107, 255, 0.16);
-    --ui-success: #30b07a;
-    --ui-warning: #d2a04a;
-    --ui-danger: #d16262;
+    --ui-bg: #0e1012;
+    --ui-bg-alt: #121417;
+    --ui-surface: #15181b;
+    --ui-surface-1: #15181b;
+    --ui-surface-2: #1b1f23;
+    --ui-surface-3: #20252a;
+    --ui-border: #272b30;
+    --ui-border-soft: #23272b;
+    --ui-border-strong: #343941;
+    --ui-text: #f4f0e8;
+    --ui-text-dim: #a8aea9;
+    --ui-text-meta: #7f847e;
+    --ui-accent: #c98b5e;
+    --ui-accent-strong: #d39b72;
+    --ui-accent-soft: rgba(201, 139, 94, 0.16);
+    --ui-success: #6da97b;
+    --ui-warning: #d4a86c;
+    --ui-danger: #ca6f67;
   }
 
   * {
     border-color: hsl(var(--border));
+  }
+
+  html {
+    scroll-behavior: smooth;
   }
 
   body {
@@ -62,12 +67,8 @@
   }
 
   ::selection {
-    background-color: hsl(var(--primary) / 0.25);
-    color: hsl(var(--foreground));
-  }
-
-  html {
-    scroll-behavior: smooth;
+    background-color: color-mix(in srgb, var(--ui-accent) 32%, transparent);
+    color: var(--ui-text);
   }
 
   ::-webkit-scrollbar {
@@ -82,12 +83,12 @@
   ::-webkit-scrollbar-thumb {
     border-radius: 999px;
     border: 2px solid transparent;
-    background: color-mix(in srgb, var(--ui-border-strong) 88%, transparent);
+    background: color-mix(in srgb, var(--ui-border-strong) 82%, transparent);
     background-clip: padding-box;
   }
 
   ::-webkit-scrollbar-thumb:hover {
-    background: color-mix(in srgb, var(--ui-border-strong) 100%, transparent);
+    background: color-mix(in srgb, var(--ui-accent) 52%, var(--ui-border-strong));
     background-clip: padding-box;
   }
 
@@ -133,23 +134,23 @@
   }
 
   .app-surface {
-    @apply rounded-xl border;
+    @apply rounded-[1.25rem] border;
     border-color: color-mix(in srgb, var(--ui-border) 86%, transparent);
     background-color: var(--ui-surface-1);
-    box-shadow: 0 1px 0 rgba(11, 14, 18, 0.5), 0 18px 36px rgba(2, 4, 8, 0.28);
+    box-shadow: 0 1px 0 rgba(244, 240, 232, 0.02), 0 18px 36px rgba(0, 0, 0, 0.24);
   }
 
   .app-surface-muted {
-    @apply rounded-xl border;
+    @apply rounded-[1.25rem] border;
     border-color: color-mix(in srgb, var(--ui-border-soft) 82%, transparent);
-    background-color: color-mix(in srgb, var(--ui-surface-1) 62%, var(--ui-bg-alt));
+    background-color: color-mix(in srgb, var(--ui-surface-1) 72%, var(--ui-bg-alt));
   }
 
   .app-surface-strong {
-    @apply rounded-xl border;
+    @apply rounded-[1.25rem] border;
     border-color: color-mix(in srgb, var(--ui-border-strong) 84%, transparent);
     background-color: var(--ui-surface-2);
-    box-shadow: inset 0 1px 0 rgba(243, 241, 235, 0.03);
+    box-shadow: inset 0 1px 0 rgba(244, 240, 232, 0.03);
   }
 
   .app-divider {
@@ -175,9 +176,9 @@
     z-index: 0;
     pointer-events: none;
     background:
-      radial-gradient(76% 40% at 88% 8%, rgba(47, 107, 255, 0.07), transparent 70%),
-      radial-gradient(62% 34% at 7% 84%, rgba(82, 114, 158, 0.08), transparent 74%),
-      linear-gradient(180deg, #0b0e12 0%, #0f141b 34%, #0f151d 66%, #0b0e12 100%);
+      radial-gradient(72% 46% at 82% 10%, rgba(201, 139, 94, 0.12), transparent 58%),
+      radial-gradient(56% 34% at 12% 14%, rgba(244, 240, 232, 0.06), transparent 68%),
+      linear-gradient(180deg, #0e1012 0%, #121417 40%, #0e1012 100%);
   }
 
   .app-editorial::after {
@@ -186,12 +187,10 @@
     inset: 0;
     z-index: 0;
     pointer-events: none;
-    opacity: 0.14;
-    background-image:
-      linear-gradient(to right, rgba(126, 136, 150, 0.24) 1px, transparent 1px),
-      linear-gradient(to bottom, rgba(126, 136, 150, 0.1) 1px, transparent 1px);
-    background-size: 144px 100%, 100% 144px;
-    mask-image: linear-gradient(to bottom, transparent, black 18%, black 86%, transparent);
+    opacity: 0.06;
+    background-image: radial-gradient(rgba(244, 240, 232, 0.9) 0.5px, transparent 0.5px);
+    background-size: 5px 5px;
+    mask-image: linear-gradient(to bottom, transparent, black 16%, black 84%, transparent);
   }
 
   .app-editorial .bg-zinc-950 {
@@ -203,7 +202,7 @@
   }
 
   .app-editorial .bg-zinc-800 {
-    background-color: color-mix(in srgb, var(--ui-surface-2) 92%, black) !important;
+    background-color: var(--ui-surface-2) !important;
   }
 
   .app-editorial .border-zinc-800 {
@@ -229,7 +228,7 @@
   }
 
   .app-editorial .text-blue-400 {
-    color: #7ea1ff !important;
+    color: var(--ui-accent) !important;
   }
 
   .app-editorial .bg-blue-600 {
