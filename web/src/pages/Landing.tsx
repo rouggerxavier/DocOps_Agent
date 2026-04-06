@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence, MotionConfig } from 'framer-motion'
+import { HeroFuturistic } from '@/components/HeroFuturistic'
 import {
   BookOpen,
   MessageSquare,
@@ -389,115 +390,12 @@ export function Landing() {
         </header>
 
         <main id="content">
-          <section className="mx-auto max-w-6xl px-6 pb-14 pt-14 sm:pb-20 sm:pt-16" aria-label="Hero">
-            <div className="rounded-sm border border-[#2C3645] bg-[linear-gradient(165deg,rgba(15,20,27,0.94),rgba(12,18,26,0.96))] px-5 py-8 sm:px-7 lg:px-9 lg:py-10">
-              <div className="grid items-start gap-10 lg:grid-cols-12">
-              <div className="lg:col-span-7">
-                <motion.p
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.4, delay: getDynamicDelay(0), ease: EASE }}
-                  className="inline-flex items-center gap-2 rounded-sm border border-[#324057] bg-[#111A27] px-3 py-1.5 font-meta text-[11px] tracking-[0.1em] text-[#B6C4D8]"
-                >
-                  <Shield className="h-3 w-3" aria-hidden="true" />
-                  Evidência antes de efeito
-                </motion.p>
-
-                <motion.h1
-                  initial={{ opacity: 0, y: 16 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.48, delay: getDynamicDelay(1), ease: EASE }}
-                  className="font-display mt-6 text-[2.35rem] leading-[1.06] text-[#F3F1EB] sm:text-6xl lg:text-[4.25rem]"
-                >
-                  Respostas confiáveis
-                  <br />
-                  para cada documento.
-                </motion.h1>
-
-                <motion.p
-                  initial={{ opacity: 0, y: 14 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.44, delay: getDynamicDelay(2), ease: EASE }}
-                  className="mt-6 max-w-2xl text-lg leading-relaxed text-[#B0BBC9]"
-                >
-                  O DocOps Agent transforma arquivos e links em uma base consultável com citações explícitas, fluxo de
-                  estudo e operação local. Menos suposição, mais verificação.
-                </motion.p>
-
-                <motion.div
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.36, delay: getDynamicDelay(3), ease: EASE }}
-                  className="mt-10 flex flex-wrap items-center gap-4"
-                >
-                  <Button asChild size="lg" className="h-12 rounded-sm bg-[#2457D6] px-8 text-base text-white hover:bg-[#1F4FC8]">
-                    <Link to="/register">
-                      Criar conta grátis <ArrowRight className="h-4 w-4" aria-hidden="true" />
-                    </Link>
-                  </Button>
-                  <button
-                    type="button"
-                    onClick={() => scrollToSection('demo')}
-                    className={`h-12 rounded-sm border border-[#334057] bg-[#121A26] px-6 text-sm font-semibold text-[#F3F1EB] transition-colors hover:border-[#4B5970] hover:bg-[#152033] hover:text-[#F3F1EB] ${FOCUS_VISIBLE}`}
-                  >
-                    Ver demonstração
-                  </button>
-                </motion.div>
-
-                <motion.div
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.32, delay: getDynamicDelay(4), ease: EASE }}
-                  className="mt-6 flex flex-wrap items-center gap-3 font-meta text-[11px] tracking-[0.1em] text-[#8896AA]"
-                >
-                  <span className="rounded-sm border border-[#31415A] bg-[#101823] px-2 py-1">Fontes citadas</span>
-                  <span className="rounded-sm border border-[#31415A] bg-[#101823] px-2 py-1">Execução local</span>
-                  <span className="rounded-sm border border-[#31415A] bg-[#101823] px-2 py-1">Busca híbrida</span>
-                </motion.div>
-              </div>
-
-              <motion.aside
-                initial={{ opacity: 0, y: 14 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: getDynamicDelay(2) + 0.06, ease: EASE }}
-                className="relative rounded-sm border border-[#35507E] bg-[linear-gradient(170deg,rgba(17,26,39,0.96),rgba(15,22,33,0.98))] lg:col-span-5"
-                aria-label="Painel de evidência"
-              >
-                <div className="border-b border-[#31405A] px-5 py-4">
-                  <p className="font-meta text-[11px] tracking-[0.1em] text-[#9CB0CD]">Prova explícita</p>
-                  <h2 className="mt-2 text-xl font-semibold text-[#F3F1EB]">Resposta verificável acima da dobra</h2>
-                </div>
-                <div className="space-y-3 p-5">
-                  <div className="rounded-sm border border-[#30405A] bg-[#0F1724] p-3">
-                    <p className="font-meta text-[10px] tracking-[0.1em] text-[#8EA2BF]">Pergunta</p>
-                    <p className="mt-1 text-[15px] font-semibold text-[#F3F1EB]">Quais tópicos devo revisar hoje para manter o ritmo?</p>
-                  </div>
-                  <div className="rounded-sm border border-[#324057] bg-[#121C2A] p-3">
-                    <p className="font-meta text-[10px] tracking-[0.1em] text-[#9AB0CF]">Resposta</p>
-                    <p className="mt-1 text-sm leading-relaxed text-[#F3F1EB]">
-                      Priorize os capítulos 3 e 4, depois execute uma revisão curta com 12 flashcards e conclua com checklist de
-                      tarefas.
-                    </p>
-                  </div>
-                  <div className="rounded-sm border border-[#30405A] bg-[#0F1724] p-3">
-                    <p className="font-meta text-[10px] tracking-[0.1em] text-[#8EA2BF]">Fonte citada</p>
-                    <p className="mt-1 font-meta text-xs text-[#C0CBDA]">Manual_ML.pdf - seção 3.2 - linhas 114-139</p>
-                  </div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <div className="rounded-sm border border-[#31405A] bg-[#101823] px-3 py-2">
-                      <p className="font-meta text-[10px] tracking-[0.1em] text-[#8EA2BF]">Privacidade</p>
-                      <p className="mt-1 text-xs text-[#F3F1EB]">Processamento local</p>
-                    </div>
-                    <div className="rounded-sm border border-[#31405A] bg-[#101823] px-3 py-2">
-                      <p className="font-meta text-[10px] tracking-[0.1em] text-[#8EA2BF]">Latência</p>
-                      <p className="mt-1 text-xs text-[#F3F1EB]">Resposta média abaixo de 2s</p>
-                    </div>
-                  </div>
-                </div>
-              </motion.aside>
-              </div>
-            </div>
-          </section>
+          <HeroFuturistic
+            titleLine1="respostas confiáveis para cada"
+            titleLine2="um dos seus documentos"
+            subtitle="Análise inteligente de documentos com inteligência artificial."
+            onExploreClick={() => scrollToSection('recursos')}
+          />
 
           <section className="mx-auto max-w-6xl px-6 pb-14 sm:pb-16" aria-label="Ponte de confiança">
             <motion.div
