@@ -38,8 +38,9 @@ type HeroFuturisticProps = {
 }
 
 function PostProcessing({ animated }: { animated: boolean }) {
-  const { gl, scene, camera } = useThree()
+  const { gl, scene, camera, size } = useThree()
   const progressRef = useRef({ value: 0 })
+  const elapsedRef = useRef(0)
 
   const renderPipeline = useMemo(() => {
     const postProcessing = new THREE.RenderPipeline(gl as any)
@@ -64,10 +65,11 @@ function PostProcessing({ animated }: { animated: boolean }) {
 
     postProcessing.outputNode = withScanEffect.add(bloomPass)
     return postProcessing
-  }, [camera, gl, scene])
+  }, [camera, gl, scene, size.height, size.width])
 
-  useFrame(({ clock }) => {
-    progressRef.current.value = animated ? Math.sin(clock.getElapsedTime() * 0.45) * 0.5 + 0.5 : 0.44
+  useFrame((_, delta) => {
+    elapsedRef.current += delta
+    progressRef.current.value = animated ? Math.sin(elapsedRef.current * 0.45) * 0.5 + 0.5 : 0.44
     void renderPipeline.render()
   }, 1)
 
@@ -78,6 +80,7 @@ function Scene({ animated, interactive }: { animated: boolean; interactive: bool
   const [rawMap, depthMap] = useTexture([TEXTUREMAP.src, DEPTHMAP.src])
   const meshRef = useRef<Mesh>(null)
   const [visible, setVisible] = useState(false)
+  const elapsedRef = useRef(0)
 
   useEffect(() => {
     if (rawMap && depthMap) {
@@ -118,11 +121,12 @@ function Scene({ animated, interactive }: { animated: boolean; interactive: bool
 
   const [w, h] = useAspect(WIDTH, HEIGHT)
 
-  useFrame(({ clock, pointer }) => {
-    uniforms.progress.value = animated ? Math.sin(clock.getElapsedTime() * 0.45) * 0.5 + 0.5 : 0.46
+  useFrame((state, delta) => {
+    elapsedRef.current += delta
+    uniforms.progress.value = animated ? Math.sin(elapsedRef.current * 0.45) * 0.5 + 0.5 : 0.46
 
     if (interactive && animated) {
-      uniforms.pointer.value.set(pointer.x, pointer.y)
+      uniforms.pointer.value.set(state.pointer.x, state.pointer.y)
     } else {
       uniforms.pointer.value.set(0, 0)
     }
@@ -149,11 +153,29 @@ function HeroFallback({ mode }: { mode: 'still' | 'gradient' }) {
           src={TEXTUREMAP.src}
           alt=""
           aria-hidden="true"
-          className="absolute inset-0 h-full w-full object-contain px-8 py-10 opacity-72 mix-blend-screen sm:px-12 sm:py-14"
+          className="absolute inset-0 h-full w-full object-contain px-4 py-6 opacity-72 mix-blend-screen sm:px-12 sm:py-14"
         />
       ) : null}
       <div className="absolute inset-x-[14%] top-1/2 h-px -translate-y-1/2 bg-[linear-gradient(90deg,transparent,rgba(201,139,94,0.95),transparent)] opacity-85" />
       <div className="absolute inset-0 bg-[radial-gradient(72%_56%_at_50%_52%,transparent_42%,rgba(0,0,0,0.48)_100%)]" />
+    </div>
+  )
+}
+
+function HeroBaseLayer({ mode }: { mode: 'still' | 'gradient' }) {
+  return (
+    <div className="absolute inset-0 overflow-hidden">
+      <div className="absolute inset-0 bg-[radial-gradient(90%_72%_at_72%_18%,rgba(201,139,94,0.16),transparent_56%),radial-gradient(62%_52%_at_24%_24%,rgba(244,240,232,0.08),transparent_72%),linear-gradient(160deg,rgba(21,24,27,0.96),rgba(12,14,16,1))]" />
+      {mode === 'still' ? (
+        <img
+          src={TEXTUREMAP.src}
+          alt=""
+          aria-hidden="true"
+          className="absolute inset-0 h-full w-full object-contain px-5 py-7 opacity-28 mix-blend-screen sm:px-10 sm:py-12"
+        />
+      ) : null}
+      <div className="absolute inset-x-[12%] top-1/2 h-px -translate-y-1/2 bg-[linear-gradient(90deg,transparent,rgba(201,139,94,0.65),transparent)] opacity-70" />
+      <div className="absolute inset-0 bg-[radial-gradient(72%_56%_at_50%_52%,transparent_40%,rgba(0,0,0,0.42)_100%)]" />
     </div>
   )
 }
@@ -175,17 +197,18 @@ export function HeroFuturistic({
   return (
     <div
       className={cn(
-        'relative isolate min-h-[360px] overflow-hidden rounded-[2rem] border border-[color:var(--ui-border)] bg-[color:var(--ui-surface)] shadow-[0_24px_80px_rgba(0,0,0,0.38)]',
+        'relative isolate min-h-[260px] overflow-hidden rounded-[2rem] border border-[color:var(--ui-border)] bg-[color:var(--ui-surface)] shadow-[0_24px_80px_rgba(0,0,0,0.38)] sm:min-h-[360px]',
         className
       )}
     >
-      <div className="absolute inset-0 bg-[radial-gradient(80%_60%_at_75%_20%,rgba(201,139,94,0.12),transparent_60%),linear-gradient(180deg,rgba(255,255,255,0.02),transparent_18%,transparent_82%,rgba(255,255,255,0.03))]" />
+      <HeroBaseLayer mode={fallbackMode} />
       {showFallback ? (
         <HeroFallback mode={fallbackMode} />
       ) : (
         <Canvas
           flat
           dpr={[1, 1.5]}
+          className="relative z-10"
           camera={{ position: [0, 0, 1.6], fov: 32 }}
           gl={async (props) => {
             const renderer = new THREE.WebGPURenderer(props as any)

@@ -201,25 +201,25 @@ export function Landing() {
         </header>
 
         <main id="content">
-          <section className="mx-auto flex min-h-[calc(100svh-73px)] max-w-[1280px] items-center px-6 py-10 sm:px-8 sm:py-14 lg:px-10 lg:py-16">
-            <div className="grid w-full items-center gap-10 lg:grid-cols-[minmax(0,1.05fr)_minmax(420px,0.95fr)] lg:gap-14">
+          <section className="mx-auto flex max-w-[1280px] items-start px-6 py-6 sm:px-8 sm:py-10 lg:min-h-[calc(100svh-73px)] lg:items-center lg:px-10 lg:py-16">
+            <div className="grid w-full items-start gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1.05fr)_minmax(420px,0.95fr)] lg:items-center lg:gap-14">
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.55, ease: EASE }}
-                className="max-w-[38rem]"
+                className="max-w-[38rem] pt-3 sm:pt-4 lg:pt-0"
               >
                 <p className="font-meta text-[11px] uppercase tracking-[0.22em] text-[color:var(--ui-accent)]">
                   Documento em contexto, não em excesso
                 </p>
-                <h1 className="font-display mt-5 text-[3.15rem] leading-[0.95] text-[color:var(--ui-text)] sm:text-[4.5rem] lg:text-[5.5rem]">
+                <h1 className="font-display mt-4 text-[2.65rem] leading-[0.95] text-[color:var(--ui-text)] sm:mt-5 sm:text-[4.5rem] lg:text-[5.5rem]">
                   Entenda o seu acervo sem carregar a interface junto.
                 </h1>
-                <p className="mt-6 max-w-[34rem] text-[1.03rem] leading-8 text-[color:var(--ui-text-dim)] sm:text-[1.08rem]">
+                <p className="mt-5 max-w-[34rem] text-[0.98rem] leading-7 text-[color:var(--ui-text-dim)] sm:mt-6 sm:text-[1.08rem] sm:leading-8">
                   O DocOps transforma documentos em resposta verificável, plano de execução e revisão contínua. Menos ruído na tela. Mais clareza no próximo passo.
                 </p>
 
-                <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="mt-6 flex flex-col gap-3 sm:mt-8 sm:flex-row sm:items-center">
                   <Button
                     asChild
                     size="lg"
@@ -241,7 +241,7 @@ export function Landing() {
                   </Button>
                 </div>
 
-                <ul className="mt-8 flex flex-wrap gap-3">
+                <ul className="mt-6 flex flex-wrap gap-2.5 sm:mt-8 sm:gap-3">
                   {PROOF_CHIPS.map((chip, index) => (
                     <ProofChip key={chip.label} chip={chip} index={index} />
                   ))}
@@ -252,9 +252,9 @@ export function Landing() {
                 initial={{ opacity: 0, y: 24 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: 0.08, ease: EASE }}
-                className="order-last lg:order-none"
+                className="order-last mt-1 lg:order-none lg:mt-0"
               >
-                <HeroFuturistic className="h-[380px] sm:h-[460px] lg:h-[620px]" interactive fallbackMode="still" />
+                <HeroFuturistic className="h-[260px] sm:h-[380px] lg:h-[620px]" interactive fallbackMode="still" />
               </motion.div>
             </div>
           </section>
