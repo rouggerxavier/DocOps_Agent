@@ -482,8 +482,8 @@ function MessageBubble({
           className={cn(
             'select-text rounded-2xl px-4 py-3 text-sm transition-all duration-200 hover:shadow-[0_0_0_1px_rgba(255,255,255,0.08)]',
             isUser
-              ? 'rounded-tr-sm bg-blue-600 text-white hover:bg-blue-500'
-              : 'rounded-tl-sm bg-zinc-800 text-zinc-100 hover:bg-zinc-700'
+              ? 'rounded-tr-sm bg-blue-600 text-white hover:bg-blue-500 selection:bg-sky-200 selection:text-zinc-950'
+              : 'rounded-tl-sm bg-zinc-800 text-zinc-100 hover:bg-zinc-700 selection:bg-amber-200 selection:text-zinc-950'
           )}
           draggable={false}
           onDragStart={isUser ? e => e.preventDefault() : undefined}
@@ -495,7 +495,7 @@ function MessageBubble({
         >
           {isUser ? (
             <div
-              className="select-text whitespace-pre-wrap break-words leading-relaxed"
+              className="select-text whitespace-pre-wrap break-words leading-relaxed selection:bg-sky-200 selection:text-zinc-950"
               draggable={false}
               onDragStart={e => e.preventDefault()}
               style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
@@ -503,7 +503,7 @@ function MessageBubble({
               {message.content}
             </div>
           ) : (
-            <div className="prose prose-invert prose-sm max-w-none select-text" style={{ userSelect: 'text', WebkitUserSelect: 'text' }}>
+            <div className="prose prose-invert prose-sm max-w-none select-text selection:bg-amber-200 selection:text-zinc-950" style={{ userSelect: 'text', WebkitUserSelect: 'text' }}>
               <ReactMarkdown>{message.content}</ReactMarkdown>
               {message.streaming && (
                 <span className="inline-block h-4 w-0.5 animate-pulse bg-zinc-400 ml-0.5 align-text-bottom" />
