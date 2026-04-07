@@ -4,7 +4,7 @@ import axios from 'axios'
 import { toast } from 'sonner'
 import {
   Plus, Trash2, ChevronLeft,
-  Layers, BookOpen, Loader2, Eye, EyeOff, ThumbsUp, ThumbsDown, Send,
+  Layers, BookOpen, Loader2, Eye, EyeOff, ThumbsUp, ThumbsDown, Send, AlertTriangle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -36,6 +36,7 @@ function GenerateDialog({
   onGenerate,
   generating,
   onClose,
+  errorMessage,
 }: {
   docs: DocItem[]
   onGenerate: (
@@ -47,6 +48,7 @@ function GenerateDialog({
   ) => void
   generating: boolean
   onClose: () => void
+  errorMessage: string | null
 }) {
   const [selectedDoc, setSelectedDoc] = useState(docs[0]?.file_name ?? '')
   const [numCards, setNumCards] = useState(10)
@@ -200,6 +202,18 @@ function GenerateDialog({
             </div>
           )}
         </div>
+
+        {errorMessage && (
+          <div className="mt-4 rounded-xl border border-amber-800/50 bg-amber-950/20 p-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+              <div className="space-y-1">
+                <p className="text-xs font-semibold text-amber-300">Nao foi possivel concluir a geracao</p>
+                <p className="text-xs leading-5 text-amber-100/90">{errorMessage}</p>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="mt-6 flex gap-2 justify-end">
           <Button variant="ghost" size="sm" onClick={onClose} disabled={generating}>
@@ -548,6 +562,31 @@ export function Flashcards() {
   const qc = useQueryClient()
   const [showGenerate, setShowGenerate] = useState(false)
   const [studyDeckId, setStudyDeckId] = useState<number | null>(null)
+  const [generateError, setGenerateError] = useState<string | null>(null)
+
+  function getGenerateFlashcardsErrorMessage(error: unknown): string {
+    if (axios.isAxiosError(error) && error.code === 'ECONNABORTED') {
+      return 'A geracao demorou mais que o esperado. O deck ainda pode estar sendo criado no servidor. Vou atualizar a lista automaticamente. Se ele aparecer, basta fechar esta janela e abrir o deck.'
+    }
+
+    const detail = axios.isAxiosError(error) && typeof error.response?.data?.detail === 'string'
+      ? error.response.data.detail
+      : null
+
+    if (detail?.includes('distribuicao pedida') && detail?.includes('flashcards unicos')) {
+      return 'Nao consegui montar a distribuicao exata de dificuldades sem repetir perguntas. Tente pedir menos cards, ampliar o conteudo usado ou deixar a distribuicao menos rigida.'
+    }
+
+    if (detail?.includes('distribuicao pedida')) {
+      return 'Nao consegui atingir a distribuicao de dificuldades que voce pediu com seguranca. Tente reduzir a quantidade total ou usar uma combinacao menos restritiva.'
+    }
+
+    if (detail?.includes('flashcards unicos')) {
+      return 'Nao encontrei perguntas unicas suficientes nesse recorte do conteudo. Tente pedir menos cards ou usar o documento inteiro.'
+    }
+
+    return detail ?? 'Ocorreu um erro ao gerar flashcards. Tente novamente em instantes.'
+  }
 
   const { data: decks = [], isLoading } = useQuery<FlashcardDeckListItem[]>({
     queryKey: ['flashcard-decks'],
@@ -578,8 +617,12 @@ export function Flashcards() {
       contentFilter: string
       difficultyMode: DiffMode
       difficultyCustom: { facil: number; media: number; dificil: number } | null
-    }) => apiClient.generateFlashcards(docName, numCards, contentFilter, difficultyMode, difficultyCustom),
+    }) => {
+      setGenerateError(null)
+      return apiClient.generateFlashcards(docName, numCards, contentFilter, difficultyMode, difficultyCustom)
+    },
     onSuccess: (deck) => {
+      setGenerateError(null)
       qc.setQueryData<FlashcardDeckListItem[]>(['flashcard-decks'], (current = []) => {
         const nextItem: FlashcardDeckListItem = {
           id: deck.id,
@@ -595,11 +638,12 @@ export function Flashcards() {
       toast.success('Flashcards gerados!')
     },
     onError: (error) => {
+      const message = getGenerateFlashcardsErrorMessage(error)
+      setGenerateError(message)
       const timedOut = axios.isAxiosError(error) && error.code === 'ECONNABORTED'
 
       if (timedOut) {
-        setShowGenerate(false)
-        toast.error('A geração demorou mais que o esperado. Vou atualizar a lista para verificar se o deck foi criado.')
+        toast.error(message)
         void qc.invalidateQueries({ queryKey: ['flashcard-decks'] })
         window.setTimeout(() => {
           void qc.invalidateQueries({ queryKey: ['flashcard-decks'] })
@@ -607,7 +651,7 @@ export function Flashcards() {
         return
       }
 
-      toast.error('Erro ao gerar flashcards.')
+      toast.error(message)
     },
   })
 
@@ -637,7 +681,10 @@ export function Flashcards() {
         </div>
         <Button
           size="sm"
-          onClick={() => setShowGenerate(true)}
+          onClick={() => {
+            setGenerateError(null)
+            setShowGenerate(true)
+          }}
           disabled={docs.length === 0}
           className="gap-1"
         >
@@ -700,7 +747,11 @@ export function Flashcards() {
             generateMut.mutate({ docName, numCards, contentFilter, difficultyMode, difficultyCustom })
           }
           generating={generateMut.isPending}
-          onClose={() => setShowGenerate(false)}
+          onClose={() => {
+            setGenerateError(null)
+            setShowGenerate(false)
+          }}
+          errorMessage={generateError}
         />
       )}
     </PageShell>
