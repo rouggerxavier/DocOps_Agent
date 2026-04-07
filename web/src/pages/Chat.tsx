@@ -480,10 +480,10 @@ function MessageBubble({
       <div className={cn('max-w-[75%] space-y-2', isUser ? 'items-end' : 'items-start')}>
         <div
           className={cn(
-            'rounded-2xl px-4 py-3 text-sm',
+            'rounded-2xl px-4 py-3 text-sm transition-all duration-200 hover:shadow-[0_0_0_1px_rgba(255,255,255,0.08)]',
             isUser
-              ? 'rounded-tr-sm bg-blue-600 text-white'
-              : 'rounded-tl-sm bg-zinc-800 text-zinc-100'
+              ? 'rounded-tr-sm bg-blue-600 text-white hover:bg-blue-500'
+              : 'rounded-tl-sm bg-zinc-800 text-zinc-100 hover:bg-zinc-700'
           )}
           style={{ userSelect: 'text', cursor: 'text' }}
         >
