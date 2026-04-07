@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, extend, useFrame, useThree } from '@react-three/fiber'
 import { useAspect, useTexture } from '@react-three/drei'
 import { Mesh } from 'three'
@@ -179,19 +179,27 @@ function HeroBaseLayer({ mode }: { mode: 'still' | 'gradient' }) {
   )
 }
 
+class WebGPUErrorBoundary extends React.Component<
+  { fallback: React.ReactNode; children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { fallback: React.ReactNode; children: React.ReactNode }) {
+    super(props)
+    this.state = { hasError: false }
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+  render() {
+    return this.state.hasError ? this.props.fallback : this.props.children
+  }
+}
+
 export function HeroFuturistic({
   className,
   interactive = true,
   fallbackMode = 'still',
 }: HeroFuturisticProps) {
-  const [supportsWebGPU, setSupportsWebGPU] = useState(false)
-
-  useEffect(() => {
-    setSupportsWebGPU(typeof navigator !== 'undefined' && 'gpu' in navigator)
-  }, [])
-
-  const showFallback = !supportsWebGPU
-
   return (
     <div
       className={cn(
@@ -200,9 +208,7 @@ export function HeroFuturistic({
       )}
     >
       <HeroBaseLayer mode={fallbackMode} />
-      {showFallback ? (
-        <HeroFallback mode={fallbackMode} />
-      ) : (
+      <WebGPUErrorBoundary fallback={<HeroFallback mode={fallbackMode} />}>
         <Canvas
           flat
           dpr={[1, 1.5]}
@@ -219,7 +225,7 @@ export function HeroFuturistic({
             <Scene animated={true} interactive={interactive} />
           </Suspense>
         </Canvas>
-      )}
+      </WebGPUErrorBoundary>
       <div className="pointer-events-none absolute inset-0 rounded-[2rem] border border-white/5" />
       <div className="pointer-events-none absolute inset-x-8 bottom-8 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.16),transparent)]" />
     </div>
