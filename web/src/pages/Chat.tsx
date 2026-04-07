@@ -31,6 +31,7 @@ interface ChatSession {
 }
 
 const STORAGE_KEY = 'docops_chat_sessions'
+const EMPTY_MESSAGES: Message[] = []
 
 function loadSessions(): ChatSession[] {
   try {
@@ -46,7 +47,9 @@ function loadSessions(): ChatSession[] {
 function saveSessions(sessions: ChatSession[]) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions))
-  } catch {}
+  } catch {
+    // localStorage can be unavailable or full; keeping chat usable matters more than persistence here.
+  }
 }
 
 function newSession(): ChatSession {
@@ -262,7 +265,7 @@ export function Chat() {
   const streamTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const activeSession = sessions.find(s => s.id === activeSessionId) ?? sessions[0]
-  const messages = activeSession?.messages ?? []
+  const messages = activeSession?.messages ?? EMPTY_MESSAGES
 
   useEffect(() => {
     saveSessions(sessions)

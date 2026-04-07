@@ -37,7 +37,7 @@ type HeroFuturisticProps = {
 }
 
 function PostProcessing({ animated }: { animated: boolean }) {
-  const { gl, scene, camera, size } = useThree()
+  const { gl, scene, camera } = useThree()
   const progressRef = useRef({ value: 0 })
   const elapsedRef = useRef(0)
 
@@ -64,7 +64,7 @@ function PostProcessing({ animated }: { animated: boolean }) {
 
     postProcessing.outputNode = withScanEffect.add(bloomPass)
     return postProcessing
-  }, [camera, gl, scene, size.height, size.width])
+  }, [camera, gl, scene])
 
   useFrame((_, delta) => {
     elapsedRef.current += delta
@@ -179,6 +179,24 @@ function HeroBaseLayer({ mode }: { mode: 'still' | 'gradient' }) {
   )
 }
 
+class WebGPUErrorBoundary extends React.Component<
+  { fallback: React.ReactNode; children: React.ReactNode },
+  { hasError: boolean }
+> {
+  constructor(props: { fallback: React.ReactNode; children: React.ReactNode }) {
+    super(props)
+    this.state = { hasError: false }
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true }
+  }
+
+  render() {
+    return this.state.hasError ? this.props.fallback : this.props.children
+  }
+}
+
 export function HeroFuturistic({
   className,
   interactive = true,
@@ -192,22 +210,24 @@ export function HeroFuturistic({
       )}
     >
       <HeroBaseLayer mode={fallbackMode} />
-      <Canvas
-        flat
-        dpr={[1, 1.5]}
-        className="relative z-10"
-        camera={{ position: [0, 0, 1.6], fov: 32 }}
-        gl={async (props) => {
-          const renderer = new THREE.WebGPURenderer({ ...props, antialias: true } as any)
-          await renderer.init()
-          return renderer
-        }}
-      >
-        <Suspense fallback={null}>
-          <PostProcessing animated={true} />
-          <Scene animated={true} interactive={interactive} />
-        </Suspense>
-      </Canvas>
+      <WebGPUErrorBoundary fallback={<HeroFallback mode={fallbackMode} />}>
+        <Canvas
+          flat
+          dpr={[1, 1.5]}
+          className="relative z-10"
+          camera={{ position: [0, 0, 1.6], fov: 32 }}
+          gl={async (props) => {
+            const renderer = new THREE.WebGPURenderer({ ...props, antialias: true } as any)
+            await renderer.init()
+            return renderer
+          }}
+        >
+          <Suspense fallback={null}>
+            <PostProcessing animated={true} />
+            <Scene animated={true} interactive={interactive} />
+          </Suspense>
+        </Canvas>
+      </WebGPUErrorBoundary>
       <div className="pointer-events-none absolute inset-0 rounded-[2rem] border border-white/5" />
       <div className="pointer-events-none absolute inset-x-8 bottom-8 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.16),transparent)]" />
     </div>

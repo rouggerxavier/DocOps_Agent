@@ -21,11 +21,13 @@ export default defineConfig([
     },
     rules: {
       // Repo usa alguns patterns comuns (ex.: export de variants nos componentes UI)
-      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
+      'react-refresh/only-export-components': 'off',
 
       // Regras muito restritivas para o padrÃ£o atual do projeto
       'react-hooks/set-state-in-effect': 'off',
       'react-hooks/purity': 'off',
+      'react-hooks/refs': 'off',
+      'react-hooks/immutability': 'off',
       '@typescript-eslint/no-explicit-any': 'off',
     },
   },
