@@ -34,6 +34,10 @@ export interface ChatResponse {
   intent: string
   session_id: string | null
   calendar_action: Record<string, any> | null
+  action_metadata?: Record<string, any> | null
+  needs_confirmation?: boolean
+  confirmation_text?: string | null
+  suggested_reply?: string | null
 }
 
 export interface JobCreateResponse {
@@ -209,6 +213,21 @@ export interface FlashcardDeckListItem {
   source_doc: string | null
   card_count: number
   created_at: string
+}
+
+export interface FlashcardBatchItem {
+  requested_doc_name: string
+  source_doc: string | null
+  status: 'created' | 'failed'
+  deck: FlashcardDeck | null
+  error: string | null
+}
+
+export interface FlashcardBatchResponse {
+  requested_docs: number
+  created: number
+  failed: number
+  items: FlashcardBatchItem[]
 }
 
 // ── Study Plan ────────────────────────────────────────────────────────────────
@@ -509,6 +528,25 @@ export const apiClient = {
       content_filter: contentFilter,
       difficulty_mode: difficultyMode,
       difficulty_custom: difficultyCustom,
+    }, { timeout: FLASHCARD_GENERATION_TIMEOUT_MS }).then(r => r.data),
+
+  generateFlashcardsBatch: (
+    options: {
+      allDocs?: boolean
+      docNames?: string[]
+      numCards: number
+      contentFilter?: string
+      difficultyMode?: string
+      difficultyCustom?: { facil: number; media: number; dificil: number } | null
+    }
+  ): Promise<FlashcardBatchResponse> =>
+    api.post('/api/flashcards/generate-batch', {
+      all_docs: options.allDocs ?? false,
+      doc_names: options.docNames ?? [],
+      num_cards: options.numCards,
+      content_filter: options.contentFilter ?? '',
+      difficulty_mode: options.difficultyMode ?? 'any',
+      difficulty_custom: options.difficultyCustom ?? null,
     }, { timeout: FLASHCARD_GENERATION_TIMEOUT_MS }).then(r => r.data),
 
   reviewFlashcard: (cardId: number, ease: number): Promise<{ status: string }> =>

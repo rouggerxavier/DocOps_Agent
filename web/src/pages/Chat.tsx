@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import axios from 'axios'
 import {
   Send, Bot, User, FileText, ChevronRight, Loader2, X,
   Plus, MessageSquare, Clock, CalendarCheck, Trash2,
@@ -11,7 +13,7 @@ import { CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { apiClient, type ChatResponse, type SourceItem, type DocItem } from '@/api/client'
+import { apiClient, type ChatResponse, type SourceItem, type DocItem, type FlashcardDeck } from '@/api/client'
 import { cn } from '@/lib/utils'
 
 interface Message {
@@ -20,6 +22,10 @@ interface Message {
   sources?: SourceItem[]
   intent?: string
   calendar_action?: Record<string, any> | null
+  action_metadata?: ChatActionMetadata | null
+  needs_confirmation?: boolean
+  confirmation_text?: string | null
+  suggested_reply?: string | null
   streaming?: boolean
 }
 
@@ -32,6 +38,49 @@ interface ChatSession {
 
 const STORAGE_KEY = 'docops_chat_sessions'
 const EMPTY_MESSAGES: Message[] = []
+
+type FlashcardGenerationMode = 'any' | 'only_facil' | 'only_media' | 'only_dificil' | 'custom'
+
+interface FlashcardDifficultyMix {
+  facil: number
+  media: number
+  dificil: number
+}
+
+interface ChatActionMetadata {
+  kind: string
+  title?: string | null
+  summary?: string | null
+  status?: 'preview' | 'needs_confirmation' | 'executing' | 'executed' | 'failed'
+  scope?: string | null
+  doc_names?: string[]
+  doc_count?: number | null
+  card_count?: number | null
+  difficulty?: FlashcardDifficultyMix | null
+  next_steps?: string[] | null
+  links?: Array<{ label: string; href: string }>
+  error?: string | null
+}
+
+interface FlashcardCommandPlan {
+  kind: 'flashcards'
+  title: string
+  summary: string
+  confirmationText: string
+  docs: DocItem[]
+  scopeLabel: string
+  numCards: number
+  contentFilter: string
+  difficultyMode: FlashcardGenerationMode
+  difficultyCustom: FlashcardDifficultyMix | null
+}
+
+interface FlashcardBatchResult {
+  doc: DocItem
+  success: boolean
+  deck?: FlashcardDeck
+  error?: string
+}
 
 function loadSessions(): ChatSession[] {
   try {
@@ -58,6 +107,139 @@ function newSession(): ChatSession {
     title: 'Nova conversa',
     messages: [],
     createdAt: new Date(),
+  }
+}
+
+function normalizeForMatch(value: string) {
+  return value
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[_-]+/g, ' ')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function formatDifficultyMix(mix: FlashcardDifficultyMix) {
+  return `${mix.facil} faceis, ${mix.media} medias e ${mix.dificil} dificeis`
+}
+
+function parseFlashcardCommandPlan(prompt: string, docs: DocItem[], selectedDocs: DocItem[]): FlashcardCommandPlan | null {
+  const normalized = normalizeForMatch(prompt)
+  const flashcardKeyword = /\bflashcards?\b|\bcards?\b|\brevisao\b|\bquiz\b/.test(normalized)
+  const commandVerb = /\b(crie|criar|gere|gerar|fa[çc]a|fazer|monte|produza|quero|gostaria|preciso)\b/.test(normalized)
+
+  if (!flashcardKeyword || !commandVerb) return null
+
+  const totalMatch = prompt.match(/(\d+)\s*(?:flashcards?|cards?|cart[õo]es?)/i)
+  const facilMatch = prompt.match(/(\d+)\s*(?:f[aá]ceis?|facil(?:es)?)/i)
+  const mediaMatch = prompt.match(/(\d+)\s*(?:m[eé]dias?|medias?)/i)
+  const dificilMatch = prompt.match(/(\d+)\s*(?:d[ií]f[ií]ceis?|dificeis?)/i)
+
+  const difficultyCustom = facilMatch || mediaMatch || dificilMatch
+    ? {
+        facil: Number(facilMatch?.[1] ?? 0),
+        media: Number(mediaMatch?.[1] ?? 0),
+        dificil: Number(dificilMatch?.[1] ?? 0),
+      }
+    : null
+
+  const customTotal = difficultyCustom
+    ? difficultyCustom.facil + difficultyCustom.media + difficultyCustom.dificil
+    : 0
+
+  const totalCards = totalMatch
+    ? Number(totalMatch[1])
+    : customTotal > 0
+      ? customTotal
+      : 10
+  const difficultyMode: FlashcardGenerationMode = difficultyCustom
+    ? (difficultyCustom.media === 0 && difficultyCustom.dificil === 0 && difficultyCustom.facil > 0
+      ? 'only_facil'
+      : difficultyCustom.facil === 0 && difficultyCustom.dificil === 0 && difficultyCustom.media > 0
+        ? 'only_media'
+        : difficultyCustom.facil === 0 && difficultyCustom.media === 0 && difficultyCustom.dificil > 0
+          ? 'only_dificil'
+          : 'custom')
+    : 'any'
+
+  const wantsAllDocs = [
+    /cada documento/,
+    /todos? os documentos/,
+    /todos? esses documentos/,
+    /todos? estes documentos/,
+    /na aba documentos/,
+    /documentos indexados? na conversa/,
+    /documentos que tenho/,
+    /todos? os docs/,
+  ].some(pattern => pattern.test(normalized))
+
+  const matchedDocs = docs.filter(doc => {
+    const normalizedName = normalizeForMatch(doc.file_name.replace(/\.[^.]+$/, ''))
+    return normalizedName.length > 0 && (normalized.includes(normalizedName) || normalizedName.includes(normalized))
+  })
+
+  let targetDocs: DocItem[] = []
+  let scopeLabel = ''
+
+  if (wantsAllDocs) {
+    targetDocs = docs
+    scopeLabel = `${docs.length} documento${docs.length !== 1 ? 's' : ''} indexado${docs.length !== 1 ? 's' : ''}`
+  } else if (matchedDocs.length > 0) {
+    targetDocs = matchedDocs
+    scopeLabel = matchedDocs.length === 1
+      ? `documento "${matchedDocs[0].file_name}"`
+      : `${matchedDocs.length} documentos encontrados pelo nome`
+  } else if (selectedDocs.length > 0) {
+    targetDocs = selectedDocs
+    scopeLabel = selectedDocs.length === 1
+      ? `documento selecionado "${selectedDocs[0].file_name}"`
+      : `${selectedDocs.length} documentos selecionados`
+  } else if (docs.length === 1) {
+    targetDocs = docs
+    scopeLabel = `documento "${docs[0].file_name}"`
+  }
+
+  if (targetDocs.length === 0) {
+    return {
+      kind: 'flashcards',
+      title: 'Comando de flashcards detectado',
+      summary: 'Encontrei um pedido de flashcards, mas preciso de um documento ou de uma selecao de documentos para executar com seguranca.',
+      confirmationText: 'Selecione um documento na area de filtros ou diga "todos os documentos" para eu executar em lote.',
+      docs: [],
+      scopeLabel: 'escopo indefinido',
+      numCards: totalCards,
+      contentFilter: '',
+      difficultyMode,
+      difficultyCustom,
+    }
+  }
+
+  const difficultyLabel = difficultyCustom
+    ? `Distribuicao pedida: ${formatDifficultyMix(difficultyCustom)}`
+    : difficultyMode === 'only_facil'
+      ? 'Somente cards faceis'
+      : difficultyMode === 'only_media'
+        ? 'Somente cards medios'
+        : difficultyMode === 'only_dificil'
+          ? 'Somente cards dificeis'
+          : 'Dificuldade mista'
+
+  const summary = targetDocs.length === 1
+    ? `Vou gerar ${totalCards} flashcards para ${scopeLabel}.`
+    : `Vou gerar ${totalCards} flashcards para cada um dos ${targetDocs.length} documentos selecionados.`
+
+  return {
+    kind: 'flashcards',
+    title: 'Comando de flashcards detectado',
+    summary,
+    confirmationText: `${difficultyLabel}. ${targetDocs.length > 1 ? 'Isso vai criar um deck por documento.' : 'Isso vai criar um deck para um unico documento.'}`,
+    docs: targetDocs,
+    scopeLabel,
+    numCards: totalCards,
+    contentFilter: '',
+    difficultyMode,
+    difficultyCustom,
   }
 }
 
@@ -143,6 +325,118 @@ function CalendarActionBadge({ action }: { action: Record<string, any> }) {
   return null
 }
 
+function ActionSummaryCard({
+  action,
+  onConfirm,
+  onCancel,
+  confirmLabel = 'Confirmar',
+  cancelLabel = 'Cancelar',
+}: {
+  action: ChatActionMetadata
+  onConfirm?: () => void
+  onCancel?: () => void
+  confirmLabel?: string
+  cancelLabel?: string
+}) {
+  const statusLabel: Record<NonNullable<ChatActionMetadata['status']>, string> = {
+    preview: 'Previa',
+    needs_confirmation: 'Confirmacao',
+    executing: 'Executando',
+    executed: 'Executado',
+    failed: 'Falhou',
+  }
+
+  const toneClass =
+    action.status === 'executed'
+      ? 'border-emerald-800/50 bg-emerald-950/20 text-emerald-200'
+      : action.status === 'failed'
+        ? 'border-red-800/50 bg-red-950/20 text-red-200'
+        : 'border-amber-800/50 bg-amber-950/20 text-amber-100'
+
+  return (
+    <div className={cn('rounded-2xl border px-4 py-3 text-xs', toneClass)}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="font-semibold">
+            {action.title ?? 'Comando de flashcards'}
+          </p>
+          <p className="mt-1 leading-5 text-zinc-200/90">{action.summary ?? 'Aguarde a confirmacao.'}</p>
+        </div>
+        {action.status && statusLabel[action.status] && (
+          <span className="shrink-0 rounded-full border border-current/20 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide">
+            {statusLabel[action.status]}
+          </span>
+        )}
+      </div>
+
+      <div className="mt-3 space-y-2 text-[11px] text-zinc-300/90">
+        {action.scope && (
+          <p><span className="font-semibold text-zinc-200">Escopo:</span> {action.scope}</p>
+        )}
+        {typeof action.doc_count === 'number' && (
+          <p><span className="font-semibold text-zinc-200">Documentos:</span> {action.doc_count}</p>
+        )}
+        {typeof action.card_count === 'number' && (
+          <p><span className="font-semibold text-zinc-200">Cards por documento:</span> {action.card_count}</p>
+        )}
+        {action.difficulty && (
+          <p><span className="font-semibold text-zinc-200">Dificuldade:</span> {formatDifficultyMix(action.difficulty)}</p>
+        )}
+        {action.doc_names && action.doc_names.length > 0 && (
+          <div className="flex flex-wrap gap-1.5">
+            {action.doc_names.map(name => (
+              <span key={name} className="rounded-full border border-current/20 px-2 py-0.5 text-[10px]">
+                {name}
+              </span>
+            ))}
+          </div>
+        )}
+        {action.next_steps && action.next_steps.length > 0 && (
+          <ul className="space-y-1 text-zinc-300/90">
+            {action.next_steps.map(step => (
+              <li key={step}>• {step}</li>
+            ))}
+          </ul>
+        )}
+        {action.links && action.links.length > 0 && (
+          <div className="flex flex-wrap gap-2 pt-1">
+            {action.links.map(link => (
+              <a
+                key={link.href}
+                href={link.href}
+                className="rounded-full border border-current/20 px-2.5 py-1 text-[11px] font-medium hover:bg-white/5"
+              >
+                {link.label}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {(onConfirm || onCancel) && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {onCancel && (
+            <button
+              onClick={onCancel}
+              className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-[11px] font-medium text-zinc-300 hover:border-zinc-500"
+            >
+              {cancelLabel}
+            </button>
+          )}
+          {onConfirm && (
+            <button
+              onClick={onConfirm}
+              className="rounded-full border border-blue-700/60 bg-blue-600/15 px-3 py-1.5 text-[11px] font-medium text-blue-200 hover:bg-blue-600/25"
+            >
+              {confirmLabel}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Intent label map ──────────────────────────────────────────────────────
 
 const INTENT_LABELS: Record<string, string> = {
@@ -153,6 +447,8 @@ const INTENT_LABELS: Record<string, string> = {
   cascade_create_note:      '📝 Nota criada',
   cascade_create_summary:   '📄 Resumo gerado',
   schedule_fc_reviews:      '🔁 Revisões agendadas',
+  flashcards_batch:         '🗂️ Flashcards em lote',
+  action_confirmation:      '🟡 Ação em confirmação',
 }
 
 // ── Message bubble ────────────────────────────────────────────────────────
@@ -207,6 +503,24 @@ function MessageBubble({
           <CalendarActionBadge action={message.calendar_action} />
         )}
 
+        {!isUser && message.action_metadata && (
+          <ActionSummaryCard action={message.action_metadata} />
+        )}
+
+        {!isUser && !message.action_metadata && (message.needs_confirmation || message.confirmation_text) && (
+          <ActionSummaryCard
+            action={{
+              kind: 'action_confirmation',
+              title: 'Confirmacao necessaria',
+              summary: message.confirmation_text ?? 'Esta acao precisa de confirmacao.',
+              status: 'needs_confirmation',
+              links: [
+                { label: 'Abrir Flashcards', href: '/flashcards' },
+              ],
+            }}
+          />
+        )}
+
         {!isUser && message.sources && message.sources.length > 0 && (
           <div className="space-y-2">
             <button
@@ -231,9 +545,9 @@ function MessageBubble({
           </div>
         )}
 
-        {!isUser && message.intent && INTENT_LABELS[message.intent] && (
+        {!isUser && (message.intent || message.action_metadata?.kind) && (
           <Badge variant="secondary" className="text-xs">
-            {INTENT_LABELS[message.intent]}
+            {INTENT_LABELS[message.intent ?? message.action_metadata?.kind ?? ''] ?? 'Ação'}
           </Badge>
         )}
       </div>
@@ -245,6 +559,7 @@ function MessageBubble({
 
 export function Chat() {
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     const loaded = loadSessions()
     return loaded.length > 0 ? loaded : [newSession()]
@@ -261,6 +576,7 @@ export function Chat() {
   const [selectedSource, setSelectedSource] = useState<SourceItem | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [filtersOpen, setFiltersOpen] = useState(false)
+  const [pendingFlashcardCommand, setPendingFlashcardCommand] = useState<FlashcardCommandPlan | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const streamTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -271,14 +587,146 @@ export function Chat() {
     saveSessions(sessions)
   }, [sessions])
 
+  useEffect(() => {
+    setPendingFlashcardCommand(null)
+  }, [activeSessionId])
+
   const { data: docs } = useQuery<DocItem[]>({
     queryKey: ['docs'],
     queryFn: apiClient.listDocs,
     retry: 1,
   })
 
+  function appendAssistantMessage(message: Message) {
+    setSessions(prev =>
+      prev.map(s =>
+        s.id === activeSessionId
+          ? { ...s, messages: [...s.messages, message] }
+          : s
+      )
+    )
+  }
+
+  const flashcardBatchMut = useMutation({
+    mutationFn: async (plan: FlashcardCommandPlan): Promise<FlashcardBatchResult[]> => {
+      if (plan.docs.length === 0) return []
+
+      const results: FlashcardBatchResult[] = []
+      for (const doc of plan.docs) {
+        try {
+          const deck = await apiClient.generateFlashcards(
+            doc.file_name,
+            plan.numCards,
+            plan.contentFilter,
+            plan.difficultyMode,
+            plan.difficultyCustom,
+          )
+          results.push({ doc, success: true, deck })
+        } catch (error) {
+          let message = 'Falha ao gerar flashcards.'
+          if (axios.isAxiosError(error)) {
+            message = typeof error.response?.data?.detail === 'string'
+              ? error.response.data.detail
+              : error.message || message
+          } else if (error instanceof Error) {
+            message = error.message || message
+          }
+          results.push({ doc, success: false, error: message })
+        }
+      }
+
+      return results
+    },
+    onSuccess: (results, plan) => {
+      qc.invalidateQueries({ queryKey: ['flashcard-decks'] })
+
+      const successCount = results.filter(item => item.success).length
+      const failureCount = results.length - successCount
+      const deckSummary = results
+        .filter(item => item.success && item.deck)
+        .map(item => `- ${item.doc.file_name}: ${item.deck?.cards.length ?? plan.numCards} cards`)
+      const failureSummary = results
+        .filter(item => !item.success)
+        .map(item => `- ${item.doc.file_name}: ${item.error ?? 'erro desconhecido'}`)
+
+      const contentLines = [
+        successCount > 0
+          ? `Gerei ${successCount} deck${successCount !== 1 ? 's' : ''} com sucesso.`
+          : 'Nao consegui gerar nenhum deck.',
+        '',
+        ...(deckSummary.length > 0 ? ['Concluidos:', ...deckSummary, ''] : []),
+        ...(failureSummary.length > 0 ? ['Falhas:', ...failureSummary, ''] : []),
+        'Abra a pagina de Flashcards para revisar os decks criados.',
+      ]
+
+      const actionMetadata: ChatActionMetadata = {
+        kind: 'flashcards_batch',
+        title: successCount === results.length
+          ? 'Flashcards em lote executados'
+          : 'Flashcards em lote parcialmente executados',
+        summary: `${successCount} deck${successCount !== 1 ? 's' : ''} criado${successCount !== 1 ? 's' : ''} para ${plan.docs.length} documento${plan.docs.length !== 1 ? 's' : ''}.`,
+        status: successCount === results.length ? 'executed' : 'failed',
+        scope: plan.scopeLabel,
+        doc_names: plan.docs.map(doc => doc.file_name),
+        doc_count: plan.docs.length,
+        card_count: plan.numCards,
+        difficulty: plan.difficultyCustom,
+        next_steps: [
+          'Abra Flashcards para revisar ou continuar o estudo.',
+          ...(failureCount > 0 ? ['Revise as falhas abaixo e tente novamente para os documentos restantes.'] : []),
+        ],
+        links: [
+          { label: 'Abrir Flashcards', href: '/flashcards' },
+          { label: 'Ver Documentos', href: '/docs' },
+        ],
+        error: failureCount > 0 ? `${failureCount} documento${failureCount !== 1 ? 's' : ''} falharam.` : null,
+      }
+
+      appendAssistantMessage({
+        role: 'assistant',
+        content: contentLines.join('\n'),
+        intent: 'flashcards_batch',
+        action_metadata: actionMetadata,
+        calendar_action: null,
+      })
+
+      if (successCount === results.length) {
+        toast.success(`Flashcards gerados para ${plan.docs.length} documento${plan.docs.length !== 1 ? 's' : ''}.`)
+      } else if (successCount > 0) {
+        toast.warning('Alguns decks foram gerados, mas outros falharam.')
+      } else {
+        toast.error('Nao consegui gerar os flashcards em lote.')
+      }
+    },
+    onError: (error) => {
+      toast.error(error.message || 'Falha ao executar o lote de flashcards.')
+      appendAssistantMessage({
+        role: 'assistant',
+        content: 'Nao consegui executar o lote de flashcards agora. Tente novamente em instantes.',
+        intent: 'flashcards_batch',
+        action_metadata: {
+          kind: 'flashcards_batch',
+          title: 'Flashcards em lote falharam',
+          summary: 'A execucao em lote nao concluiu.',
+          status: 'failed',
+          links: [
+            { label: 'Abrir Flashcards', href: '/flashcards' },
+          ],
+          error: error.message || 'Erro inesperado',
+        },
+        calendar_action: null,
+      })
+    },
+  })
+
   // Pseudo-streaming: reveals text char by char after response arrives
-  const streamMessage = useCallback((fullText: string, sources: SourceItem[], intent: string, calendarAction: any) => {
+  const streamMessage = useCallback((
+    fullText: string,
+    sources: SourceItem[],
+    intent: string,
+    calendarAction: any,
+    actionMetadata: ChatActionMetadata | null,
+  ) => {
     const charsPerTick = 6
     const intervalMs = 16
     let pos = 0
@@ -287,7 +735,7 @@ export function Chat() {
     setSessions(prev =>
       prev.map(s =>
         s.id === activeSessionId
-          ? { ...s, messages: [...s.messages, { role: 'assistant', content: '', streaming: true, sources: [], intent }] }
+          ? { ...s, messages: [...s.messages, { role: 'assistant', content: '', streaming: true, sources: [], intent, action_metadata: null }] }
           : s
       )
     )
@@ -309,6 +757,7 @@ export function Chat() {
             streaming: !done,
             sources: done ? sources : [],
             calendar_action: done ? calendarAction : null,
+            action_metadata: done ? actionMetadata : null,
           }
           return { ...s, messages: msgs }
         })
@@ -345,7 +794,13 @@ export function Chat() {
     },
     onSuccess: (data: ChatResponse) => {
       if (streamTimerRef.current) clearTimeout(streamTimerRef.current)
-      streamMessage(data.answer, data.sources, data.intent, data.calendar_action ?? null)
+      streamMessage(
+        data.answer,
+        data.sources,
+        data.intent,
+        data.calendar_action ?? null,
+        (data.action_metadata as ChatActionMetadata | null) ?? null,
+      )
       if (data.calendar_action) {
         qc.invalidateQueries({ queryKey: ['calendar-reminders'] })
         qc.invalidateQueries({ queryKey: ['calendar-schedules'] })
@@ -366,14 +821,46 @@ export function Chat() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, mutation.isPending])
+  }, [messages, mutation.isPending, flashcardBatchMut.isPending, pendingFlashcardCommand])
 
   // Cleanup stream on unmount
   useEffect(() => () => { if (streamTimerRef.current) clearTimeout(streamTimerRef.current) }, [])
 
+  function confirmFlashcardCommand() {
+    if (!pendingFlashcardCommand) return
+    if (pendingFlashcardCommand.docs.length === 0) {
+      setPendingFlashcardCommand(null)
+      navigate('/docs')
+      return
+    }
+
+    const plan = pendingFlashcardCommand
+    setPendingFlashcardCommand(null)
+    flashcardBatchMut.mutate(plan)
+  }
+
+  function cancelFlashcardCommand() {
+    setPendingFlashcardCommand(null)
+    appendAssistantMessage({
+      role: 'assistant',
+      content: 'Comando de flashcards cancelado. Se quiser, reenvie com os documentos selecionados ou diga "todos os documentos".',
+      intent: 'action_confirmation',
+      action_metadata: {
+        kind: 'action_confirmation',
+        title: 'Comando cancelado',
+        summary: 'A acao foi descartada.',
+        status: 'preview',
+        links: [
+          { label: 'Abrir Flashcards', href: '/flashcards' },
+        ],
+      },
+      calendar_action: null,
+    })
+  }
+
   function handleSend() {
     const text = input.trim()
-    if (!text || mutation.isPending) return
+    if (!text || mutation.isPending || flashcardBatchMut.isPending || pendingFlashcardCommand) return
 
     const userMsg: Message = { role: 'user', content: text }
     setSessions(prev =>
@@ -387,6 +874,13 @@ export function Chat() {
       })
     )
     setInput('')
+
+    const draft = parseFlashcardCommandPlan(text, docs ?? [], selectedDocs)
+    if (draft) {
+      setPendingFlashcardCommand(draft)
+      return
+    }
+
     mutation.mutate(text)
   }
 
@@ -421,7 +915,7 @@ export function Chat() {
 
   const hasSources = activeSources.length > 0
   const isStreaming = messages.some(m => m.streaming)
-  const isPending = mutation.isPending
+  const isPending = mutation.isPending || flashcardBatchMut.isPending
 
   return (
     <div className="flex h-[calc(100vh-4rem)] gap-0 overflow-hidden rounded-2xl border app-divider bg-[color:var(--ui-bg-alt)] shadow-[0_16px_36px_rgba(2,4,8,0.3)]">
@@ -527,7 +1021,61 @@ export function Chat() {
             />
           ))}
 
-          {isPending && !isStreaming && <TypingIndicator />}
+          {pendingFlashcardCommand && (
+            <div className="flex gap-3">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-700">
+                <Bot className="h-4 w-4 text-zinc-300" />
+              </div>
+              <div className="max-w-[75%] space-y-2">
+                <ActionSummaryCard
+                  action={{
+                    kind: 'flashcards_batch',
+                    title: pendingFlashcardCommand.docs.length > 0
+                      ? 'Confirme o comando de flashcards'
+                      : 'Preciso do escopo dos flashcards',
+                    summary: pendingFlashcardCommand.summary,
+                    status: 'needs_confirmation',
+                    scope: pendingFlashcardCommand.scopeLabel,
+                    doc_names: pendingFlashcardCommand.docs.map(doc => doc.file_name),
+                    doc_count: pendingFlashcardCommand.docs.length,
+                    card_count: pendingFlashcardCommand.numCards,
+                    difficulty: pendingFlashcardCommand.difficultyCustom,
+                    next_steps: pendingFlashcardCommand.docs.length > 0
+                      ? [
+                          'Confirmar para gerar um deck por documento.',
+                          'Cancelar para editar o pedido.',
+                        ]
+                      : [
+                          'Selecione documentos na area de opcoes ou diga "todos os documentos".',
+                        ],
+                    links: pendingFlashcardCommand.docs.length > 0
+                      ? [{ label: 'Abrir Flashcards', href: '/flashcards' }]
+                      : [
+                          { label: 'Ver Documentos', href: '/docs' },
+                          { label: 'Abrir Flashcards', href: '/flashcards' },
+                        ],
+                  }}
+                  confirmLabel={pendingFlashcardCommand.docs.length > 0 ? 'Confirmar e gerar' : 'Ir para Documentos'}
+                  cancelLabel="Descartar"
+                  onConfirm={confirmFlashcardCommand}
+                  onCancel={cancelFlashcardCommand}
+                />
+              </div>
+            </div>
+          )}
+
+          {flashcardBatchMut.isPending && (
+            <div className="flex gap-3">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-700">
+                <Bot className="h-4 w-4 text-zinc-300" />
+              </div>
+              <div className="flex items-center rounded-2xl rounded-tl-sm bg-zinc-800 px-4 py-3 text-xs text-zinc-300">
+                Gerando flashcards em lote...
+              </div>
+            </div>
+          )}
+
+          {isPending && !isStreaming && !flashcardBatchMut.isPending && <TypingIndicator />}
 
           <div ref={bottomRef} />
         </div>
@@ -553,7 +1101,7 @@ export function Chat() {
                 <select
                   value={selectedDoc}
                   onChange={e => setSelectedDoc(e.target.value)}
-                  disabled={isPending}
+                  disabled={isPending || !!pendingFlashcardCommand}
                   className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 min-w-0"
                 >
                   <option value="">Filtrar por documento (opcional)</option>
@@ -569,7 +1117,7 @@ export function Chat() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  disabled={!selectedDoc || isPending}
+                  disabled={!selectedDoc || isPending || !!pendingFlashcardCommand}
                   onClick={() => {
                     const docToAdd = (docs ?? []).find(doc => doc.doc_id === selectedDoc)
                     if (!docToAdd || selectedDocs.some(item => item.doc_id === docToAdd.doc_id)) return
@@ -605,7 +1153,7 @@ export function Chat() {
                   type="checkbox"
                   checked={strictGrounding}
                   onChange={e => setStrictGrounding(e.target.checked)}
-                  disabled={isPending}
+                  disabled={isPending || !!pendingFlashcardCommand}
                   className="accent-blue-600"
                 />
                 Modo strict grounding (respostas só com evidência forte)
@@ -619,12 +1167,12 @@ export function Chat() {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              disabled={isPending || isStreaming}
+              disabled={isPending || isStreaming || !!pendingFlashcardCommand}
               className="flex-1 bg-zinc-900 border-zinc-700"
             />
             <Button
               onClick={handleSend}
-              disabled={!input.trim() || isPending || isStreaming}
+              disabled={!input.trim() || isPending || isStreaming || !!pendingFlashcardCommand}
               size="icon"
             >
               {isPending ? (

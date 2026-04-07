@@ -124,6 +124,24 @@ async def _invoke_chat_runner(
                 return await asyncio.to_thread(_run_chat, message, top_k)
 
 
+async def _invoke_orchestrator(
+    message: str,
+    user_id: int,
+    db: Session,
+    history: list[dict] | None = None,
+) -> dict | None:
+    """Call maybe_orchestrate with compatibility for older monkeypatch signatures."""
+    from docops.services.orchestrator import maybe_orchestrate
+
+    try:
+        return await asyncio.to_thread(maybe_orchestrate, message, user_id, db, history)
+    except TypeError:
+        try:
+            return await asyncio.to_thread(maybe_orchestrate, message, user_id, db)
+        except TypeError:
+            return await asyncio.to_thread(maybe_orchestrate, message, user_id)
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     body: ChatRequest,
@@ -136,8 +154,7 @@ async def chat(
     # Converte history do schema para lista de dicts simples
     history = [{"role": m.role, "content": m.content} for m in (body.history or [])]
 
-    from docops.services.orchestrator import maybe_orchestrate
-    orch_answer = await asyncio.to_thread(maybe_orchestrate, body.message, current_user.id, db, history)
+    orch_answer = await _invoke_orchestrator(body.message, current_user.id, db, history)
     if orch_answer:
         return ChatResponse(
             answer=orch_answer["answer"],
@@ -145,6 +162,10 @@ async def chat(
             intent=orch_answer.get("intent", "action"),
             session_id=body.session_id,
             grounding=None,
+            action_metadata=orch_answer.get("action_metadata"),
+            needs_confirmation=bool(orch_answer.get("needs_confirmation", False)),
+            confirmation_text=orch_answer.get("confirmation_text"),
+            suggested_reply=orch_answer.get("suggested_reply"),
         )
 
     calendar_answer = maybe_answer_calendar_query(body.message, current_user.id, db, history=history)
@@ -156,6 +177,10 @@ async def chat(
             session_id=body.session_id,
             grounding=None,
             calendar_action=calendar_answer.get("calendar_action"),
+            action_metadata=calendar_answer.get("action_metadata"),
+            needs_confirmation=bool(calendar_answer.get("needs_confirmation", False)),
+            confirmation_text=calendar_answer.get("confirmation_text"),
+            suggested_reply=calendar_answer.get("suggested_reply"),
         )
 
     try:
@@ -182,4 +207,8 @@ async def chat(
         intent=state.get("intent", "qa"),
         session_id=body.session_id,
         grounding=grounding_payload if include_grounding else None,
+        action_metadata=state.get("action_metadata"),
+        needs_confirmation=bool(state.get("needs_confirmation", False)),
+        confirmation_text=state.get("confirmation_text"),
+        suggested_reply=state.get("suggested_reply"),
     )

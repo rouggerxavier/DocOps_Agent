@@ -39,6 +39,15 @@ _FC_GENERATE = [
     re.compile(r"(?:quero|gostaria\s+de)\s+(?:estudar|revisar)\s+(?:com\s+)?flashcards?\s+(?:do?a?\s+|de\s+|sobre\s+)(.+)", re.I),
 ]
 
+_FLASHCARD_COMMAND = re.compile(
+    r"\b(?:ger(?:e|ar|ou)|cri(?:e|ar|ou)|fazer?|faça|faca|monte|produza|prepare)\b.*\bflashcards?\b",
+    re.I,
+)
+_FLASHCARD_BATCH = re.compile(
+    r"(cada documento|todos os documentos|todos os docs|todos os arquivos|aba documentos|em lote|por documento)",
+    re.I,
+)
+
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -50,14 +59,18 @@ def maybe_answer_action_query(
     Returns:
         dict com 'answer' e 'intent' se uma ação foi detectada, None caso contrário.
     """
+    if _FLASHCARD_COMMAND.search(message) and _FLASHCARD_BATCH.search(message):
+        return None
+
     # Criar tarefa
-    for pattern in _TASK_CREATE:
-        m = pattern.search(message)
-        if m:
-            title = m.group(1).strip()
-            # Evita matches muito curtos ou que parecem ser frases completas sobre outro assunto
-            if 3 <= len(title) <= 512 and not _looks_like_question(title):
-                return _handle_create_task(title, user_id, db)
+    if _looks_like_task_command(message):
+        for pattern in _TASK_CREATE:
+            m = pattern.search(message)
+            if m:
+                title = m.group(1).strip()
+                # Evita matches muito curtos ou que parecem ser frases completas sobre outro assunto
+                if 3 <= len(title) <= 512 and not _looks_like_question(title):
+                    return _handle_create_task(title, user_id, db)
 
     # Listar tarefas
     for pattern in _LIST_TASKS:
@@ -65,6 +78,9 @@ def maybe_answer_action_query(
             return _handle_list_tasks(user_id, db)
 
     # Gerar flashcards
+    if _FLASHCARD_COMMAND.search(message):
+        return None
+
     for pattern in _FC_GENERATE:
         m = pattern.search(message)
         if m:
@@ -78,6 +94,11 @@ def maybe_answer_action_query(
 def _looks_like_question(text: str) -> bool:
     """Heurística simples para evitar confundir perguntas com títulos de tarefa."""
     return text.endswith("?") or text.lower().startswith(("o que", "como", "por que", "quando", "onde", "qual"))
+
+
+def _looks_like_task_command(message: str) -> bool:
+    normalized = message.casefold()
+    return any(keyword in normalized for keyword in ("tarefa", "tarefas", "to-do", "todo", "afazer", "pendencia", "pendência"))
 
 
 # ── Handlers ──────────────────────────────────────────────────────────────────

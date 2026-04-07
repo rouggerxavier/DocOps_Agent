@@ -7,7 +7,7 @@ import json
 import re
 import unicodedata
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
@@ -66,6 +66,21 @@ class GenerateRequest(BaseModel):
     )
 
 
+class BatchGenerateRequest(BaseModel):
+    all_docs: bool = False
+    doc_names: list[str] = Field(
+        default_factory=list,
+        description="Specific document file names to process. Ignored when all_docs=true.",
+    )
+    num_cards: int = Field(default=10, ge=1, le=60)
+    content_filter: str = Field(default="", description="Optional document content filter")
+    difficulty_mode: str = Field(default="any", description="any | only_facil | only_media | only_dificil | custom")
+    difficulty_custom: Optional[dict[str, int]] = Field(
+        default=None,
+        description="{'facil': N, 'media': N, 'dificil': N} for custom mode",
+    )
+
+
 class ReviewRequest(BaseModel):
     card_id: int
     ease: int = Field(ge=0, le=3)
@@ -83,6 +98,21 @@ class EvaluateAnswerResponse(BaseModel):
     verdict: str
     feedback: str
     highlight: str
+
+
+class BatchGenerateItem(BaseModel):
+    requested_doc_name: str
+    source_doc: Optional[str] = None
+    status: Literal["created", "failed"]
+    deck: Optional[DeckResponse] = None
+    error: Optional[str] = None
+
+
+class BatchGenerateResponse(BaseModel):
+    requested_docs: int
+    created: int
+    failed: int
+    items: list[BatchGenerateItem]
 
 
 FLASHCARD_EVAL_PROMPT = """\
@@ -155,6 +185,15 @@ def _build_target_difficulty_counts(mode: str, num_cards: int, custom: dict | No
     if mode == "only_dificil":
         return {"facil": 0, "media": 0, "dificil": num_cards}
     return None
+
+
+def _resolve_num_cards(num_cards: int, difficulty_mode: str, difficulty_custom: dict | None) -> int:
+    if difficulty_mode == "custom" and difficulty_custom:
+        resolved = sum(int(value) for value in difficulty_custom.values())
+        if resolved < 1:
+            raise HTTPException(status_code=422, detail="A distribuicao personalizada deve ter ao menos 1 card.")
+        return resolved
+    return num_cards
 
 
 def _build_difficulty_instruction_from_counts(target_counts: dict[str, int] | None) -> str:
@@ -421,6 +460,68 @@ def _generate_cards(
     )
 
 
+async def _generate_deck_for_document(
+    *,
+    db: Session,
+    user_id: int,
+    doc_record,
+    num_cards: int,
+    content_filter: str,
+    difficulty_mode: str,
+    difficulty_custom: dict | None,
+):
+    cards = await asyncio.to_thread(
+        _generate_cards,
+        doc_record.file_name,
+        doc_record.doc_id,
+        user_id,
+        num_cards,
+        content_filter,
+        difficulty_mode,
+        difficulty_custom,
+    )
+
+    return crud.create_flashcard_deck(
+        db,
+        user_id=user_id,
+        title=f"Flashcards - {doc_record.file_name}",
+        source_doc=doc_record.file_name,
+        cards=cards,
+    )
+
+
+def _resolve_batch_documents(
+    db: Session,
+    user_id: int,
+    *,
+    all_docs: bool,
+    doc_names: list[str],
+):
+    documents = crud.list_documents_for_user(db, user_id)
+    if all_docs and doc_names:
+        raise HTTPException(status_code=422, detail="Use all_docs=true ou doc_names, nao ambos.")
+
+    if all_docs:
+        return [(doc.file_name, doc) for doc in documents]
+
+    cleaned_names = [name.strip() for name in doc_names if name and name.strip()]
+    if not cleaned_names:
+        raise HTTPException(status_code=422, detail="Informe all_docs=true ou pelo menos um doc_name.")
+
+    lookup = {_normalize_card_text(doc.file_name): doc for doc in documents}
+    selected: list[tuple[str, object | None]] = []
+    seen: set[str] = set()
+
+    for requested_name in cleaned_names:
+        key = _normalize_card_text(requested_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append((requested_name, lookup.get(key)))
+
+    return selected
+
+
 @router.get("/flashcards", response_model=list[DeckListItem])
 def list_decks(
     current_user: User = Depends(get_current_user),
@@ -437,6 +538,86 @@ def list_decks(
         )
         for deck in decks
     ]
+
+
+@router.post("/flashcards/generate-batch", response_model=BatchGenerateResponse)
+async def generate_decks_batch(
+    payload: BatchGenerateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    num_cards = _resolve_num_cards(payload.num_cards, payload.difficulty_mode, payload.difficulty_custom)
+    targets = _resolve_batch_documents(
+        db,
+        current_user.id,
+        all_docs=payload.all_docs,
+        doc_names=payload.doc_names,
+    )
+
+    items: list[BatchGenerateItem] = []
+    created = 0
+    failed = 0
+
+    for requested_doc_name, doc_record in targets:
+        if doc_record is None:
+            failed += 1
+            items.append(
+                BatchGenerateItem(
+                    requested_doc_name=requested_doc_name,
+                    source_doc=None,
+                    status="failed",
+                    error="Documento nao encontrado ou nao pertence ao usuario.",
+                )
+            )
+            continue
+
+        try:
+            deck = await _generate_deck_for_document(
+                db=db,
+                user_id=current_user.id,
+                doc_record=doc_record,
+                num_cards=num_cards,
+                content_filter=payload.content_filter,
+                difficulty_mode=payload.difficulty_mode,
+                difficulty_custom=payload.difficulty_custom,
+            )
+            created += 1
+            items.append(
+                BatchGenerateItem(
+                    requested_doc_name=requested_doc_name,
+                    source_doc=doc_record.file_name,
+                    status="created",
+                    deck=DeckResponse.model_validate(deck),
+                )
+            )
+        except HTTPException as exc:
+            failed += 1
+            items.append(
+                BatchGenerateItem(
+                    requested_doc_name=requested_doc_name,
+                    source_doc=doc_record.file_name,
+                    status="failed",
+                    error=str(exc.detail),
+                )
+            )
+        except Exception as exc:
+            logger.exception("Falha ao gerar flashcards em lote para %s", doc_record.file_name)
+            failed += 1
+            items.append(
+                BatchGenerateItem(
+                    requested_doc_name=requested_doc_name,
+                    source_doc=doc_record.file_name,
+                    status="failed",
+                    error="Erro inesperado ao gerar flashcards para este documento.",
+                )
+            )
+
+    return BatchGenerateResponse(
+        requested_docs=len(targets),
+        created=created,
+        failed=failed,
+        items=items,
+    )
 
 
 @router.get("/flashcards/{deck_id}", response_model=DeckResponse)
@@ -461,29 +642,15 @@ async def generate_deck(
 
     doc_record = require_user_document(db, current_user.id, payload.doc_name)
 
-    num_cards = payload.num_cards
-    if payload.difficulty_mode == "custom" and payload.difficulty_custom:
-        num_cards = sum(payload.difficulty_custom.values())
-        if num_cards < 1:
-            raise HTTPException(status_code=422, detail="A distribuicao personalizada deve ter ao menos 1 card.")
-
-    cards = await asyncio.to_thread(
-        _generate_cards,
-        doc_record.file_name,
-        doc_record.doc_id,
-        current_user.id,
-        num_cards,
-        payload.content_filter,
-        payload.difficulty_mode,
-        payload.difficulty_custom,
-    )
-
-    deck = crud.create_flashcard_deck(
-        db,
+    num_cards = _resolve_num_cards(payload.num_cards, payload.difficulty_mode, payload.difficulty_custom)
+    deck = await _generate_deck_for_document(
+        db=db,
         user_id=current_user.id,
-        title=f"Flashcards - {doc_record.file_name}",
-        source_doc=doc_record.file_name,
-        cards=cards,
+        doc_record=doc_record,
+        num_cards=num_cards,
+        content_filter=payload.content_filter,
+        difficulty_mode=payload.difficulty_mode,
+        difficulty_custom=payload.difficulty_custom,
     )
     return deck
 

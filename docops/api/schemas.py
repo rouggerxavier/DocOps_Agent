@@ -101,6 +101,10 @@ class ChatResponse(BaseModel):
     session_id: Optional[str] = None
     grounding: Optional[dict[str, Any]] = None
     calendar_action: Optional[dict[str, Any]] = None
+    action_metadata: Optional[dict[str, Any]] = None
+    needs_confirmation: bool = False
+    confirmation_text: Optional[str] = None
+    suggested_reply: Optional[str] = None
 
 
 # ── /api/summarize ────────────────────────────────────────────────────────────

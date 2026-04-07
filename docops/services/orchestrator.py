@@ -29,6 +29,76 @@ from docops.logging import get_logger
 
 logger = get_logger("docops.services.orchestrator")
 
+_TASK_ACTION_KEYWORDS = (
+    "tarefa",
+    "tarefas",
+    "to-do",
+    "todo",
+    "afazer",
+    "afazeres",
+    "pendencia",
+    "pendência",
+    "pendencias",
+    "pendências",
+)
+_FLASHCARD_ACTION_KEYWORDS = (
+    "flashcard",
+    "flashcards",
+    "card",
+    "cards",
+    "cartao",
+    "cartoes",
+    "revisao",
+    "revisao espaçada",
+    "revisao espaciada",
+)
+_FLASHCARD_BATCH_KEYWORDS = (
+    "cada documento",
+    "todos os documentos",
+    "todos os docs",
+    "todos os arquivos",
+    "aba documentos",
+    "lista de documentos",
+    "em lote",
+    "por documento",
+)
+_FLASHCARD_COMMAND_KEYWORDS = (
+    "crie",
+    "criar",
+    "gere",
+    "gerar",
+    "faça",
+    "faca",
+    "monte",
+    "produza",
+    "prepare",
+)
+_FLASHCARD_CONFIRMATION_WORDS = {
+    "sim",
+    "pode",
+    "pode sim",
+    "ok",
+    "okay",
+    "confirmo",
+    "confirmar",
+    "todos",
+    "todos os documentos",
+    "cada documento",
+    "usar todos",
+}
+_FLASHCARD_NEGATION_WORDS = {
+    "nao",
+    "não",
+    "negativo",
+    "nenhum",
+    "nenhuma",
+    "cancelar",
+    "cancela",
+}
+
+_pending_study_plans: dict[int, dict] = {}
+_pending_flashcard_batches: dict[int, dict] = {}
+
 # ---------------------------------------------------------------------------
 # Prompt do parser LLM
 # ---------------------------------------------------------------------------
@@ -49,8 +119,10 @@ Intents possíveis:
 - "create_task"          → criar tarefa simples sem prazo específico (afazer, to-do, pendência)
 - "list_tasks"           → listar tarefas pendentes
 - "flashcard_hint"       → pede flashcards de um documento sem cascade
+- "create_flashcards_batch" → criar flashcards para um ou mais documentos, incluindo "todos os documentos"
 - "cascade_create_note"  → usuário quer criar/salvar uma ANOTAÇÃO ou NOTA textual (explicitamente menciona "nota", "anotação")
 - "cascade_create_summary" → usuário quer fazer um resumo de um documento específico
+- "clarification_needed"  → comando ambíguo que precisa de confirmação antes de executar
 - "calendar"             → qualquer coisa relacionada a calendário, agenda, lembrete, rotina, cronograma, horário fixo, blocos semanais, compromisso, evento
 - "rag"                  → pergunta sobre documentos, dúvida, QA — deve ir pro RAG
 
@@ -72,6 +144,7 @@ Regras PRIORITÁRIAS (em ordem de prioridade):
 6. Se mencionar "plano de estudos", "cronograma de estudos", "me ajuda a estudar [doc]", "estudar [doc] até [data]" → "cascade_study_plan"
 7. Se mencionar entrega/prazo/deadline de projeto/trabalho + data → "cascade_task_deadline"
 8. Se mencionar "resumo de", "resumir [doc]", "faz um resumo", "sumarize" → "cascade_create_summary"
+9. Se mencionar criar/gerar flashcards para vários documentos, "todos os documentos" ou "cada documento" → "create_flashcards_batch"
 
 Exemplos para calibração:
 - "lembrete no calendário para as 14h" → "calendar"
@@ -83,6 +156,7 @@ Exemplos para calibração:
 - "anota isso: revisar capítulo 3" → "cascade_create_note"
 - "criar tarefa: entregar trabalho amanhã" → "create_task"  (sem deadline específico → "create_task"; com deadline → "cascade_task_deadline")
 - "tenho prova de física sexta" → "cascade_study_event"
+- "quero 10 flashcards para cada documento" → "create_flashcards_batch"
 
 - Datas relativas: "amanhã"=+1d, "depois de amanhã"=+2d, "semana que vem"=+7d, "próxima semana"=+7d
 - Se não houver data clara, deadline_iso = null
@@ -92,6 +166,9 @@ Exemplos para calibração:
 - deck_hint: parte do nome do deck/documento para flashcards
 - hours_per_day: horas por dia de estudo mencionadas (número float), null se não mencionado
 - content: conteúdo ou texto da nota que o usuário quer salvar, null se não especificado
+- all_docs: true quando a instrução inclui "todos os documentos", "cada documento", "todos os docs" ou equivalente
+- doc_names: lista de nomes de documentos explicitamente mencionados quando o usuário quer algo em lote
+- needs_confirmation: true quando a instrução pede uma ação, mas faltam documentos-alvo ou a intenção ainda está ambígua
 
 Formato de resposta:
 {{
@@ -104,7 +181,10 @@ Formato de resposta:
     "deadline_iso": "<YYYY-MM-DD ou null>",
     "deadline_label": "<descrição legível da data ou null>",
     "hours_per_day": "<float ou null>",
-    "content": "<string ou null>"
+    "content": "<string ou null>",
+    "all_docs": "<bool ou null>",
+    "doc_names": ["<string>", "..."],
+    "needs_confirmation": "<bool ou null>"
   }}
 }}
 
@@ -254,6 +334,112 @@ def _srs_review_times(from_dt: datetime) -> list[tuple[str, datetime]]:
     ]
 
 
+def _normalize_text(text: str) -> str:
+    normalized = text.casefold().strip()
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized
+
+
+def _has_any_keyword(text: str, keywords: tuple[str, ...]) -> bool:
+    normalized = _normalize_text(text)
+    return any(keyword in normalized for keyword in keywords)
+
+
+def _looks_like_task_command(message: str) -> bool:
+    normalized = _normalize_text(message)
+    return _has_any_keyword(normalized, _TASK_ACTION_KEYWORDS)
+
+
+def _looks_like_flashcard_command(message: str) -> bool:
+    normalized = _normalize_text(message)
+    return _has_any_keyword(normalized, _FLASHCARD_ACTION_KEYWORDS)
+
+
+def _looks_like_flashcard_batch_request(message: str) -> bool:
+    normalized = _normalize_text(message)
+    return _has_any_keyword(normalized, _FLASHCARD_BATCH_KEYWORDS)
+
+
+def _looks_like_flashcard_confirmation(message: str) -> bool:
+    normalized = _normalize_text(message)
+    if normalized in _FLASHCARD_CONFIRMATION_WORDS:
+        return True
+    return any(word in normalized for word in _FLASHCARD_CONFIRMATION_WORDS)
+
+
+def _looks_like_flashcard_negation(message: str) -> bool:
+    normalized = _normalize_text(message)
+    if normalized in _FLASHCARD_NEGATION_WORDS:
+        return True
+    return any(word in normalized for word in _FLASHCARD_NEGATION_WORDS)
+
+
+def _extract_explicit_doc_names(message: str, docs: list) -> list[str]:
+    normalized = _normalize_text(message)
+    matched: list[str] = []
+    for doc in docs:
+        file_name = getattr(doc, "file_name", "") or ""
+        short_name = _normalize_text(file_name)
+        if short_name and (short_name in normalized or normalized in short_name):
+            matched.append(file_name)
+    return matched
+
+
+def _build_flashcard_confirmation_answer(entities: dict, docs: list) -> dict:
+    doc_hint = entities.get("doc_hint") or entities.get("deck_hint") or ""
+    if docs:
+        sample = "\n".join(f"- {doc.file_name}" for doc in docs[:5])
+        return {
+            "answer": (
+                "Posso gerar flashcards, mas preciso saber se você quer um documento específico "
+                "ou todos os documentos da aba Documentos.\n\n"
+                f"Documentos disponíveis:\n{sample}\n\n"
+                "Responda com o nome do documento, ou diga `todos os documentos`."
+            ),
+            "intent": "create_flashcards_batch",
+            "needs_confirmation": True,
+            "entities": {
+                "doc_hint": doc_hint,
+                "all_docs": False,
+                "doc_names": [],
+            },
+        }
+    return {
+        "answer": (
+            "Posso gerar flashcards, mas primeiro você precisa inserir documentos na aba Documentos."
+        ),
+        "intent": "create_flashcards_batch",
+        "needs_confirmation": True,
+        "entities": {
+            "doc_hint": doc_hint,
+            "all_docs": False,
+            "doc_names": [],
+        },
+    }
+
+
+def _build_ambiguous_command_answer(message: str, entities: dict, docs: list | None = None) -> dict:
+    if _looks_like_flashcard_command(message):
+        return _build_flashcard_confirmation_answer(entities, docs or [])
+
+    return {
+        "answer": (
+            "Não entendi com segurança se isso é uma tarefa, uma pergunta ou outra ação. "
+            "Se quiser criar uma tarefa, diga algo como `criar tarefa: ...`. "
+            "Se quiser flashcards, diga o documento ou `todos os documentos`."
+        ),
+        "intent": "clarification_needed",
+        "needs_confirmation": True,
+    }
+
+
+def _queue_flashcard_batch_confirmation(user_id: int, message: str, entities: dict) -> None:
+    _pending_flashcard_batches[user_id] = {
+        "message": message,
+        "entities": dict(entities or {}),
+    }
+
+
 # ---------------------------------------------------------------------------
 # Parser LLM
 # ---------------------------------------------------------------------------
@@ -294,6 +480,17 @@ def _llm_parse(message: str, history: list[dict] | None = None) -> dict[str, Any
     except Exception as exc:
         logger.info("Orchestrator: LLM parser falhou — %s: %s", type(exc).__name__, exc)
         return None
+
+
+def _invoke_llm_parse(message: str, history: list[dict] | None = None) -> dict[str, Any] | None:
+    """Call _llm_parse with compatibility for legacy monkeypatch signatures."""
+    try:
+        return _llm_parse(message, history=history)
+    except TypeError:
+        try:
+            return _llm_parse(message)
+        except TypeError:
+            return None
 
 
 # ---------------------------------------------------------------------------
@@ -554,13 +751,172 @@ def _exec_schedule_fc_reviews(entities: dict, user_id: int, db: Session) -> dict
     return {"answer": answer, "intent": "schedule_fc_reviews"}
 
 
+def _resolve_flashcard_batch_docs(entities: dict, message: str, docs: list) -> tuple[list, bool]:
+    all_docs = bool(entities.get("all_docs")) or _looks_like_flashcard_batch_request(message)
+    doc_names = entities.get("doc_names") or []
+    doc_hint = entities.get("doc_hint") or entities.get("deck_hint") or ""
+
+    explicit_from_message = _extract_explicit_doc_names(message, docs)
+    if explicit_from_message:
+        matched = [
+            doc
+            for doc in docs
+            if getattr(doc, "file_name", "") in explicit_from_message
+        ]
+        return matched, False
+
+    if all_docs:
+        return list(docs), True
+
+    explicit_names = [str(name).strip() for name in doc_names if str(name).strip()]
+    if explicit_names:
+        normalized = {_normalize_text(name) for name in explicit_names}
+        matched = [
+            doc
+            for doc in docs
+            if _normalize_text(getattr(doc, "file_name", "")) in normalized
+            or any(
+                hint in _normalize_text(getattr(doc, "file_name", ""))
+                for hint in normalized
+            )
+        ]
+        return matched, False
+
+    if doc_hint:
+        hint_lower = _normalize_text(str(doc_hint))
+        matched = [
+            doc
+            for doc in docs
+            if hint_lower in _normalize_text(getattr(doc, "file_name", ""))
+            or _normalize_text(getattr(doc, "file_name", "")) in hint_lower
+        ]
+        return matched, False
+
+    return [], False
+
+
+def _exec_create_flashcards_batch(entities: dict, user_id: int, db: Session, message: str) -> dict:
+    from docops.db import crud
+    from docops.api.routes.flashcards import _generate_cards
+
+    docs = crud.list_documents_for_user(db, user_id)
+    if not docs:
+        return _build_flashcard_confirmation_answer(entities, docs)
+
+    target_docs, is_all_docs = _resolve_flashcard_batch_docs(entities, message, docs)
+    if not target_docs:
+        _pending_flashcard_batches[user_id] = {"entities": entities, "message": message}
+        return _build_flashcard_confirmation_answer(entities, docs)
+
+    num_cards = entities.get("num_cards") or entities.get("total_cards") or 10
+    try:
+        num_cards = int(num_cards)
+    except (TypeError, ValueError):
+        num_cards = 10
+
+    difficulty_mode = str(entities.get("difficulty_mode") or "any")
+    difficulty_custom = entities.get("difficulty_custom")
+    content_filter = str(entities.get("content_filter") or "").strip()
+
+    created: list[str] = []
+    failed: list[str] = []
+
+    for doc in target_docs:
+        try:
+            cards = _generate_cards(
+                doc_name=doc.file_name,
+                doc_id=doc.doc_id,
+                user_id=user_id,
+                num_cards=num_cards,
+                content_filter=content_filter,
+                difficulty_mode=difficulty_mode,
+                difficulty_custom=difficulty_custom,
+            )
+            deck = crud.create_flashcard_deck(
+                db,
+                user_id=user_id,
+                title=f"Flashcards - {doc.file_name}",
+                source_doc=doc.file_name,
+                cards=cards,
+            )
+            created.append(f"{deck.title} ({len(cards)} cards)")
+        except Exception as exc:
+            logger.error("Falha ao gerar flashcards em lote para %s: %s", doc.file_name, exc)
+            failed.append(doc.file_name)
+
+    if not created and failed:
+        return {
+            "answer": (
+                "Não consegui gerar flashcards em lote agora. Tente novamente pela página de Flashcards "
+                "ou reduza o escopo para um documento só."
+            ),
+            "intent": "create_flashcards_batch",
+        }
+
+    summary_lines = [f"✅ Gerei {len(created)} deck(s) de flashcards."]
+    if is_all_docs:
+        summary_lines.append("Escopo: todos os documentos disponíveis.")
+    if created:
+        summary_lines.append("Decks criados:")
+        summary_lines.extend(f"- {item}" for item in created[:8])
+    if failed:
+        summary_lines.append("")
+        summary_lines.append(f"⚠️ Falha em {len(failed)} documento(s): " + ", ".join(failed[:5]))
+    summary_lines.append("\n[Ver Flashcards →](/flashcards)")
+
+    _pending_flashcard_batches.pop(user_id, None)
+    return {
+        "answer": "\n".join(summary_lines),
+        "intent": "create_flashcards_batch",
+        "entities": {
+            "doc_names": [doc.file_name for doc in target_docs],
+            "all_docs": is_all_docs,
+            "num_cards": num_cards,
+        },
+    }
+
+
+def _handle_pending_flashcard_batch(message: str, user_id: int, db: Session) -> dict | None:
+    pending = _pending_flashcard_batches.get(user_id)
+    if not pending:
+        return None
+
+    normalized = _normalize_text(message)
+    if _looks_like_flashcard_negation(normalized):
+        _pending_flashcard_batches.pop(user_id, None)
+        return {
+            "answer": "Tudo bem. Não vou gerar esse lote agora. Se quiser, me diga `todos os documentos` ou o nome do documento depois.",
+            "intent": "create_flashcards_batch",
+        }
+
+    docs = None
+    try:
+        from docops.db import crud
+        docs = crud.list_documents_for_user(db, user_id)
+    except Exception:
+        docs = []
+
+    explicit_names = _extract_explicit_doc_names(message, docs or [])
+    if explicit_names:
+        entities = dict(pending.get("entities") or {})
+        entities["doc_names"] = explicit_names
+        entities["all_docs"] = False
+        return _exec_create_flashcards_batch(entities, user_id, db, pending.get("message", message))
+
+    if _looks_like_flashcard_batch_request(message):
+        entities = dict(pending.get("entities") or {})
+        entities["all_docs"] = True
+        return _exec_create_flashcards_batch(entities, user_id, db, pending.get("message", message))
+
+    if _looks_like_flashcard_confirmation(normalized):
+        return _build_flashcard_confirmation_answer(pending.get("entities") or {}, docs or [])
+
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Cascade: Plano de Estudos (multi-turn)
 # ---------------------------------------------------------------------------
-
-# Pendências de plano de estudos por user_id (em memória — suficiente para 1 sessão)
-_pending_study_plans: dict[int, dict] = {}
-
 
 def _extract_followup_info(message: str) -> dict:
     """Extrai horas/dia e prazo de uma resposta de follow-up simples."""
@@ -843,13 +1199,17 @@ def maybe_orchestrate(message: str, user_id: int, db: Session, history: list[dic
         logger.info("Orchestrator: mensagem de calendário/lembrete → pass-through imediato")
         return None  # Deixa o calendar_assistant processar
 
+    pending_flashcards = _handle_pending_flashcard_batch(message, user_id, db)
+    if pending_flashcards:
+        return pending_flashcards
+
     # ── Verifica se há um plano de estudos pendente para este usuário ──────
     if user_id in _pending_study_plans:
         pending = _pending_study_plans[user_id]
         followup = _extract_followup_info(message)
         if not followup:
             # Tenta extrair via LLM com contexto do pending (ex: "até dia 08" sem horas)
-            llm_result = _llm_parse(message, history=history)
+            llm_result = _invoke_llm_parse(message, history=history)
             if llm_result and llm_result.get("intent") in ("cascade_study_plan", "rag", "create_task", "cascade_task_deadline"):
                 ents = llm_result.get("entities", {})
                 if ents.get("deadline_iso"):
@@ -865,13 +1225,46 @@ def maybe_orchestrate(message: str, user_id: int, db: Session, history: list[dic
         # Resposta verdadeiramente não parseável — cancela o pending e trata normalmente
         _pending_study_plans.pop(user_id, None)
 
-    parsed = _llm_parse(message, history=history)
+    parsed = _invoke_llm_parse(message, history=history)
     if not parsed:
         logger.debug("Parser LLM não retornou JSON válido.")
         return None
 
     intent = parsed.get("intent", "rag")
     entities = parsed.get("entities", {})
+
+    docs_for_user: list = []
+    try:
+        from docops.db import crud
+        docs_for_user = crud.list_documents_for_user(db, user_id)
+    except Exception:
+        docs_for_user = []
+
+    if intent == "create_task" and _looks_like_flashcard_command(message):
+        if _looks_like_flashcard_batch_request(message) or entities.get("all_docs") or entities.get("doc_names") or entities.get("doc_hint") or entities.get("deck_hint"):
+            intent = "create_flashcards_batch"
+        else:
+            _queue_flashcard_batch_confirmation(user_id, message, entities)
+            return _build_ambiguous_command_answer(message, entities, docs_for_user)
+
+    if intent == "flashcard_hint" and _looks_like_flashcard_command(message):
+        if _looks_like_flashcard_batch_request(message) or entities.get("all_docs") or entities.get("doc_names") or entities.get("doc_hint") or entities.get("deck_hint"):
+            intent = "create_flashcards_batch"
+        else:
+            _queue_flashcard_batch_confirmation(user_id, message, entities)
+            return _build_ambiguous_command_answer(message, entities, docs_for_user)
+
+    if intent == "create_task" and not _looks_like_task_command(message):
+        if _looks_like_flashcard_command(message):
+            _queue_flashcard_batch_confirmation(user_id, message, entities)
+        return _build_ambiguous_command_answer(message, entities, docs_for_user)
+
+    if intent == "clarification_needed":
+        question = entities.get("question") or "Posso te ajudar, mas preciso de mais detalhes."
+        return {
+            "answer": question,
+            "intent": "clarification_needed",
+        }
 
     logger.info("Orchestrator: intent=%s entities=%s", intent, entities)
 
@@ -897,6 +1290,9 @@ def maybe_orchestrate(message: str, user_id: int, db: Session, history: list[dic
     if intent == "cascade_create_summary":
         return _exec_cascade_create_summary(entities, user_id, db)
 
+    if intent == "create_flashcards_batch":
+        return _exec_create_flashcards_batch(entities, user_id, db, message)
+
     # Ações simples — delega pro action_router que já funciona bem com regex
     if intent in _SIMPLE_INTENTS:
         from docops.services.action_router import maybe_answer_action_query
@@ -905,6 +1301,10 @@ def maybe_orchestrate(message: str, user_id: int, db: Session, history: list[dic
             return result
         # Se regex não pegou, tenta executar baseado nas entidades do LLM
         if intent == "create_task":
+            if _looks_like_flashcard_command(message):
+                if _looks_like_flashcard_batch_request(message) or entities.get("all_docs") or entities.get("doc_names") or entities.get("doc_hint") or entities.get("deck_hint"):
+                    return _exec_create_flashcards_batch(entities, user_id, db, message)
+                return _build_ambiguous_command_answer(message, entities, docs_for_user)
             title = entities.get("task_title") or message.strip()
             from docops.services.action_router import _handle_create_task
             return _handle_create_task(title, user_id, db)
@@ -912,6 +1312,8 @@ def maybe_orchestrate(message: str, user_id: int, db: Session, history: list[dic
             from docops.services.action_router import _handle_list_tasks
             return _handle_list_tasks(user_id, db)
         if intent == "flashcard_hint":
+            if _looks_like_flashcard_batch_request(message) or entities.get("all_docs") or entities.get("doc_names"):
+                return _exec_create_flashcards_batch(entities, user_id, db, message)
             hint = entities.get("doc_hint") or entities.get("deck_hint") or ""
             from docops.services.action_router import _handle_flashcard_hint
             return _handle_flashcard_hint(hint, user_id, db)
