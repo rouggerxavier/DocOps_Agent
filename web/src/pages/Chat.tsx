@@ -485,11 +485,19 @@ function MessageBubble({
               ? 'rounded-tr-sm bg-blue-600 text-white hover:bg-blue-500'
               : 'rounded-tl-sm bg-zinc-800 text-zinc-100 hover:bg-zinc-700'
           )}
-          style={{ userSelect: 'text', WebkitUserSelect: 'text', cursor: 'text' }}
+          draggable={false}
+          onDragStart={isUser ? e => e.preventDefault() : undefined}
+          style={{
+            userSelect: 'text',
+            WebkitUserSelect: 'text',
+            cursor: 'text',
+          }}
         >
           {isUser ? (
             <div
               className="select-text whitespace-pre-wrap break-words leading-relaxed"
+              draggable={false}
+              onDragStart={e => e.preventDefault()}
               style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
             >
               {message.content}
