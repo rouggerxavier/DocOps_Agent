@@ -480,17 +480,22 @@ function MessageBubble({
       <div className={cn('max-w-[75%] space-y-2', isUser ? 'items-end' : 'items-start')}>
         <div
           className={cn(
-            'rounded-2xl px-4 py-3 text-sm transition-all duration-200 hover:shadow-[0_0_0_1px_rgba(255,255,255,0.08)]',
+            'select-text rounded-2xl px-4 py-3 text-sm transition-all duration-200 hover:shadow-[0_0_0_1px_rgba(255,255,255,0.08)]',
             isUser
               ? 'rounded-tr-sm bg-blue-600 text-white hover:bg-blue-500'
               : 'rounded-tl-sm bg-zinc-800 text-zinc-100 hover:bg-zinc-700'
           )}
-          style={{ userSelect: 'text', cursor: 'text' }}
+          style={{ userSelect: 'text', WebkitUserSelect: 'text', cursor: 'text' }}
         >
           {isUser ? (
-            <p style={{ userSelect: 'text' }}>{message.content}</p>
+            <div
+              className="select-text whitespace-pre-wrap break-words leading-relaxed"
+              style={{ userSelect: 'text', WebkitUserSelect: 'text' }}
+            >
+              {message.content}
+            </div>
           ) : (
-            <div className="prose prose-invert prose-sm max-w-none" style={{ userSelect: 'text' }}>
+            <div className="prose prose-invert prose-sm max-w-none select-text" style={{ userSelect: 'text', WebkitUserSelect: 'text' }}>
               <ReactMarkdown>{message.content}</ReactMarkdown>
               {message.streaming && (
                 <span className="inline-block h-4 w-0.5 animate-pulse bg-zinc-400 ml-0.5 align-text-bottom" />
