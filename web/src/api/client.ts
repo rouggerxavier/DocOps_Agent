@@ -9,6 +9,7 @@ export const api = axios.create({
 })
 
 const INGEST_TIMEOUT_MS = 180000
+const FLASHCARD_GENERATION_TIMEOUT_MS = 180000
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -508,7 +509,7 @@ export const apiClient = {
       content_filter: contentFilter,
       difficulty_mode: difficultyMode,
       difficulty_custom: difficultyCustom,
-    }).then(r => r.data),
+    }, { timeout: FLASHCARD_GENERATION_TIMEOUT_MS }).then(r => r.data),
 
   reviewFlashcard: (cardId: number, ease: number): Promise<{ status: string }> =>
     api.post('/api/flashcards/review', { card_id: cardId, ease }).then(r => r.data),

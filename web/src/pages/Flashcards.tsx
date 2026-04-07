@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import axios from 'axios'
 import { toast } from 'sonner'
 import {
   Plus, Trash2, ChevronLeft,
@@ -578,12 +579,36 @@ export function Flashcards() {
       difficultyMode: DiffMode
       difficultyCustom: { facil: number; media: number; dificil: number } | null
     }) => apiClient.generateFlashcards(docName, numCards, contentFilter, difficultyMode, difficultyCustom),
-    onSuccess: () => {
+    onSuccess: (deck) => {
+      qc.setQueryData<FlashcardDeckListItem[]>(['flashcard-decks'], (current = []) => {
+        const nextItem: FlashcardDeckListItem = {
+          id: deck.id,
+          title: deck.title,
+          source_doc: deck.source_doc,
+          card_count: deck.cards.length,
+          created_at: deck.created_at,
+        }
+        return [nextItem, ...current.filter(item => item.id !== deck.id)]
+      })
       qc.invalidateQueries({ queryKey: ['flashcard-decks'] })
       setShowGenerate(false)
       toast.success('Flashcards gerados!')
     },
-    onError: () => toast.error('Erro ao gerar flashcards.'),
+    onError: (error) => {
+      const timedOut = axios.isAxiosError(error) && error.code === 'ECONNABORTED'
+
+      if (timedOut) {
+        setShowGenerate(false)
+        toast.error('A geração demorou mais que o esperado. Vou atualizar a lista para verificar se o deck foi criado.')
+        void qc.invalidateQueries({ queryKey: ['flashcard-decks'] })
+        window.setTimeout(() => {
+          void qc.invalidateQueries({ queryKey: ['flashcard-decks'] })
+        }, 4000)
+        return
+      }
+
+      toast.error('Erro ao gerar flashcards.')
+    },
   })
 
   const deleteMut = useMutation({
