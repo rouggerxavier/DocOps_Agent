@@ -83,6 +83,23 @@ class ChatMessage(BaseModel):
     content: str
 
 
+class ActiveChatContext(BaseModel):
+    """Short-lived operational context for a chat session."""
+    active_doc_ids: List[str] = Field(default_factory=list)
+    active_doc_names: List[str] = Field(default_factory=list)
+    active_deck_id: Optional[int] = None
+    active_deck_title: Optional[str] = None
+    active_task_id: Optional[int] = None
+    active_task_title: Optional[str] = None
+    active_note_id: Optional[int] = None
+    active_note_title: Optional[str] = None
+    active_intent: Optional[str] = None
+    last_action: Optional[str] = None
+    last_user_command: Optional[str] = None
+    last_card_count: Optional[int] = None
+    last_difficulty_mix: Optional[dict[str, int]] = None
+
+
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     session_id: Optional[str] = None
@@ -92,6 +109,7 @@ class ChatRequest(BaseModel):
     strict_grounding: bool = False
     # Últimas N mensagens do histórico (frontend envia para dar contexto ao backend)
     history: List[ChatMessage] = Field(default_factory=list)
+    active_context: Optional[ActiveChatContext] = None
 
 
 class ChatResponse(BaseModel):
@@ -105,6 +123,7 @@ class ChatResponse(BaseModel):
     needs_confirmation: bool = False
     confirmation_text: Optional[str] = None
     suggested_reply: Optional[str] = None
+    active_context: Optional[ActiveChatContext] = None
 
 
 # ── /api/summarize ────────────────────────────────────────────────────────────

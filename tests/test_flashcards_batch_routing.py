@@ -131,6 +131,48 @@ def test_flashcard_command_does_not_create_task(monkeypatch):
     assert not task_calls
 
 
+def test_flashcard_command_uses_active_context_document(monkeypatch):
+    docs = [_make_doc("Regressao_Linear.pdf", "doc-rl")]
+    created = []
+
+    monkeypatch.setattr(
+        orchestrator,
+        "_llm_parse",
+        lambda msg, history=None, active_context=None: {
+            "intent": "create_flashcards_batch",
+            "entities": {"num_cards": 8},
+        },
+    )
+    monkeypatch.setattr(crud, "list_documents_for_user", lambda db, user_id: docs)
+    monkeypatch.setattr(
+        "docops.api.routes.flashcards._generate_cards",
+        lambda **kwargs: [{"front": f"{kwargs['doc_name']} Q{i}", "back": "A", "difficulty": "facil"} for i in range(kwargs["num_cards"])],
+    )
+
+    def _create_deck(db, *, user_id, title, source_doc, cards):
+        created.append((title, source_doc, len(cards)))
+        return SimpleNamespace(id=91, title=title, source_doc=source_doc, cards=cards)
+
+    monkeypatch.setattr(crud, "create_flashcard_deck", _create_deck)
+
+    result = orchestrator.maybe_orchestrate(
+        "gera 8 flashcards para isso",
+        user_id=7,
+        db=MagicMock(),
+        history=[],
+        active_context={
+            "active_doc_ids": ["doc-rl"],
+            "active_doc_names": ["Regressao_Linear.pdf"],
+        },
+    )
+
+    assert result is not None
+    assert result["intent"] == "create_flashcards_batch"
+    assert len(created) == 1
+    assert created[0][1] == "Regressao_Linear.pdf"
+    assert result["active_context"]["active_doc_names"] == ["Regressao_Linear.pdf"]
+
+
 def test_action_router_leaves_flashcard_commands_for_orchestrator():
     result = action_router.maybe_answer_action_query(
         "quero que faça 10 flashcards sendo 5 fáceis, 3 médias e 2 difíceis para cada documento",

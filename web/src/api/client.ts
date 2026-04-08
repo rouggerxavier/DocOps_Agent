@@ -38,6 +38,7 @@ export interface ChatResponse {
   needs_confirmation?: boolean
   confirmation_text?: string | null
   suggested_reply?: string | null
+  active_context?: Record<string, any> | null
 }
 
 export interface JobCreateResponse {
@@ -319,9 +320,10 @@ export const apiClient = {
     top_k?: number,
     doc_names?: string[],
     strict_grounding?: boolean,
-    history?: Array<{ role: 'user' | 'assistant'; content: string }>
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>,
+    active_context?: Record<string, any> | null
   ): Promise<ChatResponse> =>
-    api.post('/api/chat', { message, session_id, top_k, doc_names, strict_grounding, history }, { timeout: 180000 }).then(r => r.data),
+    api.post('/api/chat', { message, session_id, top_k, doc_names, strict_grounding, history, active_context }, { timeout: 180000 }).then(r => r.data),
 
   ingestPath: (path: string, chunk_size = 0, chunk_overlap = 0): Promise<IngestResponse> =>
     api.post('/api/ingest', { path, chunk_size, chunk_overlap }, { timeout: INGEST_TIMEOUT_MS }).then(r => r.data),

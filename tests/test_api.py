@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -274,6 +275,31 @@ def test_chat_forwards_doc_filters(monkeypatch):
     )
     assert resp.status_code == 200
     assert captured["doc_names"] == ["a.pdf", "b.pdf"]
+    _clear_auth_override()
+
+
+def test_chat_returns_active_context_from_selected_docs(monkeypatch):
+    auth_client, _ = _make_auth_client()
+
+    monkeypatch.setattr(
+        "docops.db.crud.list_documents_for_user",
+        lambda db, user_id: [SimpleNamespace(doc_id="doc-1", file_name="manual.pdf")],
+    )
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None: {"answer": "ok", "intent": "qa", "retrieved_chunks": []},
+    )
+
+    resp = auth_client.post(
+        "/api/chat",
+        json={"message": "hello", "session_id": "ctx-1", "doc_names": ["doc-1"]},
+    )
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["active_context"]["active_doc_ids"] == ["doc-1"]
+    assert data["active_context"]["active_doc_names"] == ["manual.pdf"]
+    assert data["active_context"]["last_action"] == "rag_answer"
     _clear_auth_override()
 
 

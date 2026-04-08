@@ -29,10 +29,27 @@ interface Message {
   streaming?: boolean
 }
 
+interface ChatActiveContext {
+  active_doc_ids: string[]
+  active_doc_names: string[]
+  active_deck_id?: number | null
+  active_deck_title?: string | null
+  active_task_id?: number | null
+  active_task_title?: string | null
+  active_note_id?: number | null
+  active_note_title?: string | null
+  active_intent?: string | null
+  last_action?: string | null
+  last_user_command?: string | null
+  last_card_count?: number | null
+  last_difficulty_mix?: FlashcardDifficultyMix | null
+}
+
 interface ChatSession {
   id: string
   title: string
   messages: Message[]
+  activeContext: ChatActiveContext
   createdAt: Date
 }
 
@@ -117,12 +134,84 @@ function ensureWelcome(session: ChatSession): ChatSession {
   return session
 }
 
+function emptyActiveContext(): ChatActiveContext {
+  return {
+    active_doc_ids: [],
+    active_doc_names: [],
+    active_deck_id: null,
+    active_deck_title: null,
+    active_task_id: null,
+    active_task_title: null,
+    active_note_id: null,
+    active_note_title: null,
+    active_intent: null,
+    last_action: null,
+    last_user_command: null,
+    last_card_count: null,
+    last_difficulty_mix: null,
+  }
+}
+
+function normalizeActiveContext(value: unknown): ChatActiveContext {
+  const raw = (value && typeof value === 'object') ? (value as Record<string, unknown>) : {}
+  const normalizeList = (key: string) => {
+    const items = raw[key]
+    if (!Array.isArray(items)) return []
+    return Array.from(new Set(items.map(item => String(item ?? '').trim()).filter(Boolean))).slice(0, 10)
+  }
+  const normalizeNullableText = (key: string) => {
+    const item = raw[key]
+    const text = typeof item === 'string' ? item.trim() : ''
+    return text || null
+  }
+  const normalizeNullableNumber = (key: string) => {
+    const item = raw[key]
+    if (typeof item === 'number' && Number.isFinite(item)) return item
+    if (typeof item === 'string' && item.trim()) {
+      const parsed = Number(item)
+      return Number.isFinite(parsed) ? parsed : null
+    }
+    return null
+  }
+
+  const mix = raw.last_difficulty_mix
+  let normalizedMix: FlashcardDifficultyMix | null = null
+  if (mix && typeof mix === 'object') {
+    const safeMix = mix as Record<string, unknown>
+    normalizedMix = {
+      facil: Number(safeMix.facil ?? 0) || 0,
+      media: Number(safeMix.media ?? 0) || 0,
+      dificil: Number(safeMix.dificil ?? 0) || 0,
+    }
+  }
+
+  return {
+    active_doc_ids: normalizeList('active_doc_ids'),
+    active_doc_names: normalizeList('active_doc_names'),
+    active_deck_id: normalizeNullableNumber('active_deck_id'),
+    active_deck_title: normalizeNullableText('active_deck_title'),
+    active_task_id: normalizeNullableNumber('active_task_id'),
+    active_task_title: normalizeNullableText('active_task_title'),
+    active_note_id: normalizeNullableNumber('active_note_id'),
+    active_note_title: normalizeNullableText('active_note_title'),
+    active_intent: normalizeNullableText('active_intent'),
+    last_action: normalizeNullableText('last_action'),
+    last_user_command: normalizeNullableText('last_user_command'),
+    last_card_count: normalizeNullableNumber('last_card_count'),
+    last_difficulty_mix: normalizedMix,
+  }
+}
+
 function loadSessions(): ChatSession[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw) as ChatSession[]
-    return parsed.map(s => ensureWelcome({ ...s, createdAt: new Date(s.createdAt) }))
+    return parsed.map(s => ensureWelcome({
+      ...s,
+      createdAt: new Date(s.createdAt),
+      activeContext: normalizeActiveContext((s as ChatSession).activeContext),
+    }))
   } catch {
     return []
   }
@@ -141,6 +230,7 @@ function newSession(): ChatSession {
     id: `session_${Date.now()}`,
     title: 'Nova conversa',
     messages: [WELCOME_MESSAGE],
+    activeContext: emptyActiveContext(),
     createdAt: new Date(),
   }
 }
@@ -629,6 +719,7 @@ export function Chat() {
 
   const activeSession = sessions.find(s => s.id === activeSessionId) ?? sessions[0]
   const messages = activeSession?.messages ?? EMPTY_MESSAGES
+  const activeContext = activeSession?.activeContext ?? emptyActiveContext()
 
   useEffect(() => {
     saveSessions(sessions)
@@ -644,11 +735,37 @@ export function Chat() {
     retry: 1,
   })
 
+  useEffect(() => {
+    if (!docs) return
+
+    const contextDocIds = new Set(activeContext.active_doc_ids)
+    const contextDocNames = new Set(activeContext.active_doc_names)
+    const hydrated = docs.filter(doc =>
+      contextDocIds.has(doc.doc_id) || contextDocNames.has(doc.file_name)
+    )
+
+    setSelectedDocs(prev => {
+      const prevIds = prev.map(doc => doc.doc_id).join('|')
+      const nextIds = hydrated.map(doc => doc.doc_id).join('|')
+      return prevIds === nextIds ? prev : hydrated
+    })
+  }, [activeContext.active_doc_ids, activeContext.active_doc_names, docs])
+
   function appendAssistantMessage(message: Message) {
     setSessions(prev =>
       prev.map(s =>
         s.id === activeSessionId
           ? { ...s, messages: [...s.messages, message] }
+          : s
+      )
+    )
+  }
+
+  function updateActiveContext(nextContext: ChatActiveContext) {
+    setSessions(prev =>
+      prev.map(s =>
+        s.id === activeSessionId
+          ? { ...s, activeContext: normalizeActiveContext(nextContext) }
           : s
       )
     )
@@ -686,6 +803,17 @@ export function Chat() {
     },
     onSuccess: (results, plan) => {
       qc.invalidateQueries({ queryKey: ['flashcard-decks'] })
+      updateActiveContext(normalizeActiveContext({
+        ...activeContext,
+        active_doc_ids: plan.docs.map(doc => doc.doc_id),
+        active_doc_names: plan.docs.map(doc => doc.file_name),
+        active_deck_id: results.length === 1 ? results[0].deck?.id ?? null : null,
+        active_deck_title: results.length === 1 ? results[0].deck?.title ?? null : null,
+        active_intent: 'flashcards_batch',
+        last_action: 'flashcards_batch',
+        last_card_count: plan.numCards,
+        last_difficulty_mix: plan.difficultyCustom,
+      }))
 
       const successCount = results.filter(item => item.success).length
       const failureCount = results.length - successCount
@@ -836,11 +964,13 @@ export function Chat() {
         undefined,
         selectedDocs.map(doc => doc.doc_id),
         strictGrounding,
-        recentHistory
+        recentHistory,
+        activeSession?.activeContext ?? emptyActiveContext()
       )
     },
     onSuccess: (data: ChatResponse) => {
       if (streamTimerRef.current) clearTimeout(streamTimerRef.current)
+      updateActiveContext(normalizeActiveContext(data.active_context))
       streamMessage(
         data.answer,
         data.sources,
@@ -989,6 +1119,13 @@ export function Chat() {
   const hasSources = activeSources.length > 0
   const isStreaming = messages.some(m => m.streaming)
   const isPending = mutation.isPending || flashcardBatchMut.isPending
+  const contextLabels = [
+    ...activeContext.active_doc_names.slice(0, 2).map(name => ({ key: `doc-${name}`, label: name, tone: 'doc' as const })),
+    activeContext.active_deck_title ? { key: `deck-${activeContext.active_deck_title}`, label: `Deck: ${activeContext.active_deck_title}`, tone: 'deck' as const } : null,
+    activeContext.active_task_title ? { key: `task-${activeContext.active_task_title}`, label: `Tarefa: ${activeContext.active_task_title}`, tone: 'task' as const } : null,
+    activeContext.active_note_title ? { key: `note-${activeContext.active_note_title}`, label: `Nota: ${activeContext.active_note_title}`, tone: 'note' as const } : null,
+  ].filter(Boolean) as Array<{ key: string; label: string; tone: 'doc' | 'deck' | 'task' | 'note' }>
+  const hasActiveContext = contextLabels.length > 0 || !!activeContext.last_action
 
   return (
     <div className="flex h-[calc(100vh-4rem)] gap-0 overflow-hidden rounded-2xl border app-divider bg-[color:var(--ui-bg-alt)] shadow-[0_16px_36px_rgba(2,4,8,0.3)]">
@@ -1064,6 +1201,43 @@ export function Chat() {
             </Badge>
           )}
         </div>
+
+        {hasActiveContext && (
+          <div className="flex flex-wrap items-center gap-2 border-b app-divider bg-[color:var(--ui-bg)] px-4 py-2">
+            <span className="text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-500">
+              Contexto ativo
+            </span>
+            {contextLabels.map(item => (
+              <span
+                key={item.key}
+                className={cn(
+                  'inline-flex items-center rounded-full border px-2.5 py-1 text-[11px]',
+                  item.tone === 'doc' && 'border-blue-900 bg-blue-950/50 text-blue-200',
+                  item.tone === 'deck' && 'border-amber-900 bg-amber-950/50 text-amber-200',
+                  item.tone === 'task' && 'border-emerald-900 bg-emerald-950/50 text-emerald-200',
+                  item.tone === 'note' && 'border-fuchsia-900 bg-fuchsia-950/50 text-fuchsia-200',
+                )}
+              >
+                {item.label}
+              </span>
+            ))}
+            {activeContext.last_action && (
+              <span className="text-xs text-zinc-500">
+                ultima acao: {activeContext.last_action}
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                updateActiveContext(emptyActiveContext())
+                setSelectedDocs([])
+              }}
+              className="ml-auto text-xs text-zinc-500 transition-colors hover:text-zinc-200"
+            >
+              Limpar contexto
+            </button>
+          </div>
+        )}
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto bg-[color:var(--ui-bg-alt)] px-4 py-4 space-y-4">
@@ -1194,8 +1368,13 @@ export function Chat() {
                   onClick={() => {
                     const docToAdd = (docs ?? []).find(doc => doc.doc_id === selectedDoc)
                     if (!docToAdd || selectedDocs.some(item => item.doc_id === docToAdd.doc_id)) return
-                    const nextSelectedDocs = [...selectedDocs, docToAdd]
-                    setSelectedDocs(nextSelectedDocs)
+                    const nextDocs = [...selectedDocs, docToAdd]
+                    setSelectedDocs(nextDocs)
+                    updateActiveContext(normalizeActiveContext({
+                      ...activeContext,
+                      active_doc_ids: nextDocs.map(doc => doc.doc_id),
+                      active_doc_names: nextDocs.map(doc => doc.file_name),
+                    }))
                     setSelectedDoc('')
                     // If there's a pending flashcard command with no docs, resolve it with the newly selected doc
                     if (pendingFlashcardCommand && pendingFlashcardCommand.docs.length === 0) {
@@ -1223,7 +1402,15 @@ export function Chat() {
                       {doc.file_name}
                       <button
                         type="button"
-                        onClick={() => setSelectedDocs(prev => prev.filter(item => item.doc_id !== doc.doc_id))}
+                        onClick={() => {
+                          const nextDocs = selectedDocs.filter(item => item.doc_id !== doc.doc_id)
+                          setSelectedDocs(nextDocs)
+                          updateActiveContext(normalizeActiveContext({
+                            ...activeContext,
+                            active_doc_ids: nextDocs.map(item => item.doc_id),
+                            active_doc_names: nextDocs.map(item => item.file_name),
+                          }))
+                        }}
                         className="text-zinc-400 hover:text-red-400"
                       >
                         <X className="h-3 w-3" />

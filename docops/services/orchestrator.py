@@ -188,7 +188,7 @@ Formato de resposta:
   }}
 }}
 
-{{HISTORY_BLOCK}}Mensagem do usuário: {{MESSAGE}}
+{{HISTORY_BLOCK}}{{ACTIVE_CONTEXT_BLOCK}}Mensagem do usuário: {{MESSAGE}}
 """
 
 
@@ -385,6 +385,94 @@ def _extract_explicit_doc_names(message: str, docs: list) -> list[str]:
     return matched
 
 
+def _active_doc_names(active_context: dict | None) -> list[str]:
+    if not active_context:
+        return []
+    return [str(value).strip() for value in (active_context.get("active_doc_names") or []) if str(value).strip()]
+
+
+def _active_doc_ids(active_context: dict | None) -> list[str]:
+    if not active_context:
+        return []
+    return [str(value).strip() for value in (active_context.get("active_doc_ids") or []) if str(value).strip()]
+
+
+def _build_active_context_block(active_context: dict | None) -> str:
+    if not active_context:
+        return ""
+
+    lines: list[str] = []
+    doc_names = _active_doc_names(active_context)
+    if doc_names:
+        lines.append("Contexto ativo da conversa:")
+        lines.append(f"- Documentos ativos: {', '.join(doc_names[:5])}")
+
+    if active_context.get("active_deck_title"):
+        lines.append(f"- Deck ativo: {active_context['active_deck_title']}")
+    if active_context.get("active_task_title"):
+        lines.append(f"- Tarefa ativa: {active_context['active_task_title']}")
+    if active_context.get("active_note_title"):
+        lines.append(f"- Nota ativa: {active_context['active_note_title']}")
+    if active_context.get("last_action"):
+        lines.append(f"- Última ação: {active_context['last_action']}")
+    if active_context.get("last_card_count"):
+        lines.append(f"- Última quantidade de cards: {active_context['last_card_count']}")
+
+    mix = active_context.get("last_difficulty_mix") or {}
+    if isinstance(mix, dict) and any(mix.get(key) for key in ("facil", "media", "dificil")):
+        lines.append(
+            "- Última distribuição de dificuldade: "
+            f"{int(mix.get('facil', 0))} fáceis, "
+            f"{int(mix.get('media', 0))} médias, "
+            f"{int(mix.get('dificil', 0))} difíceis"
+        )
+
+    return ("\n".join(lines) + "\n\n") if lines else ""
+
+
+def _apply_active_context_to_entities(intent: str, entities: dict, active_context: dict | None, message: str) -> dict:
+    merged = dict(entities or {})
+    doc_names = _active_doc_names(active_context)
+    doc_ids = _active_doc_ids(active_context)
+
+    if intent in {
+        "create_flashcards_batch",
+        "flashcard_hint",
+        "cascade_doc_review",
+        "cascade_study_plan",
+        "cascade_create_summary",
+    }:
+        if not merged.get("doc_names") and doc_names:
+            merged["doc_names"] = list(doc_names)
+        if not merged.get("doc_hint") and not merged.get("deck_hint") and len(doc_names) == 1:
+            merged["doc_hint"] = doc_names[0]
+            merged["deck_hint"] = doc_names[0]
+
+        normalized = _normalize_text(message)
+        if (
+            _looks_like_flashcard_command(message)
+            and re.search(r"\b(mais|outros|outras|novos)\b", normalized)
+            and not merged.get("num_cards")
+            and active_context
+            and active_context.get("last_card_count")
+        ):
+            merged["num_cards"] = active_context.get("last_card_count")
+
+        if (
+            _looks_like_flashcard_command(message)
+            and not merged.get("difficulty_custom")
+            and active_context
+            and active_context.get("last_difficulty_mix")
+        ):
+            merged["difficulty_custom"] = active_context.get("last_difficulty_mix")
+            merged["difficulty_mode"] = "custom"
+
+    if not merged.get("doc_ids") and doc_ids:
+        merged["doc_ids"] = list(doc_ids)
+
+    return merged
+
+
 def _build_flashcard_confirmation_answer(entities: dict, docs: list) -> dict:
     doc_hint = entities.get("doc_hint") or entities.get("deck_hint") or ""
     if docs:
@@ -444,7 +532,11 @@ def _queue_flashcard_batch_confirmation(user_id: int, message: str, entities: di
 # Parser LLM
 # ---------------------------------------------------------------------------
 
-def _llm_parse(message: str, history: list[dict] | None = None) -> dict[str, Any] | None:
+def _llm_parse(
+    message: str,
+    history: list[dict] | None = None,
+    active_context: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Chama o LLM barato para parsear a intenção. Retorna dict ou None se erro."""
     try:
         from docops.config import config
@@ -462,7 +554,13 @@ def _llm_parse(message: str, history: list[dict] | None = None) -> dict[str, Any
                 lines.append(f"{role_label}: {content}")
             history_block = "\n".join(lines) + "\n\n"
 
-        prompt = _PARSER_PROMPT.replace("{MESSAGE}", message).replace("{HISTORY_BLOCK}", history_block)
+        active_context_block = _build_active_context_block(active_context)
+        prompt = (
+            _PARSER_PROMPT
+            .replace("{MESSAGE}", message)
+            .replace("{HISTORY_BLOCK}", history_block)
+            .replace("{ACTIVE_CONTEXT_BLOCK}", active_context_block)
+        )
         logger.info("Orchestrator: chamando LLM parser (model=%s)", model)
         response = client.models.generate_content(model=model, contents=prompt)
         raw = response.text.strip()
@@ -482,15 +580,22 @@ def _llm_parse(message: str, history: list[dict] | None = None) -> dict[str, Any
         return None
 
 
-def _invoke_llm_parse(message: str, history: list[dict] | None = None) -> dict[str, Any] | None:
+def _invoke_llm_parse(
+    message: str,
+    history: list[dict] | None = None,
+    active_context: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     """Call _llm_parse with compatibility for legacy monkeypatch signatures."""
     try:
-        return _llm_parse(message, history=history)
+        return _llm_parse(message, history=history, active_context=active_context)
     except TypeError:
         try:
-            return _llm_parse(message)
+            return _llm_parse(message, history=history)
         except TypeError:
-            return None
+            try:
+                return _llm_parse(message)
+            except TypeError:
+                return None
 
 
 # ---------------------------------------------------------------------------
@@ -557,7 +662,16 @@ def _exec_cascade_study_event(entities: dict, user_id: int, db: Session) -> dict
 
     answer_parts.append("\nVeja seus [Lembretes →](/schedule) e [Tarefas →](/tasks)")
 
-    return {"answer": "\n".join(answer_parts), "intent": "cascade_study_event"}
+    return {
+        "answer": "\n".join(answer_parts),
+        "intent": "cascade_study_event",
+        "active_context": {
+            "active_task_id": getattr(locals().get("task", None), "id", None),
+            "active_task_title": task_title,
+            "active_intent": "cascade_study_event",
+            "last_action": "cascade_study_event",
+        },
+    }
 
 
 def _exec_cascade_doc_review(entities: dict, user_id: int, db: Session) -> dict:
@@ -642,7 +756,19 @@ def _exec_cascade_doc_review(entities: dict, user_id: int, db: Session) -> dict:
 
     answer_parts.append(f"\n[Estudar os flashcards →](/flashcards)")
 
-    return {"answer": "\n".join(answer_parts), "intent": "cascade_doc_review"}
+    return {
+        "answer": "\n".join(answer_parts),
+        "intent": "cascade_doc_review",
+        "active_context": {
+            "active_doc_ids": [str(getattr(matched_doc, "doc_id", "") or "")] if str(getattr(matched_doc, "doc_id", "") or "").strip() else [],
+            "active_doc_names": [matched_doc.file_name],
+            "active_deck_id": deck_id,
+            "active_deck_title": f"Flashcards — {matched_doc.file_name}" if deck_id else None,
+            "active_intent": "cascade_doc_review",
+            "last_action": "cascade_doc_review",
+            "last_card_count": 10 if deck_id else None,
+        },
+    }
 
 
 def _exec_cascade_task_deadline(entities: dict, user_id: int, db: Session) -> dict:
@@ -699,7 +825,16 @@ def _exec_cascade_task_deadline(entities: dict, user_id: int, db: Session) -> di
         answer_parts.append(reminder_line)
     answer_parts.append("\n[Ver Tarefas →](/tasks) · [Calendário →](/schedule)")
 
-    return {"answer": "\n".join(answer_parts), "intent": "cascade_task_deadline"}
+    return {
+        "answer": "\n".join(answer_parts),
+        "intent": "cascade_task_deadline",
+        "active_context": {
+            "active_task_id": getattr(locals().get("task", None), "id", None),
+            "active_task_title": task_title,
+            "active_intent": "cascade_task_deadline",
+            "last_action": "cascade_task_deadline",
+        },
+    }
 
 
 def _exec_schedule_fc_reviews(entities: dict, user_id: int, db: Session) -> dict:
@@ -748,10 +883,25 @@ def _exec_schedule_fc_reviews(entities: dict, user_id: int, db: Session) -> dict
         + "\n".join(reminder_lines)
         + "\n\n[Ver Calendário →](/schedule)"
     )
-    return {"answer": answer, "intent": "schedule_fc_reviews"}
+    return {
+        "answer": answer,
+        "intent": "schedule_fc_reviews",
+        "active_context": {
+            "active_deck_id": getattr(matched, "id", None),
+            "active_deck_title": matched.title,
+            "active_doc_names": [matched.source_doc] if getattr(matched, "source_doc", None) else [],
+            "active_intent": "schedule_fc_reviews",
+            "last_action": "schedule_fc_reviews",
+        },
+    }
 
 
-def _resolve_flashcard_batch_docs(entities: dict, message: str, docs: list) -> tuple[list, bool]:
+def _resolve_flashcard_batch_docs(
+    entities: dict,
+    message: str,
+    docs: list,
+    active_context: dict | None = None,
+) -> tuple[list, bool]:
     all_docs = bool(entities.get("all_docs")) or _looks_like_flashcard_batch_request(message)
     doc_names = entities.get("doc_names") or []
     doc_hint = entities.get("doc_hint") or entities.get("deck_hint") or ""
@@ -782,6 +932,31 @@ def _resolve_flashcard_batch_docs(entities: dict, message: str, docs: list) -> t
         ]
         return matched, False
 
+    context_doc_ids = set(_active_doc_ids(active_context))
+    if context_doc_ids:
+        matched = [
+            doc
+            for doc in docs
+            if str(getattr(doc, "doc_id", "") or "").strip() in context_doc_ids
+        ]
+        if matched:
+            return matched, False
+
+    context_doc_names = _active_doc_names(active_context)
+    if context_doc_names:
+        normalized = {_normalize_text(name) for name in context_doc_names}
+        matched = [
+            doc
+            for doc in docs
+            if _normalize_text(getattr(doc, "file_name", "")) in normalized
+            or any(
+                hint in _normalize_text(getattr(doc, "file_name", ""))
+                for hint in normalized
+            )
+        ]
+        if matched:
+            return matched, False
+
     if doc_hint:
         hint_lower = _normalize_text(str(doc_hint))
         matched = [
@@ -795,7 +970,13 @@ def _resolve_flashcard_batch_docs(entities: dict, message: str, docs: list) -> t
     return [], False
 
 
-def _exec_create_flashcards_batch(entities: dict, user_id: int, db: Session, message: str) -> dict:
+def _exec_create_flashcards_batch(
+    entities: dict,
+    user_id: int,
+    db: Session,
+    message: str,
+    active_context: dict | None = None,
+) -> dict:
     from docops.db import crud
     from docops.api.routes.flashcards import _generate_cards
 
@@ -803,7 +984,7 @@ def _exec_create_flashcards_batch(entities: dict, user_id: int, db: Session, mes
     if not docs:
         return _build_flashcard_confirmation_answer(entities, docs)
 
-    target_docs, is_all_docs = _resolve_flashcard_batch_docs(entities, message, docs)
+    target_docs, is_all_docs = _resolve_flashcard_batch_docs(entities, message, docs, active_context=active_context)
     if not target_docs:
         _pending_flashcard_batches[user_id] = {"entities": entities, "message": message}
         return _build_flashcard_confirmation_answer(entities, docs)
@@ -873,10 +1054,23 @@ def _exec_create_flashcards_batch(entities: dict, user_id: int, db: Session, mes
             "all_docs": is_all_docs,
             "num_cards": num_cards,
         },
+        "active_context": {
+            "active_doc_ids": [str(getattr(doc, "doc_id", "") or "") for doc in target_docs if str(getattr(doc, "doc_id", "") or "").strip()],
+            "active_doc_names": [doc.file_name for doc in target_docs],
+            "active_intent": "create_flashcards_batch",
+            "last_action": "create_flashcards_batch",
+            "last_card_count": num_cards,
+            "last_difficulty_mix": difficulty_custom if isinstance(difficulty_custom, dict) else None,
+        },
     }
 
 
-def _handle_pending_flashcard_batch(message: str, user_id: int, db: Session) -> dict | None:
+def _handle_pending_flashcard_batch(
+    message: str,
+    user_id: int,
+    db: Session,
+    active_context: dict | None = None,
+) -> dict | None:
     pending = _pending_flashcard_batches.get(user_id)
     if not pending:
         return None
@@ -901,12 +1095,24 @@ def _handle_pending_flashcard_batch(message: str, user_id: int, db: Session) -> 
         entities = dict(pending.get("entities") or {})
         entities["doc_names"] = explicit_names
         entities["all_docs"] = False
-        return _exec_create_flashcards_batch(entities, user_id, db, pending.get("message", message))
+        return _exec_create_flashcards_batch(
+            entities,
+            user_id,
+            db,
+            pending.get("message", message),
+            active_context=active_context,
+        )
 
     if _looks_like_flashcard_batch_request(message):
         entities = dict(pending.get("entities") or {})
         entities["all_docs"] = True
-        return _exec_create_flashcards_batch(entities, user_id, db, pending.get("message", message))
+        return _exec_create_flashcards_batch(
+            entities,
+            user_id,
+            db,
+            pending.get("message", message),
+            active_context=active_context,
+        )
 
     if _looks_like_flashcard_confirmation(normalized):
         return _build_flashcard_confirmation_answer(pending.get("entities") or {}, docs or [])
@@ -981,6 +1187,11 @@ def _exec_cascade_study_plan(entities: dict, user_id: int, db: Session) -> dict:
                 f"{questions}?"
             ),
             "intent": "cascade_study_plan_ask",
+            "active_context": {
+                "active_doc_names": [doc_hint] if doc_hint else [],
+                "active_intent": "cascade_study_plan_ask",
+                "last_action": "cascade_study_plan_ask",
+            },
         }
 
     # Temos tudo — localiza documento
@@ -1091,7 +1302,18 @@ def _exec_cascade_study_plan(entities: dict, user_id: int, db: Session) -> dict:
         answer += f"\n\n⚠️ **{len(conflicts)} conflito(s) de horário detectado(s):**\n{conflict_items}"
         answer += "\nVerifique seu [Calendário →](/schedule) para ajustar se necessário."
 
-    return {"answer": answer, "intent": "cascade_study_plan"}
+    return {
+        "answer": answer,
+        "intent": "cascade_study_plan",
+        "active_context": {
+            "active_doc_ids": [str(getattr(matched_doc, "doc_id", "") or "")] if str(getattr(matched_doc, "doc_id", "") or "").strip() else [],
+            "active_doc_names": [matched_doc.file_name],
+            "active_deck_id": result.get("deck_id"),
+            "active_intent": "cascade_study_plan",
+            "last_action": "cascade_study_plan",
+            "last_card_count": 12 if result.get("deck_id") else None,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1123,6 +1345,12 @@ def _exec_cascade_create_note(entities: dict, user_id: int, db: Session, origina
                 f"[Ver Notas →](/notes)"
             ),
             "intent": "cascade_create_note",
+            "active_context": {
+                "active_note_id": getattr(note, "id", None),
+                "active_note_title": note.title,
+                "active_intent": "cascade_create_note",
+                "last_action": "cascade_create_note",
+            },
         }
     except Exception as exc:
         logger.error("Falha ao criar nota: %s", exc)
@@ -1146,6 +1374,11 @@ def _exec_cascade_create_summary(entities: dict, user_id: int, db: Session) -> d
                 f"O resumo será salvo automaticamente em seus artefatos."
             ),
             "intent": "cascade_create_summary",
+            "active_context": {
+                "active_doc_names": [doc_hint],
+                "active_intent": "cascade_create_summary",
+                "last_action": "cascade_create_summary",
+            },
         }
     return {
         "answer": (
@@ -1154,6 +1387,10 @@ def _exec_cascade_create_summary(entities: dict, user_id: int, db: Session) -> d
             "Você pode escolher entre Resumo Breve e Resumo Aprofundado."
         ),
         "intent": "cascade_create_summary",
+        "active_context": {
+            "active_intent": "cascade_create_summary",
+            "last_action": "cascade_create_summary",
+        },
     }
 
 
@@ -1167,7 +1404,14 @@ _SIMPLE_INTENTS = {"create_task", "list_tasks", "flashcard_hint"}
 _PASSTHROUGH_INTENTS = {"rag", "calendar"}
 
 
-def maybe_orchestrate(message: str, user_id: int, db: Session, history: list[dict] | None = None) -> dict | None:  # noqa: C901
+def maybe_orchestrate(
+    message: str,
+    user_id: int,
+    db: Session,
+    history: list[dict] | None = None,
+    session_id: str | None = None,
+    active_context: dict | None = None,
+) -> dict | None:  # noqa: C901
     """Tenta orquestrar a mensagem com parser LLM + cascades.
 
     Returns:
@@ -1199,7 +1443,7 @@ def maybe_orchestrate(message: str, user_id: int, db: Session, history: list[dic
         logger.info("Orchestrator: mensagem de calendário/lembrete → pass-through imediato")
         return None  # Deixa o calendar_assistant processar
 
-    pending_flashcards = _handle_pending_flashcard_batch(message, user_id, db)
+    pending_flashcards = _handle_pending_flashcard_batch(message, user_id, db, active_context=active_context)
     if pending_flashcards:
         return pending_flashcards
 
@@ -1209,7 +1453,7 @@ def maybe_orchestrate(message: str, user_id: int, db: Session, history: list[dic
         followup = _extract_followup_info(message)
         if not followup:
             # Tenta extrair via LLM com contexto do pending (ex: "até dia 08" sem horas)
-            llm_result = _invoke_llm_parse(message, history=history)
+            llm_result = _invoke_llm_parse(message, history=history, active_context=active_context)
             if llm_result and llm_result.get("intent") in ("cascade_study_plan", "rag", "create_task", "cascade_task_deadline"):
                 ents = llm_result.get("entities", {})
                 if ents.get("deadline_iso"):
@@ -1225,13 +1469,18 @@ def maybe_orchestrate(message: str, user_id: int, db: Session, history: list[dic
         # Resposta verdadeiramente não parseável — cancela o pending e trata normalmente
         _pending_study_plans.pop(user_id, None)
 
-    parsed = _invoke_llm_parse(message, history=history)
+    parsed = _invoke_llm_parse(message, history=history, active_context=active_context)
     if not parsed:
         logger.debug("Parser LLM não retornou JSON válido.")
         return None
 
     intent = parsed.get("intent", "rag")
-    entities = parsed.get("entities", {})
+    entities = _apply_active_context_to_entities(
+        intent,
+        parsed.get("entities", {}),
+        active_context,
+        message,
+    )
 
     docs_for_user: list = []
     try:
@@ -1266,6 +1515,7 @@ def maybe_orchestrate(message: str, user_id: int, db: Session, history: list[dic
             "intent": "clarification_needed",
         }
 
+    entities = _apply_active_context_to_entities(intent, entities, active_context, message)
     logger.info("Orchestrator: intent=%s entities=%s", intent, entities)
 
     # Cascades multi-step
@@ -1291,32 +1541,55 @@ def maybe_orchestrate(message: str, user_id: int, db: Session, history: list[dic
         return _exec_cascade_create_summary(entities, user_id, db)
 
     if intent == "create_flashcards_batch":
-        return _exec_create_flashcards_batch(entities, user_id, db, message)
+        return _exec_create_flashcards_batch(entities, user_id, db, message, active_context=active_context)
 
     # Ações simples — delega pro action_router que já funciona bem com regex
     if intent in _SIMPLE_INTENTS:
         from docops.services.action_router import maybe_answer_action_query
         result = maybe_answer_action_query(message, user_id, db)
         if result:
+            if result.get("intent") == "create_task":
+                result["active_context"] = {
+                    "active_task_title": entities.get("task_title") or message.strip(),
+                    "active_intent": "create_task",
+                    "last_action": "create_task",
+                }
+            elif result.get("intent") == "list_tasks":
+                result["active_context"] = {
+                    "active_intent": "list_tasks",
+                    "last_action": "list_tasks",
+                }
             return result
         # Se regex não pegou, tenta executar baseado nas entidades do LLM
         if intent == "create_task":
             if _looks_like_flashcard_command(message):
                 if _looks_like_flashcard_batch_request(message) or entities.get("all_docs") or entities.get("doc_names") or entities.get("doc_hint") or entities.get("deck_hint"):
-                    return _exec_create_flashcards_batch(entities, user_id, db, message)
+                    return _exec_create_flashcards_batch(entities, user_id, db, message, active_context=active_context)
                 return _build_ambiguous_command_answer(message, entities, docs_for_user)
             title = entities.get("task_title") or message.strip()
             from docops.services.action_router import _handle_create_task
-            return _handle_create_task(title, user_id, db)
+            result = _handle_create_task(title, user_id, db)
+            result["active_context"] = {
+                "active_task_title": title,
+                "active_intent": "create_task",
+                "last_action": "create_task",
+            }
+            return result
         if intent == "list_tasks":
             from docops.services.action_router import _handle_list_tasks
             return _handle_list_tasks(user_id, db)
         if intent == "flashcard_hint":
             if _looks_like_flashcard_batch_request(message) or entities.get("all_docs") or entities.get("doc_names"):
-                return _exec_create_flashcards_batch(entities, user_id, db, message)
+                return _exec_create_flashcards_batch(entities, user_id, db, message, active_context=active_context)
             hint = entities.get("doc_hint") or entities.get("deck_hint") or ""
             from docops.services.action_router import _handle_flashcard_hint
-            return _handle_flashcard_hint(hint, user_id, db)
+            result = _handle_flashcard_hint(hint, user_id, db)
+            result["active_context"] = {
+                "active_doc_names": [hint] if hint else [],
+                "active_intent": "flashcard_hint",
+                "last_action": "flashcard_hint",
+            }
+            return result
 
     # intent == "rag" ou "calendar" → retorna None para cair no fluxo normal
     # "calendar" passa para o calendar_assistant (Stage 2) que tem a lógica correta
