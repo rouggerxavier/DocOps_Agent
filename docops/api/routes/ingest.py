@@ -217,14 +217,41 @@ def _is_youtube_url(url: str) -> bool:
     return "youtube.com/watch" in url or "youtu.be/" in url
 
 
+def _parse_timedtext_xml(raw: str) -> str:
+    """Extrai texto limpo de uma resposta XML do endpoint timedtext do YouTube."""
+    import re as _re
+    texts = _re.findall(r"<text[^>]*>(.*?)</text>", raw, _re.DOTALL)
+    return " ".join(
+        _re.sub(r"<[^>]+>", "", t).replace("&#39;", "'").replace("&amp;", "&").replace("&quot;", '"').strip()
+        for t in texts if t.strip()
+    )
+
+
+def _parse_vtt(raw: str) -> str:
+    """Extrai texto limpo de um arquivo VTT."""
+    import re as _re
+    lines = raw.splitlines()
+    result = []
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("WEBVTT") or "-->" in line or line.isdigit():
+            continue
+        line = _re.sub(r"<[^>]+>", "", line)
+        if line:
+            result.append(line)
+    return " ".join(result)
+
+
 def _get_youtube_transcript(url: str) -> str:
     """Extrai transcrição de um vídeo do YouTube.
 
-    Tenta primeiro o youtube-transcript-api (rápido). Se o IP estiver bloqueado
-    pelo YouTube (comum em servidores cloud), cai para yt-dlp que tem melhor
-    evasão de bloqueios.
+    Estratégia em camadas para contornar bloqueio de IP em servidores cloud:
+    1. youtube-transcript-api (direto, rápido)
+    2. YouTube timedtext CDN API (endpoint leve, diferente do principal)
+    3. Supadata API (serviço externo que faz o fetch por nós)
     """
     import re as _re
+    import httpx as _httpx
 
     match = _re.search(r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})", url)
     if not match:
@@ -248,100 +275,64 @@ def _get_youtube_transcript(url: str) -> str:
 
         text = " ".join(entry.text for entry in fetched)
         if text.strip():
+            logger.info("Transcrição via youtube-transcript-api (%d chars)", len(text))
             return text
-    except Exception as primary_err:
-        logger.warning("youtube-transcript-api falhou (%s), tentando yt-dlp…", primary_err)
+    except Exception as e1:
+        logger.warning("youtube-transcript-api falhou: %s", e1)
 
-    # ── Tentativa 2: yt-dlp via client Android (bypassa bloqueio de IP cloud) ─
-    # O client Android acessa um endpoint diferente do YouTube que não é bloqueado
-    # pela maioria dos provedores cloud. Extraímos as URLs das legendas dos
-    # metadados e baixamos via CDN (timedtext) — sem passar pelo endpoint bloqueado.
+    # ── Tentativa 2: YouTube timedtext CDN (endpoint separado, menos bloqueado) ─
     try:
-        import httpx as _httpx
-        import yt_dlp  # type: ignore
-
-        ydl_opts = {
-            "skip_download": True,
-            "quiet": True,
-            "no_warnings": True,
-            # Tenta múltiplos clients; android tem endpoint próprio menos bloqueado
-            "extractor_args": {
-                "youtube": {
-                    "player_client": ["android", "web", "mweb", "tv_embedded"],
-                }
-            },
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
         }
+        for lang in ["pt", "pt-BR", "en"]:
+            timedtext_url = (
+                f"https://www.youtube.com/api/timedtext"
+                f"?v={video_id}&lang={lang}&fmt=json3&xorb=2&xobt=3&xovt=3"
+            )
+            resp = _httpx.get(timedtext_url, headers=headers, timeout=15, follow_redirects=True)
+            if resp.status_code == 200 and resp.text.strip():
+                import json as _json
+                data = _json.loads(resp.text)
+                events = data.get("events", [])
+                words = []
+                for event in events:
+                    for seg in event.get("segs", []):
+                        w = seg.get("utf8", "").strip()
+                        if w and w != "\n":
+                            words.append(w)
+                text = " ".join(words)
+                if text.strip():
+                    logger.info("Transcrição via timedtext CDN lang=%s (%d chars)", lang, len(text))
+                    return text
+    except Exception as e2:
+        logger.warning("timedtext CDN falhou: %s", e2)
 
-        info: dict = {}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False) or {}
-
-        def _pick_subtitle_url(subs: dict) -> str | None:
-            """Retorna a primeira URL de legenda em formato srv1/vtt/json3."""
-            for lang in ["pt", "pt-BR", "pt-br", "en", "en-US", "en-us"]:
-                entries = subs.get(lang, [])
-                for entry in entries:
-                    if entry.get("ext") in ("srv1", "vtt", "json3", "ttml"):
-                        return entry.get("url")
-            # Aceita qualquer idioma
-            for entries in subs.values():
-                for entry in entries:
-                    if entry.get("url"):
-                        return entry.get("url")
-            return None
-
-        sub_url = (
-            _pick_subtitle_url(info.get("subtitles") or {})
-            or _pick_subtitle_url(info.get("automatic_captions") or {})
-        )
-
-        if sub_url:
-            # Busca a legenda via CDN — estas URLs não são bloqueadas
-            resp = _httpx.get(sub_url, timeout=20, follow_redirects=True)
-            resp.raise_for_status()
-            raw = resp.text
-
-            # Parseia XML (srv1/ttml) ou VTT removendo timestamps
-            import re as _re2
-            if raw.strip().startswith("<?xml") or "<text" in raw:
-                # formato srv1 / ttml: extrai conteúdo das tags <text>
-                texts = _re2.findall(r"<text[^>]*>(.*?)</text>", raw, _re2.DOTALL)
-                transcript = " ".join(
-                    _re2.sub(r"<[^>]+>", "", t).strip()
-                    for t in texts
-                    if t.strip()
-                )
+    # ── Tentativa 3: Supadata API (serviço externo — sem bloqueio de IP) ─────
+    try:
+        supadata_url = f"https://api.supadata.ai/v1/youtube/transcript?url={url}&text=true"
+        resp = _httpx.get(supadata_url, timeout=30, follow_redirects=True)
+        if resp.status_code == 200:
+            data = resp.json()
+            # Supadata retorna {"content": "...", "lang": "..."} ou lista de segmentos
+            if isinstance(data, dict):
+                text = data.get("content") or data.get("transcript") or ""
+            elif isinstance(data, list):
+                text = " ".join(item.get("text", "") for item in data if item.get("text"))
             else:
-                # formato VTT: remove cabeçalho, timestamps e tags
-                lines = raw.splitlines()
-                transcript_lines = []
-                for line in lines:
-                    line = line.strip()
-                    if not line or line.startswith("WEBVTT") or "-->" in line:
-                        continue
-                    line = _re2.sub(r"<[^>]+>", "", line)
-                    if line:
-                        transcript_lines.append(line)
-                transcript = " ".join(transcript_lines)
-
-            if transcript.strip():
-                logger.info("Transcrição extraída via yt-dlp CDN (%d chars)", len(transcript))
-                return transcript
-
-        # Sem legendas — usa título + descrição como conteúdo indexável
-        title = info.get("title", "")
-        description = info.get("description", "")
-        if title or description:
-            logger.warning("Sem legendas disponíveis, indexando título e descrição do vídeo.")
-            return f"{title}\n\n{description}"
-
-    except Exception as ytdlp_err:
-        logger.error("yt-dlp também falhou: %s", ytdlp_err)
+                text = ""
+            if text.strip():
+                logger.info("Transcrição via Supadata API (%d chars)", len(text))
+                return str(text)
+    except Exception as e3:
+        logger.warning("Supadata API falhou: %s", e3)
 
     raise RuntimeError(
         "Não foi possível extrair a transcrição deste vídeo. "
-        "O YouTube está bloqueando o IP do servidor. "
-        "Tente baixar a transcrição manualmente e fazer upload como arquivo de texto."
+        "O vídeo pode não ter legendas disponíveis, ou todos os serviços estão temporariamente "
+        "indisponíveis. Baixe a transcrição manualmente pelo YouTube "
+        "(ativar legendas → exportar) e faça upload como arquivo .txt."
     )
 
 
