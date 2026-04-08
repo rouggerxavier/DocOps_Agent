@@ -280,34 +280,77 @@ def _get_youtube_transcript(url: str) -> str:
     except Exception as e1:
         logger.warning("youtube-transcript-api falhou: %s", e1)
 
-    # ── Tentativa 2: YouTube timedtext CDN (endpoint separado, menos bloqueado) ─
+    # ── Tentativa 2: extrai URL da legenda do ytInitialPlayerResponse da página ─
+    # O YouTube embute no HTML da página o JSON completo do player, incluindo
+    # as URLs CDN das legendas (captionTracks). Essas URLs são timedtext CDN e
+    # funcionam mesmo com o IP bloqueado para a API principal.
     try:
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+        import json as _json
+
+        browser_headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         }
-        for lang in ["pt", "pt-BR", "en"]:
-            timedtext_url = (
-                f"https://www.youtube.com/api/timedtext"
-                f"?v={video_id}&lang={lang}&fmt=json3&xorb=2&xobt=3&xovt=3"
+        page_url = f"https://www.youtube.com/watch?v={video_id}"
+        page_resp = _httpx.get(page_url, headers=browser_headers, timeout=20, follow_redirects=True)
+        page_html = page_resp.text
+
+        # Extrai o bloco ytInitialPlayerResponse do HTML da página
+        player_match = _re.search(
+            r"ytInitialPlayerResponse\s*=\s*(\{.*?\})(?:;|\s*</script>)",
+            page_html,
+            _re.DOTALL,
+        )
+        if player_match:
+            player_data = _json.loads(player_match.group(1))
+            caption_tracks = (
+                player_data
+                .get("captions", {})
+                .get("playerCaptionsTracklistRenderer", {})
+                .get("captionTracks", [])
             )
-            resp = _httpx.get(timedtext_url, headers=headers, timeout=15, follow_redirects=True)
-            if resp.status_code == 200 and resp.text.strip():
-                import json as _json
-                data = _json.loads(resp.text)
-                events = data.get("events", [])
+
+            # Prefere pt/pt-BR, aceita qualquer idioma
+            def _track_priority(t: dict) -> int:
+                lang = t.get("languageCode", "")
+                if lang.startswith("pt"):
+                    return 0
+                if lang.startswith("en"):
+                    return 1
+                return 2
+
+            caption_tracks.sort(key=_track_priority)
+
+            for track in caption_tracks:
+                base_url = track.get("baseUrl", "")
+                if not base_url:
+                    continue
+                # Força formato json3 para facilitar o parse
+                cap_url = base_url + "&fmt=json3" if "fmt=" not in base_url else base_url
+                cap_resp = _httpx.get(cap_url, timeout=15, follow_redirects=True)
+                if cap_resp.status_code != 200:
+                    continue
+                cap_data = cap_resp.json()
                 words = []
-                for event in events:
+                for event in cap_data.get("events", []):
                     for seg in event.get("segs", []):
                         w = seg.get("utf8", "").strip()
                         if w and w != "\n":
                             words.append(w)
-                text = " ".join(words)
-                if text.strip():
-                    logger.info("Transcrição via timedtext CDN lang=%s (%d chars)", lang, len(text))
+                text = " ".join(words).strip()
+                if text:
+                    logger.info(
+                        "Transcrição via ytInitialPlayerResponse lang=%s (%d chars)",
+                        track.get("languageCode"), len(text),
+                    )
                     return text
     except Exception as e2:
-        logger.warning("timedtext CDN falhou: %s", e2)
+        logger.warning("ytInitialPlayerResponse falhou: %s", e2)
 
     # ── Tentativa 3: Supadata API (serviço externo — sem bloqueio de IP) ─────
     try:
