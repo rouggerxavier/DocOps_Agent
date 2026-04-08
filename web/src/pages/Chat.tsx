@@ -82,12 +82,47 @@ interface FlashcardBatchResult {
   error?: string
 }
 
+const WELCOME_MESSAGE: Message = {
+  role: 'assistant',
+  content: `Olá! Sou o **DocOps Agent** — seu assistente de estudos com IA. Aqui está o que posso fazer por você:
+
+**📚 Flashcards** — *"Crie 10 flashcards sobre [documento]"*
+Selecione um documento indexado e eu gero cartões de revisão prontos para estudar.
+
+**🗺️ Plano de Estudos** — *"Monte um plano de estudos para [tema]"*
+Crio um cronograma personalizado com base nos seus documentos e metas.
+
+**✨ Smart Digest** — *"Faça um resumo de [documento]"*
+Resumo inteligente do conteúdo indexado, destacando os pontos mais importantes.
+
+**📅 Rotina** — *"Crie uma rotina de estudos para esta semana"*
+Organizo sua agenda de estudos no calendário integrado.
+
+**📝 Notas** — *"Crie uma nota sobre [tema]"*
+Salvo anotações diretamente nas suas notas.
+
+**✅ Tarefas** — *"Adicione a tarefa: revisar capítulo 3"*
+Criação rápida de tarefas no seu quadro Kanban.
+
+**💬 Perguntas livres** — Tire dúvidas sobre qualquer conteúdo indexado.
+
+---
+Para começar, **indexe um documento** em *Inserção* e depois me diga o que quer criar!`,
+}
+
+function ensureWelcome(session: ChatSession): ChatSession {
+  if (session.messages.length === 0 || session.messages[0].role !== 'assistant') {
+    return { ...session, messages: [WELCOME_MESSAGE, ...session.messages] }
+  }
+  return session
+}
+
 function loadSessions(): ChatSession[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw) as ChatSession[]
-    return parsed.map(s => ({ ...s, createdAt: new Date(s.createdAt) }))
+    return parsed.map(s => ensureWelcome({ ...s, createdAt: new Date(s.createdAt) }))
   } catch {
     return []
   }
@@ -105,7 +140,7 @@ function newSession(): ChatSession {
   return {
     id: `session_${Date.now()}`,
     title: 'Nova conversa',
-    messages: [],
+    messages: [WELCOME_MESSAGE],
     createdAt: new Date(),
   }
 }
