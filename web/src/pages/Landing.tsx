@@ -213,7 +213,7 @@ export function Landing() {
                   Agente de documentos com IA
                 </p>
                 <h1 className="font-display mt-4 text-[2.65rem] leading-[0.95] text-[color:var(--ui-text)] sm:mt-5 sm:text-[4.5rem] lg:text-[5.5rem]">
-                  Seus documentos respondem. Com fonte.
+                  Os documentos tem a resposta. Com fonte.
                 </h1>
                 <p className="mt-5 max-w-[34rem] text-[0.98rem] leading-7 text-[color:var(--ui-text-dim)] sm:mt-6 sm:text-[1.08rem] sm:leading-8">
                   Suba PDFs e textos, faça perguntas em linguagem natural e receba respostas rastreáveis. O DocOps Agent ainda cria planos de estudo e gerencia sua agenda pelo chat.
