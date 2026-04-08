@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
+
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import {
@@ -572,7 +572,6 @@ function MessageBubble({
 
 export function Chat() {
   const qc = useQueryClient()
-  const navigate = useNavigate()
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     const loaded = loadSessions()
     return loaded.length > 0 ? loaded : [newSession()]
@@ -842,8 +841,8 @@ export function Chat() {
   function confirmFlashcardCommand() {
     if (!pendingFlashcardCommand) return
     if (pendingFlashcardCommand.docs.length === 0) {
-      setPendingFlashcardCommand(null)
-      navigate('/docs')
+      // Open filters panel so user can select a document right here
+      setFiltersOpen(true)
       return
     }
 
@@ -873,7 +872,13 @@ export function Chat() {
 
   function handleSend() {
     const text = input.trim()
-    if (!text || mutation.isPending || flashcardBatchMut.isPending || pendingFlashcardCommand) return
+    if (!text || mutation.isPending || flashcardBatchMut.isPending) return
+    // Block send only when there's a pending command WITH docs (awaiting confirmation)
+    if (pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0) return
+    // If there's a pending command with no docs, cancel it and process new message
+    if (pendingFlashcardCommand && pendingFlashcardCommand.docs.length === 0) {
+      setPendingFlashcardCommand(null)
+    }
 
     const userMsg: Message = { role: 'user', content: text }
     setSessions(prev =>
@@ -891,6 +896,26 @@ export function Chat() {
     const draft = parseFlashcardCommandPlan(text, docs ?? [], selectedDocs)
     if (draft) {
       setPendingFlashcardCommand(draft)
+      // Persist the assistant response as a real message so it survives navigation
+      appendAssistantMessage({
+        role: 'assistant',
+        content: draft.docs.length > 0
+          ? draft.summary
+          : 'Encontrei um pedido de flashcards, mas preciso que você selecione um documento nas opções abaixo ou diga "todos os documentos".',
+        intent: 'action_confirmation',
+        action_metadata: {
+          kind: 'flashcards_batch',
+          title: draft.docs.length > 0 ? 'Confirme o comando de flashcards' : 'Preciso do escopo dos flashcards',
+          summary: draft.summary,
+          status: 'needs_confirmation',
+          scope: draft.scopeLabel,
+          doc_count: draft.docs.length,
+          card_count: draft.numCards,
+          difficulty: draft.difficultyCustom,
+          doc_names: draft.docs.map(d => d.file_name),
+        },
+        calendar_action: null,
+      })
       return
     }
 
@@ -1068,7 +1093,7 @@ export function Chat() {
                           { label: 'Abrir Flashcards', href: '/flashcards' },
                         ],
                   }}
-                  confirmLabel={pendingFlashcardCommand.docs.length > 0 ? 'Confirmar e gerar' : 'Ir para Documentos'}
+                  confirmLabel={pendingFlashcardCommand.docs.length > 0 ? 'Confirmar e gerar' : 'Selecionar Documento'}
                   cancelLabel="Descartar"
                   onConfirm={confirmFlashcardCommand}
                   onCancel={cancelFlashcardCommand}
@@ -1114,7 +1139,7 @@ export function Chat() {
                 <select
                   value={selectedDoc}
                   onChange={e => setSelectedDoc(e.target.value)}
-                  disabled={isPending || !!pendingFlashcardCommand}
+                  disabled={isPending || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)}
                   className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 min-w-0"
                 >
                   <option value="">Filtrar por documento (opcional)</option>
@@ -1130,12 +1155,23 @@ export function Chat() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  disabled={!selectedDoc || isPending || !!pendingFlashcardCommand}
+                  disabled={!selectedDoc || isPending || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)}
                   onClick={() => {
                     const docToAdd = (docs ?? []).find(doc => doc.doc_id === selectedDoc)
                     if (!docToAdd || selectedDocs.some(item => item.doc_id === docToAdd.doc_id)) return
-                    setSelectedDocs(prev => [...prev, docToAdd])
+                    const nextSelectedDocs = [...selectedDocs, docToAdd]
+                    setSelectedDocs(nextSelectedDocs)
                     setSelectedDoc('')
+                    // If there's a pending flashcard command with no docs, resolve it with the newly selected doc
+                    if (pendingFlashcardCommand && pendingFlashcardCommand.docs.length === 0) {
+                      const scopeLabel = `documento selecionado "${docToAdd.file_name}"`
+                      setPendingFlashcardCommand({
+                        ...pendingFlashcardCommand,
+                        docs: [docToAdd],
+                        scopeLabel,
+                        summary: `Vou gerar ${pendingFlashcardCommand.numCards} flashcards para ${scopeLabel}.`,
+                      })
+                    }
                   }}
                 >
                   Adicionar
@@ -1166,7 +1202,7 @@ export function Chat() {
                   type="checkbox"
                   checked={strictGrounding}
                   onChange={e => setStrictGrounding(e.target.checked)}
-                  disabled={isPending || !!pendingFlashcardCommand}
+                  disabled={isPending || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)}
                   className="accent-blue-600"
                 />
                 Modo strict grounding (respostas só com evidência forte)
@@ -1180,12 +1216,12 @@ export function Chat() {
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              disabled={isPending || isStreaming || !!pendingFlashcardCommand}
+              disabled={isPending || isStreaming || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)}
               className="flex-1 bg-zinc-900 border-zinc-700"
             />
             <Button
               onClick={handleSend}
-              disabled={!input.trim() || isPending || isStreaming || !!pendingFlashcardCommand}
+              disabled={!input.trim() || isPending || isStreaming || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)}
               size="icon"
             >
               {isPending ? (

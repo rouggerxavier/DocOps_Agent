@@ -414,26 +414,38 @@ function SmartDigestDialog({ doc, onClose }: { doc: string; onClose: () => void 
 
 function PdfViewerModal({ doc, onClose }: { doc: DocItem; onClose: () => void }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const [markdownText, setMarkdownText] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
+  const isMarkdown = doc.file_name.toLowerCase().endsWith('.md')
 
   useEffect(() => {
     let objectUrl: string | null = null
     setLoading(true)
     setError(null)
+    setBlobUrl(null)
+    setMarkdownText(null)
 
-    api.get(`/api/docs/${doc.doc_id}/file`, { responseType: 'blob' })
-      .then(res => {
-        objectUrl = URL.createObjectURL(res.data)
-        setBlobUrl(objectUrl)
-      })
-      .catch(() => setError('Não foi possível carregar o arquivo.'))
-      .finally(() => setLoading(false))
+    if (isMarkdown) {
+      api.get(`/api/docs/${doc.doc_id}/file`, { responseType: 'text' })
+        .then(res => setMarkdownText(res.data))
+        .catch(() => setError('Não foi possível carregar o arquivo.'))
+        .finally(() => setLoading(false))
+    } else {
+      api.get(`/api/docs/${doc.doc_id}/file`, { responseType: 'blob' })
+        .then(res => {
+          objectUrl = URL.createObjectURL(res.data)
+          setBlobUrl(objectUrl)
+        })
+        .catch(() => setError('Não foi possível carregar o arquivo.'))
+        .finally(() => setLoading(false))
+    }
 
     return () => {
       if (objectUrl) URL.revokeObjectURL(objectUrl)
     }
-  }, [doc.doc_id])
+  }, [doc.doc_id, isMarkdown])
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-zinc-950">
@@ -452,6 +464,13 @@ function PdfViewerModal({ doc, onClose }: { doc: DocItem; onClose: () => void })
         )}
         {error && (
           <div className="flex h-full items-center justify-center text-red-400 text-sm">{error}</div>
+        )}
+        {markdownText !== null && !loading && (
+          <div className="h-full overflow-y-auto px-8 py-6">
+            <div className="mx-auto max-w-3xl prose prose-invert prose-sm">
+              <ReactMarkdown>{markdownText}</ReactMarkdown>
+            </div>
+          </div>
         )}
         {blobUrl && !loading && (
           <iframe
