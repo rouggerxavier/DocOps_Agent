@@ -218,14 +218,12 @@ def _is_youtube_url(url: str) -> bool:
 
 
 def _get_youtube_transcript(url: str) -> str:
-    """Extrai transcrição de um vídeo do YouTube (compatível com youtube-transcript-api v1.x)."""
-    try:
-        from youtube_transcript_api import YouTubeTranscriptApi
-    except ModuleNotFoundError as exc:
-        raise RuntimeError(
-            "Dependência ausente: youtube-transcript-api. "
-            "Adicione no requirements e reinstale o backend."
-        ) from exc
+    """Extrai transcrição de um vídeo do YouTube.
+
+    Tenta primeiro o youtube-transcript-api (rápido). Se o IP estiver bloqueado
+    pelo YouTube (comum em servidores cloud), cai para yt-dlp que tem melhor
+    evasão de bloqueios.
+    """
     import re as _re
 
     match = _re.search(r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})", url)
@@ -233,21 +231,81 @@ def _get_youtube_transcript(url: str) -> str:
         raise ValueError("Não foi possível extrair o ID do vídeo do YouTube.")
     video_id = match.group(1)
 
-    api = YouTubeTranscriptApi()
+    # ── Tentativa 1: youtube-transcript-api ──────────────────────────────────
     try:
-        # Tenta encontrar transcrição nos idiomas preferidos
-        transcript_list = api.list(video_id)
-        try:
-            transcript = transcript_list.find_transcript(["pt", "pt-BR", "en"])
-        except Exception:
-            # Aceita qualquer idioma disponível
-            transcript = next(iter(transcript_list))
-        fetched = transcript.fetch()
-    except Exception:
-        # Fallback: busca transcrição padrão sem filtro de idioma
-        fetched = api.fetch(video_id)
+        from youtube_transcript_api import YouTubeTranscriptApi
 
-    return " ".join(entry.text for entry in fetched)
+        api = YouTubeTranscriptApi()
+        try:
+            transcript_list = api.list(video_id)
+            try:
+                transcript = transcript_list.find_transcript(["pt", "pt-BR", "en"])
+            except Exception:
+                transcript = next(iter(transcript_list))
+            fetched = transcript.fetch()
+        except Exception:
+            fetched = api.fetch(video_id)
+
+        text = " ".join(entry.text for entry in fetched)
+        if text.strip():
+            return text
+    except Exception as primary_err:
+        logger.warning("youtube-transcript-api falhou (%s), tentando yt-dlp…", primary_err)
+
+    # ── Tentativa 2: yt-dlp (melhor evasão de bloqueio de IP) ────────────────
+    try:
+        import tempfile, os, json as _json
+        import yt_dlp  # type: ignore
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ydl_opts = {
+                "skip_download": True,
+                "writesubtitles": True,
+                "writeautomaticsub": True,
+                "subtitleslangs": ["pt", "pt-BR", "en", "en-US"],
+                "subtitlesformat": "json3",
+                "outtmpl": os.path.join(tmpdir, "%(id)s.%(ext)s"),
+                "quiet": True,
+                "no_warnings": True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                ydl.download([url])
+
+            # Procura arquivo de legenda gerado (.json3)
+            subtitle_text = ""
+            for fname in os.listdir(tmpdir):
+                if fname.endswith(".json3"):
+                    fpath = os.path.join(tmpdir, fname)
+                    with open(fpath, encoding="utf-8") as f:
+                        data = _json.load(f)
+                    events = data.get("events", [])
+                    words = []
+                    for event in events:
+                        for seg in event.get("segs", []):
+                            w = seg.get("utf8", "").strip()
+                            if w and w != "\n":
+                                words.append(w)
+                    subtitle_text = " ".join(words)
+                    break
+
+            if subtitle_text.strip():
+                return subtitle_text
+
+            # Fallback: usa a descrição + título do vídeo se não há legendas
+            title = (info or {}).get("title", "")
+            description = (info or {}).get("description", "")
+            if title or description:
+                return f"{title}\n\n{description}"
+
+    except Exception as ytdlp_err:
+        logger.error("yt-dlp também falhou: %s", ytdlp_err)
+
+    raise RuntimeError(
+        "Não foi possível extrair a transcrição deste vídeo. "
+        "O YouTube está bloqueando o IP do servidor. "
+        "Tente baixar a transcrição manualmente e fazer upload como arquivo de texto."
+    )
 
 
 async def _fetch_webpage_text(url: str) -> str:
