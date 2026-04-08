@@ -138,12 +138,12 @@ Voce e um especialista em criar flashcards para revisao espacada.
 Com base no conteudo abaixo, gere exatamente {num_cards} flashcards.
 Cada flashcard deve ter uma pergunta objetiva (front), uma resposta concisa (back) e uma classificacao de dificuldade (difficulty).
 {filter_instruction}{difficulty_instruction}{uniqueness_instruction}
-Regras:
-- As perguntas devem cobrir os conceitos mais importantes do texto.
-- Varie entre definicoes, fatos, relacoes e aplicacoes.
-- Respostas devem ser curtas (1-3 frases).
+Regras de qualidade:
+- COBERTURA AMPLA: distribua as perguntas por DIFERENTES topicos e secoes do conteudo. Nao concentre multiplas perguntas no mesmo conceito ou paragrafo.
+- VARIEDADE de tipos: misture definicoes, fatos numericos, relacoes causais, comparacoes, aplicacoes praticas e exemplos concretos.
+- UNICIDADE absoluta: nenhuma pergunta pode ser semanticamente equivalente a outra, mesmo que use palavras diferentes. Antes de incluir uma pergunta, verifique se ela ja foi coberta sob outro angulo.
+- Respostas devem ser curtas e diretas (1-3 frases).
 - O campo "difficulty" deve ser: "facil" (fato direto/definicao simples), "media" (requer compreensao/conexao) ou "dificil" (requer analise/aplicacao avancada).
-- Cada pergunta deve ser unica. Nao repita a mesma pergunta, conceito ou formulacao com palavras ligeiramente diferentes.
 - Retorne APENAS um JSON array no formato: [{{"front": "...", "back": "...", "difficulty": "facil|media|dificil"}}]
 - Sem markdown, sem texto extra, APENAS o JSON array.
 
@@ -306,12 +306,18 @@ def _select_cards_for_targets(cards: list[dict], target_counts: dict[str, int]) 
 
 def _build_uniqueness_instruction(excluded_fronts: list[str]) -> str:
     if not excluded_fronts:
-        return "\nUnicidade: todas as perguntas devem ser diferentes entre si.\n"
+        return (
+            "\nUnicidade: todas as perguntas devem ser semanticamente diferentes entre si. "
+            "Nao repita o mesmo conceito com palavras diferentes. "
+            "Cada pergunta deve explorar um aspecto distinto do conteudo.\n"
+        )
 
-    sample = "\n".join(f"- {front}" for front in excluded_fronts[:20])
+    sample = "\n".join(f"- {front}" for front in excluded_fronts[:30])
     return (
-        "\nUnicidade: gere perguntas novas, sem repetir nem parafrasear as perguntas abaixo.\n"
-        "Perguntas proibidas nesta tentativa:\n"
+        "\nUnicidade OBRIGATORIA: as perguntas abaixo ja foram geradas. "
+        "Voce NAO pode repetir nem parafrasear nenhuma delas, nem abordar o mesmo conceito por outro angulo. "
+        "Explore partes do conteudo ainda nao cobertas.\n"
+        "Perguntas ja existentes (proibidas):\n"
         f"{sample}\n"
     )
 
@@ -345,7 +351,7 @@ def _request_flashcard_batch(
 ) -> list[object]:
     prompt = FLASHCARD_PROMPT.format(
         num_cards=num_cards,
-        content=content[:12000],
+        content=content[:24000],
         filter_instruction=filter_instruction,
         difficulty_instruction=difficulty_instruction,
         uniqueness_instruction=_build_uniqueness_instruction(excluded_fronts),
@@ -409,6 +415,53 @@ def _collect_flashcards(fetch_batch, *, total_cards: int, target_counts: dict[st
     return accepted[:total_cards]
 
 
+def _collect_diverse_chunks(
+    doc_name: str,
+    doc_id: str,
+    user_id: int,
+    content_filter: str,
+) -> list:
+    """Retrieve a broad, topic-diverse set of chunks from the document.
+
+    Instead of a single RAG query (which returns thematically clustered chunks),
+    we fan out across several different query angles so the final content pool
+    covers as many distinct topics in the document as possible.
+    """
+    from docops.rag.retriever import retrieve_for_doc
+
+    if content_filter.strip():
+        # Focused mode: user explicitly requested a specific topic
+        chunks = retrieve_for_doc(doc_name, query=content_filter.strip(), doc_id=doc_id, user_id=user_id, top_k=50)
+        return chunks[:40]
+
+    # Broad mode: use multiple complementary queries to maximise topical coverage
+    diverse_queries = [
+        "conceitos principais e definicoes",
+        "processos metodologias e tecnicas",
+        "exemplos casos praticos e aplicacoes",
+        "comparacoes diferencas e relacoes entre conceitos",
+        "consequencias resultados e conclusoes",
+        "formula equacao calculo e metrica",
+        "historico origem contexto e evolucao",
+        "vantagens desvantagens limitacoes e criticas",
+    ]
+
+    seen_ids: set[str] = set()
+    merged: list = []
+
+    per_query_k = 15
+    for query in diverse_queries:
+        batch = retrieve_for_doc(doc_name, query=query, doc_id=doc_id, user_id=user_id, top_k=per_query_k)
+        for chunk in batch:
+            # Deduplicate by chunk content hash to avoid the same chunk appearing twice
+            chunk_key = chunk.page_content[:120]
+            if chunk_key not in seen_ids:
+                seen_ids.add(chunk_key)
+                merged.append(chunk)
+
+    return merged
+
+
 def _generate_cards(
     doc_name: str,
     doc_id: str,
@@ -419,15 +472,14 @@ def _generate_cards(
     difficulty_custom: dict | None = None,
 ) -> list[dict]:
     from docops.config import config
-    from docops.rag.retriever import retrieve_for_doc
     from google import genai
 
-    query = content_filter.strip() if content_filter.strip() else "conteudo principal do documento"
-    chunks = retrieve_for_doc(doc_name, query=query, doc_id=doc_id, user_id=user_id, top_k=30)
+    chunks = _collect_diverse_chunks(doc_name, doc_id, user_id, content_filter)
     if not chunks:
         raise HTTPException(status_code=404, detail="Nenhum chunk encontrado para este documento.")
 
-    content = "\n\n".join(chunk.page_content[:800] for chunk in chunks[:20])
+    # Use up to 50 chunks, each up to 1200 chars, total capped at 24 000 chars
+    content = "\n\n".join(chunk.page_content[:1200] for chunk in chunks[:50])
 
     filter_instruction = ""
     if content_filter.strip():
