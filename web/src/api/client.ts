@@ -628,9 +628,6 @@ export const apiClient = {
     }).then(r => r.data)
   },
 
-  ingestUrl: (url: string, title?: string): Promise<IngestResponse> =>
-    api.post('/api/ingest/url', { url, title: title ?? '' }, { timeout: INGEST_TIMEOUT_MS }).then(r => r.data),
-
   // ── Daily Question ──────────────────────────────────────────────────────────
 
   getDailyQuestion: (): Promise<DailyQuestionResponse> =>
