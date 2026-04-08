@@ -252,51 +252,88 @@ def _get_youtube_transcript(url: str) -> str:
     except Exception as primary_err:
         logger.warning("youtube-transcript-api falhou (%s), tentando yt-dlp…", primary_err)
 
-    # ── Tentativa 2: yt-dlp (melhor evasão de bloqueio de IP) ────────────────
+    # ── Tentativa 2: yt-dlp via client Android (bypassa bloqueio de IP cloud) ─
+    # O client Android acessa um endpoint diferente do YouTube que não é bloqueado
+    # pela maioria dos provedores cloud. Extraímos as URLs das legendas dos
+    # metadados e baixamos via CDN (timedtext) — sem passar pelo endpoint bloqueado.
     try:
-        import tempfile, os, json as _json
+        import httpx as _httpx
         import yt_dlp  # type: ignore
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            ydl_opts = {
-                "skip_download": True,
-                "writesubtitles": True,
-                "writeautomaticsub": True,
-                "subtitleslangs": ["pt", "pt-BR", "en", "en-US"],
-                "subtitlesformat": "json3",
-                "outtmpl": os.path.join(tmpdir, "%(id)s.%(ext)s"),
-                "quiet": True,
-                "no_warnings": True,
-            }
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=False)
-                ydl.download([url])
+        ydl_opts = {
+            "skip_download": True,
+            "quiet": True,
+            "no_warnings": True,
+            # Tenta múltiplos clients; android tem endpoint próprio menos bloqueado
+            "extractor_args": {
+                "youtube": {
+                    "player_client": ["android", "web", "mweb", "tv_embedded"],
+                }
+            },
+        }
 
-            # Procura arquivo de legenda gerado (.json3)
-            subtitle_text = ""
-            for fname in os.listdir(tmpdir):
-                if fname.endswith(".json3"):
-                    fpath = os.path.join(tmpdir, fname)
-                    with open(fpath, encoding="utf-8") as f:
-                        data = _json.load(f)
-                    events = data.get("events", [])
-                    words = []
-                    for event in events:
-                        for seg in event.get("segs", []):
-                            w = seg.get("utf8", "").strip()
-                            if w and w != "\n":
-                                words.append(w)
-                    subtitle_text = " ".join(words)
-                    break
+        info: dict = {}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
 
-            if subtitle_text.strip():
-                return subtitle_text
+        def _pick_subtitle_url(subs: dict) -> str | None:
+            """Retorna a primeira URL de legenda em formato srv1/vtt/json3."""
+            for lang in ["pt", "pt-BR", "pt-br", "en", "en-US", "en-us"]:
+                entries = subs.get(lang, [])
+                for entry in entries:
+                    if entry.get("ext") in ("srv1", "vtt", "json3", "ttml"):
+                        return entry.get("url")
+            # Aceita qualquer idioma
+            for entries in subs.values():
+                for entry in entries:
+                    if entry.get("url"):
+                        return entry.get("url")
+            return None
 
-            # Fallback: usa a descrição + título do vídeo se não há legendas
-            title = (info or {}).get("title", "")
-            description = (info or {}).get("description", "")
-            if title or description:
-                return f"{title}\n\n{description}"
+        sub_url = (
+            _pick_subtitle_url(info.get("subtitles") or {})
+            or _pick_subtitle_url(info.get("automatic_captions") or {})
+        )
+
+        if sub_url:
+            # Busca a legenda via CDN — estas URLs não são bloqueadas
+            resp = _httpx.get(sub_url, timeout=20, follow_redirects=True)
+            resp.raise_for_status()
+            raw = resp.text
+
+            # Parseia XML (srv1/ttml) ou VTT removendo timestamps
+            import re as _re2
+            if raw.strip().startswith("<?xml") or "<text" in raw:
+                # formato srv1 / ttml: extrai conteúdo das tags <text>
+                texts = _re2.findall(r"<text[^>]*>(.*?)</text>", raw, _re2.DOTALL)
+                transcript = " ".join(
+                    _re2.sub(r"<[^>]+>", "", t).strip()
+                    for t in texts
+                    if t.strip()
+                )
+            else:
+                # formato VTT: remove cabeçalho, timestamps e tags
+                lines = raw.splitlines()
+                transcript_lines = []
+                for line in lines:
+                    line = line.strip()
+                    if not line or line.startswith("WEBVTT") or "-->" in line:
+                        continue
+                    line = _re2.sub(r"<[^>]+>", "", line)
+                    if line:
+                        transcript_lines.append(line)
+                transcript = " ".join(transcript_lines)
+
+            if transcript.strip():
+                logger.info("Transcrição extraída via yt-dlp CDN (%d chars)", len(transcript))
+                return transcript
+
+        # Sem legendas — usa título + descrição como conteúdo indexável
+        title = info.get("title", "")
+        description = info.get("description", "")
+        if title or description:
+            logger.warning("Sem legendas disponíveis, indexando título e descrição do vídeo.")
+            return f"{title}\n\n{description}"
 
     except Exception as ytdlp_err:
         logger.error("yt-dlp também falhou: %s", ytdlp_err)
