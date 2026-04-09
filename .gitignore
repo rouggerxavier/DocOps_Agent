@@ -48,9 +48,6 @@ dashboard-*.png
 # Docs (user's own documents, not committed — keep .gitkeep)
 docs/*
 !docs/.gitkeep
-!docs/roadmap.md
-!docs/prs/
-!docs/prs/phase-1a-ingest-io-guardrails.md
 
 # Logs
 *.log
