@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import tempfile
+import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from types import SimpleNamespace
 import pytest
 from unittest.mock import MagicMock, patch
@@ -489,4 +492,152 @@ def test_chat_forwards_strict_grounding(monkeypatch):
     )
     assert resp.status_code == 200
     assert captured["strict_grounding"] is True
+    _clear_auth_override()
+
+
+def test_ingest_path_rejects_prefix_bypass(monkeypatch):
+    auth_client, _ = _make_auth_client()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        allowed_dir = root / "allowed"
+        bypass_dir = root / "allowed_evil"
+        allowed_dir.mkdir(parents=True, exist_ok=True)
+        bypass_dir.mkdir(parents=True, exist_ok=True)
+
+        bypass_file = bypass_dir / "outside.txt"
+        bypass_file.write_text("outside", encoding="utf-8")
+
+        monkeypatch.setenv("INGEST_ALLOWED_DIRS", str(allowed_dir))
+
+        def _fail_ingest(*_args, **_kwargs):
+            raise AssertionError("_run_ingest should not be called for disallowed paths")
+
+        monkeypatch.setattr("docops.api.routes.ingest._run_ingest", _fail_ingest)
+
+        resp = auth_client.post("/api/ingest", json={"path": str(bypass_file)})
+        assert resp.status_code == 403
+
+    _clear_auth_override()
+
+
+def test_ingest_upload_rejects_oversized_file(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("INGEST_UPLOAD_MAX_BYTES", "8")
+
+    def _fail_ingest(*_args, **_kwargs):
+        raise AssertionError("_run_ingest should not run when upload exceeds limit")
+
+    monkeypatch.setattr("docops.api.routes.ingest._run_ingest", _fail_ingest)
+
+    resp = auth_client.post(
+        "/api/ingest/upload",
+        data={"chunk_size": "0", "chunk_overlap": "0"},
+        files=[("files", ("big.txt", b"123456789", "text/plain"))],
+    )
+
+    assert resp.status_code == 413
+    assert "maximum size" in resp.json()["detail"]
+    _clear_auth_override()
+
+
+def test_ingest_photo_rejects_oversized_file(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("INGEST_PHOTO_MAX_BYTES", "8")
+
+    def _fail_ocr(*_args, **_kwargs):
+        raise AssertionError("OCR should not run when image exceeds upload limit")
+
+    monkeypatch.setattr("docops.api.routes.ingest._ocr_with_gemini", _fail_ocr)
+
+    resp = auth_client.post(
+        "/api/ingest/photo",
+        data={"title": "foto"},
+        files={"file": ("imagem.png", b"123456789", "image/png")},
+    )
+
+    assert resp.status_code == 413
+    assert "maximum size" in resp.json()["detail"]
+    _clear_auth_override()
+
+
+def test_delete_doc_does_not_unlink_external_source(monkeypatch):
+    auth_client, fake_user = _make_auth_client()
+    monkeypatch.setattr("docops.ingestion.indexer.delete_doc_from_index", lambda **_kwargs: None, raising=False)
+
+    from docops.db.crud import create_document_record, get_document_by_user_and_doc_id
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        external_file = Path(tmpdir) / "external_source.txt"
+        external_file.write_text("conteudo externo", encoding="utf-8")
+        doc_id = f"doc-external-{uuid.uuid4().hex}"
+
+        with _TestSession() as db:
+            create_document_record(
+                db,
+                user_id=fake_user.id,
+                doc_id=doc_id,
+                file_name=external_file.name,
+                source_path=str(external_file),
+                storage_path=str(external_file),
+                file_type="txt",
+                chunk_count=1,
+            )
+
+        resp = auth_client.delete(f"/api/docs/{doc_id}")
+        assert resp.status_code == 204
+        assert external_file.exists()
+
+        with _TestSession() as db:
+            assert get_document_by_user_and_doc_id(db, fake_user.id, doc_id) is None
+
+    _clear_auth_override()
+
+
+def test_artifact_pdf_temp_file_is_cleaned_up(monkeypatch):
+    auth_client, fake_user = _make_auth_client()
+
+    from docops.db.crud import create_artifact_record
+    from docops.storage.paths import get_user_artifacts_dir
+
+    artifacts_dir = get_user_artifacts_dir(fake_user.id)
+    artifact_name = f"artifact_{uuid.uuid4().hex}.md"
+    artifact_path = artifacts_dir / artifact_name
+    artifact_path.write_text("# Titulo\n\nConteudo", encoding="utf-8")
+
+    with _TestSession() as db:
+        create_artifact_record(
+            db,
+            user_id=fake_user.id,
+            artifact_type="summary",
+            filename=artifact_name,
+            path=str(artifact_path),
+            title="Resumo",
+        )
+
+    temp_pdf_path = artifacts_dir / f"tmp_pdf_{uuid.uuid4().hex}.pdf"
+
+    class _FakeNamedTempFile:
+        def __init__(self, name: Path):
+            self.name = str(name)
+
+        def close(self) -> None:
+            pass
+
+    def _fake_named_tempfile(*_args, **_kwargs):
+        temp_pdf_path.write_bytes(b"")
+        return _FakeNamedTempFile(temp_pdf_path)
+
+    def _fake_markdown_to_pdf(_content: str, output_path: Path) -> None:
+        Path(output_path).write_bytes(b"%PDF-1.4\n%%EOF")
+
+    monkeypatch.setattr("tempfile.NamedTemporaryFile", _fake_named_tempfile)
+    monkeypatch.setattr("docops.tools.doc_tools._markdown_to_pdf", _fake_markdown_to_pdf)
+
+    resp = auth_client.get(f"/api/artifacts/{artifact_name}/pdf")
+    assert resp.status_code == 200
+    _ = resp.content
+    assert not temp_pdf_path.exists()
+
+    artifact_path.unlink(missing_ok=True)
     _clear_auth_override()

@@ -670,6 +670,16 @@ class Config:
             return [Path(d.strip()).resolve() for d in raw.split(",") if d.strip()]
         return [self.docs_dir.resolve()]
 
+    @property
+    def ingest_upload_max_bytes(self) -> int:
+        """Maximum payload size accepted by /api/ingest/upload."""
+        return int(os.getenv("INGEST_UPLOAD_MAX_BYTES", str(25 * 1024 * 1024)))
+
+    @property
+    def ingest_photo_max_bytes(self) -> int:
+        """Maximum payload size accepted by /api/ingest/photo."""
+        return int(os.getenv("INGEST_PHOTO_MAX_BYTES", str(10 * 1024 * 1024)))
+
     # â”€â”€ Deep summary execution profiles â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @property

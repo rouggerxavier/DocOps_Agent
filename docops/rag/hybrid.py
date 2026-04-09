@@ -47,8 +47,21 @@ def _corpus_path_for_user(user_id: int) -> Path:
     return _bm25_path_for_user(user_id).with_suffix(".json")
 
 
+def clear_bm25_index_for_user(user_id: int) -> None:
+    """Delete BM25 index/corpus files for a user."""
+    idx_path = _bm25_path_for_user(user_id)
+    corp_path = _corpus_path_for_user(user_id)
+    idx_path.unlink(missing_ok=True)
+    corp_path.unlink(missing_ok=True)
+
+
 def build_bm25_index_for_user(user_id: int, chunks: List[Document]) -> None:
     """Build and persist a BM25 index from chunks for one user."""
+    if not chunks:
+        clear_bm25_index_for_user(user_id)
+        logger.info("BM25 index cleared for user %s (empty corpus).", user_id)
+        return
+
     from rank_bm25 import BM25Okapi
 
     tokenized = [doc.page_content.lower().split() for doc in chunks]

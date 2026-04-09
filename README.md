@@ -3,6 +3,13 @@
 Assistente RAG (Retrieval-Augmented Generation) para documentos, com sumarização profunda, comparação, flashcards, plano de estudos, tarefas, calendário e muito mais.
 
 ---
+
+## Roadmap de Execucao
+
+- Roadmap operacional: `docs/roadmap.md`
+- Descricao detalhada da entrega da Fase 1A: `docs/prs/phase-1a-ingest-io-guardrails.md`
+
+---
 # como rodar
 
 Terminal 1 — API (backend):

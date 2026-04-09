@@ -1,6 +1,10 @@
 """Tests for the retriever and citations — uses mocks to avoid API calls."""
 
 import os
+import shutil
+import tempfile
+from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -386,3 +390,165 @@ def test_retrieve_handles_exception_gracefully():
         results = retrieve("query", top_k=5)
 
     assert results == []
+
+
+class FakeEmbeddings:
+    """Deterministic fake embeddings for Chroma integration tests."""
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [[float(i % 10) / 10.0] * 8 for i, _ in enumerate(texts)]
+
+    def embed_query(self, text: str) -> list[float]:
+        return [0.1] * 8
+
+
+def _make_index_chunk(text: str, source_path: str) -> Document:
+    file_name = Path(source_path).name
+    return Document(
+        page_content=text,
+        metadata={
+            "file_name": file_name,
+            "source_path": source_path,
+            "source": source_path,
+        },
+    )
+
+
+def _make_test_config(root: Path) -> SimpleNamespace:
+    return SimpleNamespace(
+        chroma_dir=root / "chroma",
+        bm25_dir=root / "bm25",
+        docs_dir=root / "docs",
+        artifacts_dir=root / "artifacts",
+        uploads_dir=root / "uploads",
+        ingest_incremental=False,
+        top_k=6,
+        hybrid_k_lex=6,
+    )
+
+
+def test_reingest_replaces_stale_chunks_and_keeps_hybrid_consistent():
+    from docops.ingestion.indexer import get_vectorstore_for_user, index_chunks_for_user
+    from docops.ingestion.metadata import build_doc_id
+    from docops.rag.hybrid import bm25_search_for_user, hybrid_retrieve_for_user
+
+    fake_emb = FakeEmbeddings()
+    user_id = 42
+    source_path = "docs/manual.md"
+    doc_id = build_doc_id(source_path, user_id=user_id)
+
+    tmpdir = tempfile.mkdtemp()
+    try:
+        cfg = _make_test_config(Path(tmpdir))
+        with (
+            patch("docops.ingestion.indexer.config", cfg),
+            patch("docops.rag.hybrid.config", cfg),
+            patch("docops.storage.paths.config", cfg),
+        ):
+            chunks_v1 = [_make_index_chunk("token_v1_exclusivo conteudo antigo", source_path)]
+            chunks_v2 = [_make_index_chunk("token_v2_exclusivo conteudo novo", source_path)]
+
+            indexed_v1 = index_chunks_for_user(user_id=user_id, chunks=chunks_v1, embeddings=fake_emb)
+            assert indexed_v1 == 1
+            assert bm25_search_for_user(user_id, "token_v1_exclusivo", k=5)
+
+            indexed_v2 = index_chunks_for_user(user_id=user_id, chunks=chunks_v2, embeddings=fake_emb)
+            assert indexed_v2 == 1
+
+            vs = get_vectorstore_for_user(user_id=user_id, embeddings=fake_emb)
+            stored = vs._collection.get(where={"doc_id": doc_id}, include=["documents"])
+            docs = stored.get("documents", [])
+            assert docs
+            assert all("token_v1_exclusivo" not in text for text in docs)
+            assert any("token_v2_exclusivo" in text for text in docs)
+
+            bm25_old = bm25_search_for_user(user_id, "token_v1_exclusivo", k=5)
+            assert not any("token_v1_exclusivo" in d.page_content for d in bm25_old)
+
+            hybrid_old = hybrid_retrieve_for_user(
+                user_id=user_id,
+                query="token_v1_exclusivo",
+                vector_fn=lambda q, k: vs.similarity_search(q, k=k),
+                k_vec=5,
+                k_lex=5,
+            )
+            assert not any("token_v1_exclusivo" in d.page_content for d in hybrid_old)
+            del vs
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def test_ingesting_second_doc_preserves_first_doc_in_bm25():
+    from docops.ingestion.indexer import index_chunks_for_user
+    from docops.rag.hybrid import bm25_search_for_user
+
+    fake_emb = FakeEmbeddings()
+    user_id = 91
+
+    tmpdir = tempfile.mkdtemp()
+    try:
+        cfg = _make_test_config(Path(tmpdir))
+        with (
+            patch("docops.ingestion.indexer.config", cfg),
+            patch("docops.rag.hybrid.config", cfg),
+            patch("docops.storage.paths.config", cfg),
+        ):
+            chunk_a = _make_index_chunk("token_doc_a_exclusivo", "docs/a.md")
+            chunk_b = _make_index_chunk("token_doc_b_exclusivo", "docs/b.md")
+
+            assert index_chunks_for_user(user_id=user_id, chunks=[chunk_a], embeddings=fake_emb) == 1
+            assert index_chunks_for_user(user_id=user_id, chunks=[chunk_b], embeddings=fake_emb) == 1
+
+            results_a = bm25_search_for_user(user_id, "token_doc_a_exclusivo", k=10)
+            results_b = bm25_search_for_user(user_id, "token_doc_b_exclusivo", k=10)
+
+            assert any("token_doc_a_exclusivo" in d.page_content for d in results_a)
+            assert any("token_doc_b_exclusivo" in d.page_content for d in results_b)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def test_delete_doc_removes_entries_from_vector_and_bm25():
+    from docops.ingestion.indexer import delete_doc_from_index, get_vectorstore_for_user, index_chunks_for_user
+    from docops.ingestion.metadata import build_doc_id
+    from docops.rag.hybrid import bm25_search_for_user, hybrid_retrieve_for_user
+
+    fake_emb = FakeEmbeddings()
+    user_id = 77
+    source_path = "docs/guide.md"
+    doc_id = build_doc_id(source_path, user_id=user_id)
+
+    tmpdir = tempfile.mkdtemp()
+    try:
+        cfg = _make_test_config(Path(tmpdir))
+        with (
+            patch("docops.ingestion.indexer.config", cfg),
+            patch("docops.rag.hybrid.config", cfg),
+            patch("docops.storage.paths.config", cfg),
+        ):
+            chunks = [_make_index_chunk("token_delete_exclusivo", source_path)]
+            indexed = index_chunks_for_user(user_id=user_id, chunks=chunks, embeddings=fake_emb)
+            assert indexed == 1
+            assert bm25_search_for_user(user_id, "token_delete_exclusivo", k=5)
+
+            deleted = delete_doc_from_index(doc_id=doc_id, user_id=user_id, embeddings=fake_emb)
+            assert deleted >= 1
+
+            vs = get_vectorstore_for_user(user_id=user_id, embeddings=fake_emb)
+            payload = vs._collection.get(where={"doc_id": doc_id}, include=[])
+            assert payload.get("ids", []) == []
+
+            bm25_results = bm25_search_for_user(user_id, "token_delete_exclusivo", k=5)
+            assert bm25_results == []
+
+            hybrid_results = hybrid_retrieve_for_user(
+                user_id=user_id,
+                query="token_delete_exclusivo",
+                vector_fn=lambda q, k: vs.similarity_search(q, k=k),
+                k_vec=5,
+                k_lex=5,
+            )
+            assert hybrid_results == []
+            del vs
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
