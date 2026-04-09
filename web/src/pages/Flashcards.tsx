@@ -27,6 +27,28 @@ const DIFFICULTY_STYLES: Record<string, string> = {
   dificil: 'border-red-800/50 bg-red-950/20 text-red-400',
 }
 
+function normalizeFront(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function dedupeDeckCards(cards: FlashcardDeck['cards']): FlashcardDeck['cards'] {
+  const seen = new Set<string>()
+  const unique: FlashcardDeck['cards'] = []
+  for (const card of cards) {
+    const key = normalizeFront(card.front ?? '')
+    if (!key || seen.has(key)) continue
+    seen.add(key)
+    unique.push(card)
+  }
+  return unique
+}
+
 type DiffMode = 'any' | 'only_facil' | 'only_media' | 'only_dificil' | 'custom'
 
 // ── Generate dialog ──────────────────────────────────────────────────────────
@@ -274,7 +296,7 @@ function StudySession({
   // resposta do usuário e resultado da avaliação
   const [userAnswer, setUserAnswer] = useState('')
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null)
-  const cards = deck.cards
+  const cards = dedupeDeckCards(deck.cards)
 
   const reviewMut = useMutation({
     mutationFn: ({ cardId, ease }: { cardId: number; ease: number }) =>

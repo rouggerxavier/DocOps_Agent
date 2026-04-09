@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from datetime import datetime
+import re
+import unicodedata
 
 from sqlalchemy.orm import Session
 
@@ -447,10 +449,41 @@ def create_flashcard_deck(
     cards: list[dict],
 ) -> "FlashcardDeck":
     from docops.db.models import FlashcardDeck, FlashcardItem
+
+    def _normalize_front(value: str) -> str:
+        normalized = unicodedata.normalize("NFKD", value or "")
+        normalized = "".join(ch for ch in normalized if not unicodedata.combining(ch))
+        normalized = normalized.casefold().strip()
+        normalized = re.sub(r"\s+", " ", normalized)
+        normalized = re.sub(r"[^\w\s]", "", normalized)
+        return normalized.strip()
+
+    def _prepare_cards(raw_cards: list[dict]) -> list[dict]:
+        prepared: list[dict] = []
+        seen_fronts: set[str] = set()
+        for card in raw_cards:
+            front = str(card.get("front", "")).strip()
+            back = str(card.get("back", "")).strip()
+            if not front or not back:
+                continue
+
+            front_key = _normalize_front(front)
+            if not front_key or front_key in seen_fronts:
+                continue
+
+            difficulty = str(card.get("difficulty", "media")).strip().casefold()
+            if difficulty not in {"facil", "media", "dificil"}:
+                difficulty = "media"
+
+            seen_fronts.add(front_key)
+            prepared.append({"front": front, "back": back, "difficulty": difficulty})
+        return prepared
+
+    safe_cards = _prepare_cards(cards)
     deck = FlashcardDeck(user_id=user_id, title=title, source_doc=source_doc)
     db.add(deck)
     db.flush()
-    for c in cards:
+    for c in safe_cards:
         db.add(FlashcardItem(deck_id=deck.id, front=c["front"], back=c["back"], difficulty=c.get("difficulty", "media")))
     db.commit()
     db.refresh(deck)

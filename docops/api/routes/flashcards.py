@@ -415,6 +415,66 @@ def _dedupe_cards(
     return accepted
 
 
+def _partition_persisted_cards_by_uniqueness(cards: list[object]) -> tuple[list[object], list[object]]:
+    ordered_cards = sorted(cards, key=lambda item: int(getattr(item, "id", 0) or 0))
+    accepted_cards: list[object] = []
+    duplicate_cards: list[object] = []
+    accepted_payloads: list[dict] = []
+    seen_fronts: set[str] = set()
+    seen_pairs: set[tuple[str, str]] = set()
+
+    for persisted_card in ordered_cards:
+        payload = _sanitize_card(
+            {
+                "front": str(getattr(persisted_card, "front", "")),
+                "back": str(getattr(persisted_card, "back", "")),
+                "difficulty": str(getattr(persisted_card, "difficulty", "media")),
+            }
+        )
+        if not payload:
+            duplicate_cards.append(persisted_card)
+            continue
+
+        front_key = _normalize_card_text(payload["front"])
+        back_key = _normalize_card_text(payload["back"])
+        pair_key = (front_key, back_key)
+
+        if not front_key or front_key in seen_fronts or pair_key in seen_pairs:
+            duplicate_cards.append(persisted_card)
+            continue
+
+        if any(_is_semantic_card_duplicate(payload, existing) for existing in accepted_payloads):
+            duplicate_cards.append(persisted_card)
+            continue
+
+        accepted_cards.append(persisted_card)
+        accepted_payloads.append(payload)
+        seen_fronts.add(front_key)
+        seen_pairs.add(pair_key)
+
+    return accepted_cards, duplicate_cards
+
+
+def _repair_deck_uniqueness(db: Session, deck) -> int:
+    if not getattr(deck, "cards", None):
+        return 0
+
+    _accepted, duplicates = _partition_persisted_cards_by_uniqueness(list(deck.cards))
+    if not duplicates:
+        return 0
+
+    for card in duplicates:
+        db.delete(card)
+    db.commit()
+    db.refresh(deck)
+    logger.warning(
+        "Deck %s reparado automaticamente: %d card(s) duplicado(s) removido(s).",
+        getattr(deck, "id", "unknown"),
+        len(duplicates),
+    )
+    return len(duplicates)
+
+
 def _count_cards_by_difficulty(cards: list[dict]) -> dict[str, int]:
     counts = {difficulty: 0 for difficulty in VALID_DIFFICULTIES}
     for card in cards:
@@ -830,6 +890,7 @@ def get_deck(
     deck = crud.get_flashcard_deck_by_user_and_id(db, current_user.id, deck_id)
     if not deck:
         raise HTTPException(status_code=404, detail="Deck nao encontrado.")
+    _repair_deck_uniqueness(db, deck)
     return deck
 
 
