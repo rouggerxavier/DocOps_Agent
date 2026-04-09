@@ -291,7 +291,7 @@ function StudySession({
 }) {
   const [cards] = useState<FlashcardDeck['cards']>(() => dedupeDeckCards(deck.cards))
   const [idx, setIdx] = useState(0)
-  const [flipped, setFlipped] = useState(false)
+  const [revealed, setRevealed] = useState(false)
   const [diffVote, setDiffVote] = useState<'agree' | 'disagree' | null>(null)
   const [correctedDiff, setCorrectedDiff] = useState<string | null>(null)
   // resposta do usuário e resultado da avaliação
@@ -318,7 +318,7 @@ function StudySession({
       apiClient.evaluateFlashcard(cardId, answer),
     onSuccess: (data) => {
       setEvaluation(data)
-      setFlipped(true)
+      setRevealed(true)
     },
     onError: () => toast.error('Erro ao avaliar resposta.'),
   })
@@ -339,7 +339,7 @@ function StudySession({
   const diffStyle = DIFFICULTY_STYLES[activeDiff] ?? DIFFICULTY_STYLES.media
 
   function advanceCard() {
-    setFlipped(false)
+    setRevealed(false)
     setDiffVote(null)
     setCorrectedDiff(null)
     setUserAnswer('')
@@ -376,6 +376,36 @@ function StudySession({
     ? (VERDICT_CONFIG[evaluation.verdict as keyof typeof VERDICT_CONFIG] ?? VERDICT_CONFIG.parcial)
     : null
 
+  const answerComposer = (
+    <>
+      <textarea
+        value={userAnswer}
+        onChange={e => setUserAnswer(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && userAnswer.trim()) {
+            e.preventDefault()
+            evaluateMut.mutate({ cardId: card.id, answer: userAnswer.trim() })
+          }
+        }}
+        placeholder="Digite sua resposta aqui..."
+        rows={3}
+        className="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-700 outline-none focus:border-zinc-500 transition-colors"
+      />
+      <div className="flex justify-end">
+        <button
+          onClick={() => evaluateMut.mutate({ cardId: card.id, answer: userAnswer.trim() })}
+          disabled={!userAnswer.trim() || evaluateMut.isPending}
+          className="flex items-center gap-1.5 rounded-lg border border-blue-800/50 bg-blue-950/20 px-3 py-1.5 text-xs font-medium text-blue-400 hover:bg-blue-950/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+        >
+          {evaluateMut.isPending
+            ? <><Loader2 className="h-3 w-3 animate-spin" /> Avaliando...</>
+            : <><Send className="h-3 w-3" /> Avaliar <span className="text-zinc-600 ml-1">Ctrl+Enter</span></>
+          }
+        </button>
+      </div>
+    </>
+  )
+
   return (
     <div className="space-y-4">
       {/* Header */}
@@ -394,107 +424,87 @@ function StudySession({
         />
       </div>
 
-      {/* Card */}
-      <div
-        onClick={() => !flipped && !evaluateMut.isPending && setFlipped(true)}
-        className={cn(
-          'relative rounded-2xl border p-8 min-h-[200px] flex flex-col items-center justify-center text-center transition-all',
-          flipped
-            ? 'border-emerald-800/50 bg-emerald-950/20'
-            : 'border-zinc-800 bg-zinc-900 cursor-pointer hover:border-zinc-700',
-        )}
-      >
+      {/* Card 1: Pergunta */}
+      <div className="relative rounded-2xl border border-zinc-800 bg-zinc-900 p-8 min-h-[200px] flex flex-col items-center justify-center text-center">
         <div className="absolute top-3 left-3">
           <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', diffStyle)}>
             {diffLabel}
           </span>
         </div>
         <div className="absolute top-3 right-3">
-          {flipped
+          {revealed
             ? <Eye className="h-3.5 w-3.5 text-emerald-500" />
             : <EyeOff className="h-3.5 w-3.5 text-zinc-700" />
           }
         </div>
 
-        {!flipped ? (
-          <>
-            <p className="text-xs text-zinc-600 mb-3 uppercase tracking-wider">Pergunta</p>
-            <p className="text-base font-medium text-zinc-100 leading-relaxed">{card.front}</p>
-            <p className="mt-4 text-[10px] text-zinc-700">Clique para ver a resposta diretamente</p>
-          </>
-        ) : (
-          <>
-            <p className="text-xs text-emerald-600 mb-3 uppercase tracking-wider">Resposta oficial</p>
-            <p className="text-base text-zinc-200 leading-relaxed">{card.back}</p>
-          </>
+        <p className="text-xs text-zinc-600 mb-3 uppercase tracking-wider">Pergunta</p>
+        <p className="text-base font-medium text-zinc-100 leading-relaxed">{card.front}</p>
+
+        {!revealed && (
+          <button
+            onClick={() => setRevealed(true)}
+            disabled={evaluateMut.isPending}
+            className="mt-5 rounded-lg border border-emerald-800/50 bg-emerald-950/20 px-3 py-1.5 text-xs font-medium text-emerald-400 hover:bg-emerald-950/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            Mostrar resposta
+          </button>
         )}
       </div>
 
       {/* ── Aba de resposta do estudante (antes de virar) ─────────────────── */}
-      {!flipped && (
+      {!revealed && (
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-2">
-          <p className="text-xs text-zinc-500">Sua resposta <span className="text-zinc-700">(opcional — ou clique no card para ver direto)</span></p>
-          <textarea
-            value={userAnswer}
-            onChange={e => setUserAnswer(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && userAnswer.trim()) {
-                e.preventDefault()
-                evaluateMut.mutate({ cardId: card.id, answer: userAnswer.trim() })
-              }
-            }}
-            placeholder="Digite sua resposta aqui..."
-            rows={3}
-            className="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-700 outline-none focus:border-zinc-500 transition-colors"
-          />
-          <div className="flex justify-end">
-            <button
-              onClick={() => evaluateMut.mutate({ cardId: card.id, answer: userAnswer.trim() })}
-              disabled={!userAnswer.trim() || evaluateMut.isPending}
-              className="flex items-center gap-1.5 rounded-lg border border-blue-800/50 bg-blue-950/20 px-3 py-1.5 text-xs font-medium text-blue-400 hover:bg-blue-950/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              {evaluateMut.isPending
-                ? <><Loader2 className="h-3 w-3 animate-spin" /> Avaliando...</>
-                : <><Send className="h-3 w-3" /> Avaliar <span className="text-zinc-600 ml-1">Ctrl+Enter</span></>
-              }
-            </button>
-          </div>
+          <p className="text-xs text-zinc-500">Sua resposta <span className="text-zinc-700">(opcional antes de revelar)</span></p>
+          {answerComposer}
         </div>
       )}
 
-      {/* ── Resultado da avaliação (após avaliar) ────────────────────────── */}
-      {flipped && evaluation && verdictCfg && (
-        <div className={cn('rounded-xl border p-4 space-y-3', verdictCfg.border, verdictCfg.bg)}>
-          {/* Verdict */}
-          <div className="flex items-center gap-2">
-            <span className={cn('text-lg font-bold', verdictCfg.color)}>{verdictCfg.icon}</span>
-            <span className={cn('text-sm font-semibold', verdictCfg.color)}>{verdictCfg.label}</span>
-          </div>
+      {revealed && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-2">
+          <p className="text-xs text-zinc-600 uppercase tracking-wider">Resposta oficial</p>
+          <p className="text-sm text-zinc-200 leading-relaxed">{card.back}</p>
+        </div>
+      )}
 
-          {/* Resposta do usuário */}
-          <div className="rounded-lg border border-zinc-700/50 bg-zinc-900/50 px-3 py-2">
-            <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1">Sua resposta</p>
-            <p className="text-xs text-zinc-400 italic">"{userAnswer}"</p>
-          </div>
+      {revealed && (
+        <div className={cn('rounded-xl border p-4 space-y-3', verdictCfg ? `${verdictCfg.border} ${verdictCfg.bg}` : 'border-zinc-800 bg-zinc-900/60')}>
+          <p className="text-xs text-zinc-600 uppercase tracking-wider">Analise da IA</p>
 
-          {/* Feedback */}
-          <div>
-            <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">Avaliação</p>
-            <p className="text-xs text-zinc-300 leading-relaxed">{evaluation.feedback}</p>
-          </div>
+          {evaluation && verdictCfg ? (
+            <>
+              <div className="flex items-center gap-2">
+                <span className={cn('text-lg font-bold', verdictCfg.color)}>{verdictCfg.icon}</span>
+                <span className={cn('text-sm font-semibold', verdictCfg.color)}>{verdictCfg.label}</span>
+              </div>
 
-          {/* Highlight */}
-          {evaluation.highlight && (
-            <div className="flex items-start gap-2 rounded-lg border border-zinc-700/40 bg-zinc-800/40 px-3 py-2">
-              <span className="text-yellow-500 text-xs mt-0.5">💡</span>
-              <p className="text-xs text-zinc-400">{evaluation.highlight}</p>
-            </div>
+              <div className="rounded-lg border border-zinc-700/50 bg-zinc-900/50 px-3 py-2">
+                <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1">Sua resposta</p>
+                <p className="text-xs text-zinc-400 italic">"{userAnswer}"</p>
+              </div>
+
+              <div>
+                <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">Avaliacao</p>
+                <p className="text-xs text-zinc-300 leading-relaxed">{evaluation.feedback}</p>
+              </div>
+
+              {evaluation.highlight && (
+                <div className="flex items-start gap-2 rounded-lg border border-zinc-700/40 bg-zinc-800/40 px-3 py-2">
+                  <span className="text-yellow-500 text-xs mt-0.5">!</span>
+                  <p className="text-xs text-zinc-400">{evaluation.highlight}</p>
+                </div>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-zinc-500">Envie sua resposta para receber a analise da IA.</p>
+              {answerComposer}
+            </>
           )}
         </div>
       )}
 
-      {/* ── Seção de dificuldade + ease (após virar) ─────────────────────── */}
-      {flipped && (
+      {revealed && (
         <div className="space-y-3">
           {/* LLM difficulty vote */}
           <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
