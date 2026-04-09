@@ -3,17 +3,30 @@
 from __future__ import annotations
 
 
-def test_default_routes():
+def _clear_router_env(monkeypatch) -> None:
+    for key in (
+        "GEMINI_MODEL_ROUTER_ENABLED",
+        "GEMINI_MODEL",
+        "GEMINI_MODEL_COMPLEX",
+        "GEMINI_MODEL_CHEAP",
+        "GEMINI_MODEL_QA_SIMPLE",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
+def test_default_routes(monkeypatch):
     from docops.llm.router import resolve_gemini_model
 
+    _clear_router_env(monkeypatch)
     assert resolve_gemini_model("complex") == "gemini-3-flash-preview"
     assert resolve_gemini_model("cheap") == "gemini-3.1-flash-lite-preview"
     assert resolve_gemini_model("qa_simple") == "gemini-2.5-flash"
 
 
-def test_graph_synthesize_route_rules():
+def test_graph_synthesize_route_rules(monkeypatch):
     from docops.llm.router import resolve_gemini_model
 
+    _clear_router_env(monkeypatch)
     assert (
         resolve_gemini_model("graph_synthesize", intent="qa")
         == "gemini-2.5-flash"

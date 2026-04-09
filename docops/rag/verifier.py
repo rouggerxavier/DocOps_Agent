@@ -13,6 +13,28 @@ if TYPE_CHECKING:
 logger = get_logger("docops.rag.verifier")
 
 _CITATION_INDEX_RE = re.compile(r"\[Fonte\s*\d+\]", re.IGNORECASE)
+_NON_FACTUAL_HINT_RE = re.compile(
+    r"\b("
+    r"nao\s+encontrei|não\s+encontrei|"
+    r"nao\s+sei|não\s+sei|"
+    r"sem\s+informac\w+|"
+    r"insuficient\w+|"
+    r"nao\s+tenho\s+dados|não\s+tenho\s+dados|"
+    r"pode\s+esclarecer|poderia\s+esclarecer"
+    r")\b",
+    re.IGNORECASE,
+)
+_ACK_ONLY_RE = re.compile(
+    r"^(ok|ok[,.\s]*entendido|entendido|certo|beleza|perfeito|thanks|obrigad[oa])"
+    r"[.!]?$",
+    re.IGNORECASE,
+)
+_FACTUAL_HINT_RE = re.compile(
+    r"\b\d{4}\b|"
+    r"\b\d+(?:[.,]\d+)?\s*%|"
+    r"\b(segundo|conforme|de\s+acordo\s+com|define-se|defined\s+as|according\s+to)\b",
+    re.IGNORECASE,
+)
 
 _FACTUAL_CHECK_PROMPT = """\
 Você é um classificador de respostas. Determine se a resposta abaixo contém afirmações factuais que requerem citação de fontes.
@@ -26,7 +48,22 @@ RESPOSTA:
 {answer}"""
 
 
-def _llm_is_factual(answer: str) -> bool:
+def _heuristic_is_factual(answer: str) -> bool:
+    text = re.sub(r"\s+", " ", (answer or "").strip())
+    if not text:
+        return False
+    if _ACK_ONLY_RE.match(text):
+        return False
+    if _NON_FACTUAL_HINT_RE.search(text):
+        return False
+    if _CITATION_INDEX_RE.search(text):
+        return True
+    if _FACTUAL_HINT_RE.search(text):
+        return True
+    return len(text) > 40 and "?" not in text
+
+
+def _llm_is_factual(answer: str, *, fallback: bool) -> bool:
     """Use LLM to determine if the answer contains factual claims requiring citations."""
     try:
         from langchain_core.messages import HumanMessage
@@ -40,13 +77,24 @@ def _llm_is_factual(answer: str) -> bool:
         raw = response_text(response).strip().lower()
         return "nao_factual" not in raw
     except Exception as exc:
-        logger.warning(f"LLM factual check failed ({exc}); defaulting to factual=True.")
-        return True
+        logger.warning(
+            f"LLM factual check failed ({exc}); using heuristic fallback={fallback}."
+        )
+        return fallback
 
 
 def is_factual_answer(answer: str) -> bool:
     """Determine if the answer contains factual claims that require citations."""
-    return _llm_is_factual(answer)
+    mode = (config.grounded_verifier_mode or "heuristic").lower()
+    heuristic = _heuristic_is_factual(answer)
+
+    if mode == "heuristic":
+        return heuristic
+    if mode == "hybrid":
+        if not heuristic:
+            return False
+        return _llm_is_factual(answer, fallback=heuristic)
+    return _llm_is_factual(answer, fallback=heuristic)
 
 
 def has_min_citations(answer: str, min_cites: int | None = None) -> bool:
