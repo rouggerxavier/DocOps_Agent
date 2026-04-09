@@ -230,7 +230,11 @@ class FlashcardDeck(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
 
     owner: Mapped[User] = relationship(back_populates="flashcard_decks")
-    cards: Mapped[list["FlashcardItem"]] = relationship(back_populates="deck", cascade="all, delete-orphan")
+    cards: Mapped[list["FlashcardItem"]] = relationship(
+        back_populates="deck",
+        cascade="all, delete-orphan",
+        order_by="FlashcardItem.id.asc()",
+    )
 
     def __repr__(self) -> str:
         return f"<FlashcardDeck id={self.id} title={self.title!r}>"

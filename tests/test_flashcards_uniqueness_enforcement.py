@@ -130,6 +130,8 @@ def test_get_deck_auto_repairs_existing_duplicate_cards(flashcards_client):
     payload = resp.json()
     assert len(payload["cards"]) == 2
     assert len({card["front"] for card in payload["cards"]}) == 2
+    card_ids = [card["id"] for card in payload["cards"]]
+    assert card_ids == sorted(card_ids)
 
     with session_factory() as db:
         persisted = db.query(FlashcardItem).filter(FlashcardItem.deck_id == deck_id).all()

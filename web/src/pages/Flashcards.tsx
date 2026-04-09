@@ -38,9 +38,10 @@ function normalizeFront(value: string): string {
 }
 
 function dedupeDeckCards(cards: FlashcardDeck['cards']): FlashcardDeck['cards'] {
+  const ordered = [...cards].sort((a, b) => a.id - b.id)
   const seen = new Set<string>()
   const unique: FlashcardDeck['cards'] = []
-  for (const card of cards) {
+  for (const card of ordered) {
     const key = normalizeFront(card.front ?? '')
     if (!key || seen.has(key)) continue
     seen.add(key)
@@ -288,7 +289,7 @@ function StudySession({
   deck: FlashcardDeck
   onBack: () => void
 }) {
-  const qc = useQueryClient()
+  const [cards] = useState<FlashcardDeck['cards']>(() => dedupeDeckCards(deck.cards))
   const [idx, setIdx] = useState(0)
   const [flipped, setFlipped] = useState(false)
   const [diffVote, setDiffVote] = useState<'agree' | 'disagree' | null>(null)
@@ -296,19 +297,17 @@ function StudySession({
   // resposta do usuário e resultado da avaliação
   const [userAnswer, setUserAnswer] = useState('')
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null)
-  const cards = dedupeDeckCards(deck.cards)
 
   const reviewMut = useMutation({
     mutationFn: ({ cardId, ease }: { cardId: number; ease: number }) =>
       apiClient.reviewFlashcard(cardId, ease),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['flashcard-deck', deck.id] }),
+    onError: () => toast.error('Erro ao registrar revisao.'),
   })
 
   const difficultyMut = useMutation({
     mutationFn: ({ cardId, difficulty }: { cardId: number; difficulty: string }) =>
       apiClient.updateFlashcardDifficulty(cardId, difficulty),
     onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ['flashcard-deck', deck.id] })
       toast.success(`Dificuldade atualizada para ${DIFFICULTY_LABELS[data.difficulty] ?? data.difficulty}!`)
     },
     onError: () => toast.error('Erro ao atualizar dificuldade.'),
@@ -624,6 +623,8 @@ export function Flashcards() {
     queryKey: ['flashcard-deck', studyDeckId],
     queryFn: () => apiClient.getFlashcardDeck(studyDeckId!),
     enabled: studyDeckId !== null,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   })
 
   const generateMut = useMutation({
@@ -689,7 +690,7 @@ export function Flashcards() {
   if (studyDeckId !== null && studyDeck) {
     return (
       <div className="mx-auto max-w-xl">
-        <StudySession deck={studyDeck} onBack={() => setStudyDeckId(null)} />
+        <StudySession key={studyDeck.id} deck={studyDeck} onBack={() => setStudyDeckId(null)} />
       </div>
     )
   }
