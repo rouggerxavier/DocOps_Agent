@@ -66,3 +66,70 @@ def test_collect_flashcards_raises_when_distribution_cannot_be_met():
 
     assert exc_info.value.status_code == 502
     assert "distribuicao pedida" in str(exc_info.value.detail)
+
+
+def test_dedupe_cards_removes_semantic_paraphrases():
+    cards = [
+        {
+            "front": "Para que serve a regressao linear?",
+            "back": "Para modelar a relacao entre variaveis.",
+            "difficulty": "media",
+        },
+        {
+            "front": "Qual e a funcao da regressao linear?",
+            "back": "Modelar relacoes entre variaveis.",
+            "difficulty": "media",
+        },
+        {
+            "front": "Quando usar regularizacao L2?",
+            "back": "Quando ha risco de overfitting.",
+            "difficulty": "media",
+        },
+    ]
+
+    result = flashcards._dedupe_cards(cards)
+
+    assert len(result) == 2
+    fronts = {card["front"] for card in result}
+    assert "Para que serve a regressao linear?" in fronts
+    assert "Quando usar regularizacao L2?" in fronts
+
+
+def test_collect_flashcards_retries_after_semantic_duplicates():
+    batches = [
+        [
+            {
+                "front": "Para que serve a regressao linear?",
+                "back": "Modela relacoes entre variaveis.",
+                "difficulty": "media",
+            },
+            {
+                "front": "Qual e a funcao da regressao linear?",
+                "back": "Serve para modelar relacoes entre variaveis.",
+                "difficulty": "media",
+            },
+        ],
+        [
+            {
+                "front": "Como interpretar o coeficiente angular?",
+                "back": "Indica a variacao media de y para cada unidade de x.",
+                "difficulty": "media",
+            }
+        ],
+    ]
+    calls: list[tuple[int, str, list[str]]] = []
+
+    def fake_fetch_batch(*, num_cards: int, difficulty_instruction: str, excluded_fronts: list[str]):
+        calls.append((num_cards, difficulty_instruction, excluded_fronts))
+        return batches.pop(0)
+
+    result = flashcards._collect_flashcards(
+        fake_fetch_batch,
+        total_cards=2,
+        target_counts=None,
+    )
+
+    assert len(result) == 2
+    assert len(calls) == 2
+    assert calls[1][0] == 1
+    assert len({flashcards._normalize_card_text(card["front"]) for card in result}) == 2

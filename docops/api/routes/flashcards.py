@@ -6,6 +6,7 @@ import asyncio
 import json
 import re
 import unicodedata
+from difflib import SequenceMatcher
 from datetime import datetime
 from typing import Literal, Optional
 
@@ -23,7 +24,57 @@ logger = get_logger("docops.api.flashcards")
 router = APIRouter()
 
 VALID_DIFFICULTIES = {"facil", "media", "dificil"}
-FLASHCARD_GENERATION_MAX_ATTEMPTS = 3
+FLASHCARD_GENERATION_MAX_ATTEMPTS = 6
+SEMANTIC_STOPWORDS = {
+    "a",
+    "ao",
+    "aos",
+    "as",
+    "com",
+    "como",
+    "da",
+    "das",
+    "de",
+    "do",
+    "dos",
+    "e",
+    "em",
+    "na",
+    "nas",
+    "no",
+    "nos",
+    "o",
+    "os",
+    "ou",
+    "para",
+    "por",
+    "qual",
+    "quais",
+    "que",
+    "se",
+    "sem",
+    "sobre",
+    "um",
+    "uma",
+    "uns",
+    "umas",
+}
+SEMANTIC_INTENT_TOKENS = {
+    "conceito",
+    "defina",
+    "definicao",
+    "descreva",
+    "diferenca",
+    "diferencas",
+    "explique",
+    "finalidade",
+    "funcao",
+    "importancia",
+    "objetivo",
+    "papel",
+    "serve",
+    "significa",
+}
 
 
 class CardSchema(BaseModel):
@@ -226,6 +277,91 @@ def _normalize_card_text(value: str) -> str:
     return normalized.strip()
 
 
+def _semantic_tokens(value: str) -> set[str]:
+    normalized = _normalize_card_text(value)
+    tokens: set[str] = set()
+    for token in normalized.split():
+        if token in SEMANTIC_STOPWORDS or token in SEMANTIC_INTENT_TOKENS:
+            continue
+        if len(token) <= 2 and not token.isdigit():
+            continue
+        tokens.add(token)
+    return tokens
+
+
+def _token_overlap_metrics(tokens_a: set[str], tokens_b: set[str]) -> tuple[float, float, int]:
+    if not tokens_a or not tokens_b:
+        return 0.0, 0.0, 0
+
+    intersection = len(tokens_a & tokens_b)
+    if intersection == 0:
+        return 0.0, 0.0, 0
+
+    union = len(tokens_a | tokens_b)
+    jaccard = intersection / union
+    coverage = intersection / min(len(tokens_a), len(tokens_b))
+    return jaccard, coverage, intersection
+
+
+def _is_semantic_text_duplicate(text_a: str, text_b: str) -> bool:
+    normalized_a = _normalize_card_text(text_a)
+    normalized_b = _normalize_card_text(text_b)
+    if not normalized_a or not normalized_b:
+        return False
+
+    if normalized_a == normalized_b:
+        return True
+
+    if min(len(normalized_a), len(normalized_b)) >= 25 and (
+        normalized_a in normalized_b or normalized_b in normalized_a
+    ):
+        return True
+
+    tokens_a = _semantic_tokens(normalized_a)
+    tokens_b = _semantic_tokens(normalized_b)
+    if SequenceMatcher(None, normalized_a, normalized_b).ratio() >= 0.93 and tokens_a == tokens_b:
+        return True
+    if tokens_a and tokens_a == tokens_b and len(tokens_a) >= 2:
+        return True
+
+    jaccard, coverage, intersection = _token_overlap_metrics(tokens_a, tokens_b)
+    if intersection >= 3 and jaccard >= 0.75:
+        return True
+    if intersection >= 4 and coverage >= 0.8:
+        return True
+
+    return False
+
+
+def _is_semantic_card_duplicate(candidate: dict, existing: dict) -> bool:
+    if _is_semantic_text_duplicate(candidate["front"], existing["front"]):
+        return True
+
+    candidate_front_tokens = _semantic_tokens(candidate["front"])
+    existing_front_tokens = _semantic_tokens(existing["front"])
+    front_jaccard, front_coverage, front_intersection = _token_overlap_metrics(
+        candidate_front_tokens,
+        existing_front_tokens,
+    )
+    if front_intersection < 2:
+        return False
+
+    candidate_back = _normalize_card_text(candidate["back"])
+    existing_back = _normalize_card_text(existing["back"])
+    back_ratio = SequenceMatcher(None, candidate_back, existing_back).ratio()
+    back_jaccard, _, back_intersection = _token_overlap_metrics(
+        _semantic_tokens(candidate["back"]),
+        _semantic_tokens(existing["back"]),
+    )
+
+    if front_jaccard >= 0.6 and front_coverage >= 0.75 and back_ratio >= 0.75:
+        return True
+    if front_coverage >= 0.9 and back_intersection >= 2 and back_jaccard >= 0.5:
+        return True
+
+    return False
+
+
 def _sanitize_card(raw_card: object) -> dict | None:
     if not isinstance(raw_card, dict):
         return None
@@ -246,10 +382,16 @@ def _sanitize_card(raw_card: object) -> dict | None:
     }
 
 
-def _dedupe_cards(cards: list[object], seen_fronts: set[str] | None = None) -> list[dict]:
+def _dedupe_cards(
+    cards: list[object],
+    *,
+    seen_fronts: set[str] | None = None,
+    existing_cards: list[dict] | None = None,
+) -> list[dict]:
     accepted: list[dict] = []
     seen_front_keys = set(seen_fronts or set())
     seen_pairs: set[tuple[str, str]] = set()
+    semantic_pool: list[dict] = list(existing_cards or [])
 
     for raw_card in cards:
         card = _sanitize_card(raw_card)
@@ -262,10 +404,13 @@ def _dedupe_cards(cards: list[object], seen_fronts: set[str] | None = None) -> l
 
         if not front_key or front_key in seen_front_keys or pair_key in seen_pairs:
             continue
+        if any(_is_semantic_card_duplicate(card, existing) for existing in semantic_pool):
+            continue
 
         seen_front_keys.add(front_key)
         seen_pairs.add(pair_key)
         accepted.append(card)
+        semantic_pool.append(card)
 
     return accepted
 
@@ -378,7 +523,11 @@ def _collect_flashcards(fetch_batch, *, total_cards: int, target_counts: dict[st
             excluded_fronts=excluded_fronts,
         )
 
-        prepared_cards = _dedupe_cards(batch, seen_fronts=seen_fronts)
+        prepared_cards = _dedupe_cards(
+            batch,
+            seen_fronts=seen_fronts,
+            existing_cards=accepted,
+        )
         seen_fronts.update(_normalize_card_text(card["front"]) for card in prepared_cards)
 
         if target_counts is None:
