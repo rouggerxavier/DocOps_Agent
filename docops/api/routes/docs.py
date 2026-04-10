@@ -15,6 +15,7 @@ from docops.db.crud import list_documents_for_user, get_document_by_user_and_doc
 from docops.db.database import get_db
 from docops.db.models import User
 from docops.logging import get_logger
+from docops.storage.paths import get_user_upload_dir, is_path_within
 
 logger = get_logger("docops.api.docs")
 
@@ -86,7 +87,8 @@ async def delete_doc(
     try:
         from pathlib import Path as _P
         src = _P(doc.source_path) if doc.source_path else None
-        if src and src.exists() and src.is_file():
+        user_upload_dir = get_user_upload_dir(current_user.id)
+        if src and src.exists() and src.is_file() and is_path_within(src, user_upload_dir):
             src.unlink()
     except Exception as exc:
         logger.warning("Falha ao remover arquivo de upload %s: %s", doc.source_path, exc)

@@ -17,6 +17,22 @@ def _ensure_dir(path: Path) -> Path:
     return path
 
 
+def resolve_path(path: str | Path) -> Path:
+    """Resolve path safely for comparisons and filesystem checks."""
+    return Path(path).expanduser().resolve()
+
+
+def is_path_within(path: str | Path, base_dir: str | Path) -> bool:
+    """Return True when path is contained inside base_dir after resolve()."""
+    candidate = resolve_path(path)
+    base = resolve_path(base_dir)
+    try:
+        candidate.relative_to(base)
+        return True
+    except ValueError:
+        return False
+
+
 def get_user_upload_dir(user_id: int) -> Path:
     """Return (and create) the upload directory for a user."""
     base = getattr(config, "uploads_dir", None)

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import tempfile
 import unicodedata
 from pathlib import Path
 from typing import List
@@ -21,7 +20,7 @@ from docops.db.database import get_db
 from docops.db.models import User
 from docops.ingestion.metadata import build_doc_id, infer_file_type
 from docops.logging import get_logger
-from docops.storage.paths import get_user_upload_dir
+from docops.storage.paths import get_user_upload_dir, is_path_within, resolve_path
 
 logger = get_logger("docops.api.ingest")
 router = APIRouter()
@@ -45,6 +44,56 @@ def _file_sha256(path: Path) -> str | None:
     return digest.hexdigest()
 
 
+def _format_mebibytes(max_bytes: int) -> str:
+    return f"{max_bytes / (1024 * 1024):.1f} MiB"
+
+
+def _payload_too_large(label: str, max_bytes: int) -> HTTPException:
+    return HTTPException(
+        status_code=413,
+        detail=f"{label} exceeds maximum size of {_format_mebibytes(max_bytes)}.",
+    )
+
+
+async def _read_upload_limited(upload: UploadFile, *, max_bytes: int, label: str) -> bytes:
+    total = 0
+    chunks: list[bytes] = []
+
+    while True:
+        chunk = await upload.read(1024 * 1024)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise _payload_too_large(label, max_bytes)
+        chunks.append(chunk)
+
+    return b"".join(chunks)
+
+
+async def _write_upload_limited(
+    upload: UploadFile,
+    destination: Path,
+    *,
+    max_bytes: int,
+    label: str,
+) -> None:
+    total = 0
+    try:
+        with open(destination, "wb") as handle:
+            while True:
+                chunk = await upload.read(1024 * 1024)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > max_bytes:
+                    raise _payload_too_large(label, max_bytes)
+                handle.write(chunk)
+    except Exception:
+        destination.unlink(missing_ok=True)
+        raise
+
+
 def _run_ingest(
     user_id: int,
     paths: List[Path],
@@ -55,7 +104,6 @@ def _run_ingest(
     from docops.ingestion.indexer import index_chunks_for_user
     from docops.ingestion.loaders import load_directory, load_file
     from docops.ingestion.splitter import split_documents
-    from docops.rag.hybrid import build_bm25_index_for_user
 
     effective_chunk_size = chunk_size or config.chunk_size
     effective_chunk_overlap = chunk_overlap or config.chunk_overlap
@@ -95,7 +143,6 @@ def _run_ingest(
         chunk.metadata["user_id"] = user_id
 
     indexed = index_chunks_for_user(user_id=user_id, chunks=chunks)
-    build_bm25_index_for_user(user_id=user_id, chunks=chunks)
 
     docs_map: dict[str, dict] = {}
     for chunk in chunks:
@@ -138,10 +185,10 @@ async def ingest_by_path(
     db: Session = Depends(get_db),
 ) -> IngestResponse:
     """Ingest a local server path into current_user scope."""
-    path = Path(body.path).resolve()
+    path = resolve_path(body.path)
 
     allowed_dirs = [allowed.resolve() for allowed in config.ingest_allowed_dirs]
-    if not any(str(path).startswith(str(allowed)) for allowed in allowed_dirs):
+    if not any(is_path_within(path, allowed) for allowed in allowed_dirs):
         allowed_label = ", ".join(str(allowed) for allowed in allowed_dirs)
         raise HTTPException(
             status_code=403,
@@ -179,6 +226,7 @@ async def ingest_upload(
 
     upload_dir = get_user_upload_dir(current_user.id)
     saved_paths: list[Path] = []
+    max_upload_bytes = config.ingest_upload_max_bytes
 
     for upload in files:
         ext = Path(upload.filename or "").suffix.lower()
@@ -190,7 +238,12 @@ async def ingest_upload(
 
         safe_name = unicodedata.normalize("NFC", Path(upload.filename or f"upload{ext}").name)
         destination = upload_dir / safe_name
-        destination.write_bytes(await upload.read())
+        await _write_upload_limited(
+            upload,
+            destination,
+            max_bytes=max_upload_bytes,
+            label=f"File '{safe_name}'",
+        )
         saved_paths.append(destination)
 
     logger.info("Ingest upload for user %s: %s files", current_user.id, len(saved_paths))
@@ -249,7 +302,11 @@ async def ingest_photo(
             detail=f"Tipo de imagem nao suportado: {ext}. Use: {sorted(allowed_types)}",
         )
 
-    image_bytes = await file.read()
+    image_bytes = await _read_upload_limited(
+        file,
+        max_bytes=config.ingest_photo_max_bytes,
+        label="Image upload",
+    )
     extracted = await asyncio.to_thread(_ocr_with_gemini, image_bytes, ext)
 
     if not extracted or len(extracted.strip()) < 10:

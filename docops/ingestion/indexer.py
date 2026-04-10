@@ -4,7 +4,9 @@ Each user gets their own Chroma collection (docops_user_<id>),
 ensuring complete data isolation at the vector store level.
 
 Supports incremental ingestion: when INGEST_INCREMENTAL=true, existing
-chunks with the same ID are skipped (upsert semantics via stable IDs).
+documents are compared by doc_id and unchanged documents can be skipped.
+For reingest, previous chunks for the same doc_id are replaced to avoid
+stale vector/BM25 state.
 """
 
 import json
@@ -124,6 +126,137 @@ def _save_manifest(user_id: int, manifest: dict) -> None:
         json.dump(manifest, f, ensure_ascii=False, indent=2)
 
 
+def _normalize_id_list(raw: object) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    return [str(item) for item in raw if str(item)]
+
+
+def _remove_chunk_ids_from_manifest(user_id: int, chunk_ids: set[str]) -> None:
+    if not chunk_ids:
+        return
+    manifest = _load_manifest(user_id)
+    if not manifest:
+        return
+    before = len(manifest)
+    filtered = {k: v for k, v in manifest.items() if k not in chunk_ids}
+    if len(filtered) != before:
+        _save_manifest(user_id, filtered)
+
+
+def _strip_embedding_meta_header(text: str) -> str:
+    if text.startswith("[meta] ") and "\n" in text:
+        return text.split("\n", 1)[1]
+    return text
+
+
+def _sync_bm25_from_vectorstore_for_user(user_id: int, embeddings=None) -> None:
+    """Rebuild BM25 corpus from the authoritative vectorstore state."""
+    if user_id <= 0:
+        return
+
+    from docops.rag.hybrid import build_bm25_index_for_user
+
+    vs = get_vectorstore_for_user(user_id, embeddings=embeddings)
+    collection = getattr(vs, "_collection", None)
+    if collection is None:
+        logger.warning("Unable to sync BM25 for user %s: vectorstore collection unavailable.", user_id)
+        return
+
+    try:
+        raw = collection.get(include=["documents", "metadatas"])
+    except Exception as exc:
+        logger.warning("Unable to read vectorstore for BM25 sync (user=%s): %s", user_id, exc)
+        return
+
+    if not isinstance(raw, dict):
+        logger.warning("Unexpected vectorstore payload while syncing BM25 for user %s.", user_id)
+        return
+
+    documents = raw.get("documents", [])
+    metadatas = raw.get("metadatas", [])
+    if not isinstance(documents, list):
+        documents = []
+    if not isinstance(metadatas, list):
+        metadatas = []
+
+    chunks: list[Document] = []
+    for idx, text in enumerate(documents):
+        if not isinstance(text, str):
+            continue
+        meta = metadatas[idx] if idx < len(metadatas) and isinstance(metadatas[idx], dict) else {}
+        chunks.append(
+            Document(
+                page_content=_strip_embedding_meta_header(text),
+                metadata=deepcopy(meta),
+            )
+        )
+
+    build_bm25_index_for_user(user_id=user_id, chunks=chunks)
+
+
+def _replace_doc_chunks_in_collection(
+    *,
+    user_id: int,
+    chunks: list[Document],
+    collection,
+    use_incremental: bool,
+) -> list[Document]:
+    """Replace existing chunks per doc_id to prevent stale vectors on reingest."""
+    grouped: dict[str, list[Document]] = {}
+    for chunk in chunks:
+        doc_id = str(chunk.metadata.get("doc_id") or "").strip()
+        grouped.setdefault(doc_id, []).append(chunk)
+
+    kept_chunks: list[Document] = []
+    removed_ids: set[str] = set()
+
+    for doc_id, doc_chunks in grouped.items():
+        if not doc_id:
+            kept_chunks.extend(doc_chunks)
+            continue
+
+        existing_ids: set[str] = set()
+        try:
+            payload = collection.get(where={"doc_id": doc_id}, include=[])
+            if isinstance(payload, dict):
+                existing_ids = set(_normalize_id_list(payload.get("ids", [])))
+        except Exception as exc:
+            logger.warning("Could not inspect existing chunks for doc_id=%s (user=%s): %s", doc_id, user_id, exc)
+
+        incoming_ids = {
+            str(c.metadata.get("chunk_id") or "")
+            for c in doc_chunks
+            if str(c.metadata.get("chunk_id") or "")
+        }
+        unchanged = use_incremental and bool(existing_ids) and existing_ids == incoming_ids
+        if unchanged:
+            logger.info(
+                "Incremental: doc_id=%s unchanged for user %s, skipping reindex.",
+                doc_id,
+                user_id,
+            )
+            continue
+
+        if existing_ids:
+            try:
+                collection.delete(ids=list(existing_ids))
+                removed_ids.update(existing_ids)
+                logger.info(
+                    "Reingest replace: removed %d stale chunks for doc_id=%s (user=%s).",
+                    len(existing_ids),
+                    doc_id,
+                    user_id,
+                )
+            except Exception as exc:
+                logger.warning("Failed to delete stale chunks for doc_id=%s (user=%s): %s", doc_id, user_id, exc)
+
+        kept_chunks.extend(doc_chunks)
+
+    _remove_chunk_ids_from_manifest(user_id, removed_ids)
+    return kept_chunks
+
+
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def index_chunks_for_user(
@@ -149,7 +282,21 @@ def index_chunks_for_user(
         normalized_chunks.append(cloned)
     chunks = normalized_chunks
 
-    if use_incremental:
+    vs = get_vectorstore_for_user(user_id, embeddings=embeddings)
+    collection = getattr(vs, "_collection", None)
+
+    if user_id > 0 and collection is not None:
+        chunks = _replace_doc_chunks_in_collection(
+            user_id=user_id,
+            chunks=chunks,
+            collection=collection,
+            use_incremental=use_incremental,
+        )
+        if not chunks:
+            _sync_bm25_from_vectorstore_for_user(user_id, embeddings=embeddings)
+            return 0
+    elif use_incremental:
+        # Legacy fallback path (user_id=0 and mock-based tests).
         manifest = _load_manifest(user_id)
         new_chunks = [c for c in chunks if c.metadata["chunk_id"] not in manifest]
         skipped = len(chunks) - len(new_chunks)
@@ -160,7 +307,6 @@ def index_chunks_for_user(
             return 0
         chunks = new_chunks
 
-    vs = get_vectorstore_for_user(user_id, embeddings=embeddings)
     ids = [chunk.metadata["chunk_id"] for chunk in chunks]
 
     index_docs: list[Document] = []
@@ -176,6 +322,8 @@ def index_chunks_for_user(
         for chunk in chunks:
             manifest[chunk.metadata["chunk_id"]] = chunk.metadata.get("file_name", "unknown")
         _save_manifest(user_id, manifest)
+
+    _sync_bm25_from_vectorstore_for_user(user_id, embeddings=embeddings)
 
     logger.info(f"Indexed {len(chunks)} chunks for user {user_id} at '{config.chroma_dir}'")
     return len(chunks)
@@ -223,17 +371,13 @@ def delete_doc_from_index(doc_id: str, user_id: int, embeddings=None) -> int:
 
     # Find IDs matching this doc_id
     results = collection.get(where={"doc_id": doc_id}, include=[])
-    ids_to_delete = results.get("ids", [])
+    ids_to_delete = _normalize_id_list(results.get("ids", []) if isinstance(results, dict) else [])
 
     if ids_to_delete:
         collection.delete(ids=ids_to_delete)
         logger.info("Removidos %d chunks do Chroma para doc_id=%s user=%s", len(ids_to_delete), doc_id, user_id)
 
-    # Update manifest
-    manifest = _load_manifest(user_id)
-    before = len(manifest)
-    manifest = {k: v for k, v in manifest.items() if k not in set(ids_to_delete)}
-    if len(manifest) < before:
-        _save_manifest(user_id, manifest)
+    _remove_chunk_ids_from_manifest(user_id, set(ids_to_delete))
+    _sync_bm25_from_vectorstore_for_user(user_id, embeddings=embeddings)
 
     return len(ids_to_delete)

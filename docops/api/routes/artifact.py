@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
@@ -251,6 +251,7 @@ async def delete_artifact(
 @router.get("/artifacts/{filename}/pdf")
 async def download_artifact_pdf(
     filename: str,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> FileResponse:
@@ -303,10 +304,14 @@ async def download_artifact_pdf(
     except Exception as exc:
         import traceback
         logger.error(f"PDF generation error: {exc}\n{traceback.format_exc()}")
+        pdf_path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail="Erro ao gerar PDF")
+
+    background_tasks.add_task(pdf_path.unlink, missing_ok=True)
 
     return FileResponse(
         path=str(pdf_path),
         filename=pdf_name,
         media_type="application/pdf",
+        background=background_tasks,
     )
