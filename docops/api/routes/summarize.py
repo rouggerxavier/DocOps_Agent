@@ -6,10 +6,12 @@ import asyncio
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from docops.api.schemas import JobCreateResponse, SummarizeRequest, SummarizeResponse
 from docops.auth.dependencies import get_current_user
+from docops.config import config
 from docops.db.crud import create_artifact_record
 from docops.db.database import SessionLocal, get_db
 from docops.db.models import User
@@ -114,10 +116,13 @@ async def summarize(
         logger.exception("Summarize error: %s", exc)
         raise HTTPException(status_code=500, detail="Agent error")
 
-    # Strict fail-closed: em perfil strict, se accepted=False retorna 422
+    # Strict fail-closed: em perfil strict, accepted=False retorna 422 apenas
+    # quando SUMMARY_FAIL_CLOSED_STRICT estiver habilitado.
     if body.summary_mode == "deep" and result.get("diagnostics"):
         diag = result["diagnostics"]
-        if not diag.get("final", {}).get("accepted", True) and diag.get("profile_used") == "strict":
+        strict_profile = diag.get("profile_used") == "strict"
+        accepted = diag.get("final", {}).get("accepted", True)
+        if strict_profile and not accepted and config.summary_fail_closed_strict:
             blocking = diag.get("final", {}).get("blocking_reasons", [])
             raise HTTPException(
                 status_code=422,
@@ -129,6 +134,10 @@ async def summarize(
                         "Revise os limiares ou utilize os perfis 'balanced' ou 'model_first'."
                     ),
                 },
+            )
+        if strict_profile and not accepted and not config.summary_fail_closed_strict:
+            logger.warning(
+                "Strict gate reprovou o resumo, mas SUMMARY_FAIL_CLOSED_STRICT=false; retornando resposta."
             )
 
     if body.save and result.get("artifact_path") and result.get("artifact_filename"):
@@ -147,7 +156,9 @@ async def summarize(
         answer=str(result.get("answer", "")),
         artifact_path=result.get("artifact_path"),
         artifact_filename=result.get("artifact_filename"),
-        summary_diagnostics=result.get("diagnostics") if body.debug_summary else None,
+        summary_diagnostics=(
+            jsonable_encoder(result.get("diagnostics")) if body.debug_summary else None
+        ),
     )
 
 
@@ -208,7 +219,9 @@ async def summarize_async(
             "answer": str(result.get("answer", "")),
             "artifact_path": result.get("artifact_path"),
             "artifact_filename": result.get("artifact_filename"),
-            "summary_diagnostics": result.get("diagnostics") if body.debug_summary else None,
+            "summary_diagnostics": (
+                jsonable_encoder(result.get("diagnostics")) if body.debug_summary else None
+            ),
         }
 
     schedule_job(job["job_id"], _runner)

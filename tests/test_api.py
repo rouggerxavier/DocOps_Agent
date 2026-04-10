@@ -384,6 +384,168 @@ def test_summarize_debug_false_hides_diagnostics(monkeypatch):
     _clear_auth_override()
 
 
+def test_summarize_strict_gate_returns_422_when_fail_closed_enabled(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("SUMMARY_FAIL_CLOSED_STRICT", "true")
+
+    fake_doc = MagicMock(file_name="manual.pdf", doc_id="doc-uuid-1")
+    monkeypatch.setattr("docops.api.routes.summarize.require_user_document", lambda *_a, **_k: fake_doc)
+
+    monkeypatch.setattr(
+        "docops.api.routes.summarize._run_summarize",
+        lambda *_a, **_k: {
+            "answer": "Resumo bloqueado.",
+            "artifact_path": None,
+            "artifact_filename": None,
+            "diagnostics": {
+                "profile_used": "strict",
+                "final": {
+                    "accepted": False,
+                    "blocking_reasons": ["missing_must_cover_topics"],
+                },
+            },
+        },
+    )
+
+    resp = auth_client.post(
+        "/api/summarize",
+        json={"doc": "manual.pdf", "summary_mode": "deep", "debug_summary": True},
+    )
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert detail["error"] == "deep_summary_quality_gate_failed"
+    assert "missing_must_cover_topics" in detail["blocking_reasons"]
+    _clear_auth_override()
+
+
+def test_summarize_strict_gate_returns_200_when_fail_closed_disabled(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("SUMMARY_FAIL_CLOSED_STRICT", "false")
+
+    fake_doc = MagicMock(file_name="manual.pdf", doc_id="doc-uuid-1")
+    monkeypatch.setattr("docops.api.routes.summarize.require_user_document", lambda *_a, **_k: fake_doc)
+
+    monkeypatch.setattr(
+        "docops.api.routes.summarize._run_summarize",
+        lambda *_a, **_k: {
+            "answer": "Resumo liberado.",
+            "artifact_path": None,
+            "artifact_filename": None,
+            "diagnostics": {
+                "profile_used": "strict",
+                "final": {
+                    "accepted": False,
+                    "blocking_reasons": ["missing_must_cover_topics"],
+                },
+            },
+        },
+    )
+
+    resp = auth_client.post(
+        "/api/summarize",
+        json={"doc": "manual.pdf", "summary_mode": "deep", "debug_summary": True},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["answer"] == "Resumo liberado."
+    assert data["summary_diagnostics"]["profile_used"] == "strict"
+    _clear_auth_override()
+
+
+def test_summarize_strict_gate_returns_200_with_jsonable_diagnostics(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("SUMMARY_FAIL_CLOSED_STRICT", "false")
+
+    fake_doc = MagicMock(file_name="manual.pdf", doc_id="doc-uuid-1")
+    monkeypatch.setattr("docops.api.routes.summarize.require_user_document", lambda *_a, **_k: fake_doc)
+
+    # Diagnostics may include non-JSON-native containers from runtime pipeline.
+    # Route must sanitize before returning to avoid 500 in strict-off mode.
+    monkeypatch.setattr(
+        "docops.api.routes.summarize._run_summarize",
+        lambda *_a, **_k: {
+            "answer": "Resumo liberado.",
+            "artifact_path": None,
+            "artifact_filename": None,
+            "diagnostics": {
+                "profile_used": "strict",
+                "final": {
+                    "accepted": False,
+                    "blocking_reasons": {"missing_must_cover_topics"},
+                },
+            },
+        },
+    )
+
+    resp = auth_client.post(
+        "/api/summarize",
+        json={"doc": "manual.pdf", "summary_mode": "deep", "debug_summary": True},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["answer"] == "Resumo liberado."
+    assert data["summary_diagnostics"]["profile_used"] == "strict"
+    assert data["summary_diagnostics"]["final"]["blocking_reasons"] == ["missing_must_cover_topics"]
+    _clear_auth_override()
+
+
+def test_studyplan_500_payload_is_sanitized(monkeypatch):
+    auth_client, _ = _make_auth_client()
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("segredo_interno_nao_deve_vazar")
+
+    monkeypatch.setattr("docops.api.routes.studyplan._generate_plan", _boom)
+
+    resp = auth_client.post(
+        "/api/studyplan",
+        json={"topic": "Algebra Linear", "days": 7, "doc_names": []},
+    )
+    assert resp.status_code == 500
+    assert resp.json()["detail"] == "Erro interno ao gerar plano de estudos."
+    _clear_auth_override()
+
+
+def test_pipeline_evaluate_answer_500_payload_is_sanitized(monkeypatch):
+    auth_client, _ = _make_auth_client()
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("token_interno")
+
+    monkeypatch.setattr("docops.api.routes.pipeline._run_evaluate_answer", _boom)
+
+    resp = auth_client.post(
+        "/api/pipeline/evaluate-answer",
+        json={
+            "question": "Qual e a capital da Franca?",
+            "user_answer": "Paris",
+            "answer_hint": "Capital francesa",
+        },
+    )
+    assert resp.status_code == 500
+    assert resp.json()["detail"] == "Erro interno ao avaliar resposta."
+    _clear_auth_override()
+
+
+def test_pipeline_gap_analysis_500_payload_is_sanitized(monkeypatch):
+    auth_client, _ = _make_auth_client()
+
+    monkeypatch.setattr(
+        "docops.api.routes.pipeline.crud.list_documents_for_user",
+        lambda *_args, **_kwargs: [SimpleNamespace(file_name="manual.pdf", doc_id="doc-1", chunk_count=1)],
+    )
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("detalhe_interno_nao_deve_vazar")
+
+    monkeypatch.setattr("docops.api.routes.pipeline._run_gap_analysis_with_thread_session", _boom)
+
+    resp = auth_client.post("/api/pipeline/gap-analysis", json={"doc_names": []})
+    assert resp.status_code == 500
+    assert resp.json()["detail"] == "Erro interno ao executar análise de lacunas."
+    _clear_auth_override()
+
+
 def test_calendar_reminder_crud():
     auth_client, _ = _make_auth_client()
     start = datetime.now(timezone.utc) + timedelta(hours=2)

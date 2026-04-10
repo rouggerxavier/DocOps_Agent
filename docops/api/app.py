@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from docops.api.routes import (
     artifact,
@@ -28,6 +27,28 @@ from docops.api.routes import (
 )
 from docops.api.routes import auth as auth_routes
 from docops.auth.dependencies import get_current_user
+from docops.config import config
+from docops.logging import get_logger
+
+logger = get_logger("docops.api.app")
+
+
+def _resolve_cors_settings() -> tuple[list[str], list[str], list[str], bool]:
+    origins = list(config.cors_origins)
+    if "*" in origins:
+        if config.is_production:
+            raise RuntimeError("CORS_ORIGINS nao pode conter '*' em producao.")
+        origins = [origin for origin in origins if origin != "*"]
+
+    if config.is_production and not origins:
+        raise RuntimeError("CORS_ORIGINS deve ser uma allow list explicita em producao.")
+
+    return (
+        origins,
+        config.cors_allow_methods,
+        config.cors_allow_headers,
+        config.cors_allow_credentials,
+    )
 
 
 def create_app() -> FastAPI:
@@ -40,17 +61,21 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json",
     )
 
-    # CORS — allow frontend dev server and configurable origins
-    raw_origins = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000")
-    origins = [o.strip() for o in raw_origins.split(",") if o.strip()]
+    # CORS — allow list explicita por ambiente.
+    origins, allow_methods, allow_headers, allow_credentials = _resolve_cors_settings()
 
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_credentials=allow_credentials,
+        allow_methods=allow_methods,
+        allow_headers=allow_headers,
     )
+
+    @app.exception_handler(Exception)
+    async def _internal_error_handler(_: Request, exc: Exception) -> JSONResponse:
+        logger.exception("Unhandled API exception: %s", exc)
+        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
 
     # Criar tabelas no banco ao iniciar (idempotente)
     from docops.db.database import init_db

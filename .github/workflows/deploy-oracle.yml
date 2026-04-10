@@ -7,6 +7,7 @@ on:
     paths:
       - "docops/**"
       - "requirements.txt"
+      - "requirements.lock.txt"
       - "pyproject.toml"
       - "docker/backend/Dockerfile"
       - "docker-compose.yml"
@@ -36,7 +37,11 @@ jobs:
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.lock.txt ]; then
+            pip install -r requirements.lock.txt
+          else
+            pip install -r requirements.txt
+          fi
 
       - name: Run backend pytest gate
         env:
@@ -96,7 +101,11 @@ jobs:
             git checkout main
             git pull --ff-only origin main
             source .venv/bin/activate
-            pip install -r requirements.txt
+            if [ -f requirements.lock.txt ]; then
+              pip install -r requirements.lock.txt
+            else
+              pip install -r requirements.txt
+            fi
             sudo systemctl restart docops
             sudo systemctl --no-pager --full status docops | head -n 20
             for i in $(seq 1 30); do
