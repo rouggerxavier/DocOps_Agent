@@ -42,6 +42,7 @@ from __future__ import annotations
 from typing import Any
 import unicodedata
 import time
+import os
 
 from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -2235,6 +2236,138 @@ Responda APENAS com JSON válido, sem texto antes ou depois.
 FORMATO: {{"formula_coverage": 1.0, "procedure_coverage": 1.0, "example_coverage": 1.0, "concept_coverage": 1.0, "overall_coverage_score": 1.0}}"""
 
 
+def _has_usable_gemini_api_key() -> bool:
+    """Return True when a real Gemini API key is configured."""
+    key = (os.getenv("GEMINI_API_KEY") or "").strip()
+    # Public Gemini API keys follow the AIza prefix. CI placeholders should not.
+    return key.startswith("AIza")
+
+
+def _count_pattern_hits(pattern: re.Pattern[str], text: str) -> int:
+    return sum(1 for _ in pattern.finditer(text or ""))
+
+
+def _normalize_ascii_text(text: str) -> str:
+    decomposed = unicodedata.normalize("NFKD", (text or "").lower())
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))
+
+
+_HEUR_FORMULA_SUMMARY_RE = re.compile(
+    r"\b(?:formula|equacao|calculo|expressao|notacao|argmin|argmax|log2?|ln|exp|sqrt)\b"
+    r"|[=∑∫∏√∞±≤≥≠≈]"
+    r"|[a-zA-Z]_[a-zA-Z0-9{]"
+    r"|\bO\s*\(\s*[^\)]+\)",
+    re.IGNORECASE,
+)
+_HEUR_FORMULA_NEGATION_RE = re.compile(
+    r"\bsem\b.{0,30}\bformulas?\b.{0,30}\b(?:nem|nao)\b.{0,30}\bequac(?:ao|oes)\b",
+    re.IGNORECASE,
+)
+_HEUR_PROCEDURE_SUMMARY_RE = re.compile(
+    r"\b(?:algoritmo|passo|etapa|procedimento|metodo|processo|sequencia|protocolo|fluxo|etapas)\b",
+    re.IGNORECASE,
+)
+_HEUR_PROCEDURE_NEGATION_RE = re.compile(
+    r"\bsem\b.{0,25}\b(?:algoritmo|procedimento|processo|passo|etapa)s?\b",
+    re.IGNORECASE,
+)
+_HEUR_EXAMPLE_SUMMARY_RE = re.compile(
+    r"\b(?:exemplo|por exemplo|e\.g\.|i\.e\.|caso)\b",
+    re.IGNORECASE,
+)
+_HEUR_CONCEPT_SUMMARY_RE = re.compile(
+    r"\b(?:conceito|definicao|definido como|se define como|termino|nocao|fundament)\b",
+    re.IGNORECASE,
+)
+
+
+def _score_coverage_heuristic(
+    final_text: str,
+    signals: dict[str, Any],
+    coverage_profile: dict[str, Any] | None = None,
+) -> dict[str, float]:
+    """Deterministic regex-based coverage scoring used when LLM scoring is unavailable."""
+    if not signals or not final_text:
+        return {
+            "formula_coverage": 1.0,
+            "procedure_coverage": 1.0,
+            "example_coverage": 1.0,
+            "concept_coverage": 1.0,
+            "overall_coverage_score": 1.0,
+        }
+
+    norm_text = _normalize_ascii_text(final_text)
+
+    formula_hits = _count_pattern_hits(_HEUR_FORMULA_SUMMARY_RE, norm_text)
+    if _HEUR_FORMULA_NEGATION_RE.search(norm_text):
+        formula_hits = 0
+    procedure_hits = _count_pattern_hits(_HEUR_PROCEDURE_SUMMARY_RE, norm_text)
+    if _HEUR_PROCEDURE_NEGATION_RE.search(norm_text):
+        procedure_hits = 0
+    example_hits = _count_pattern_hits(_HEUR_EXAMPLE_SUMMARY_RE, norm_text)
+    concept_hits = _count_pattern_hits(_HEUR_CONCEPT_SUMMARY_RE, norm_text)
+
+    concept_min_hits = (
+        int(coverage_profile.get("concept_min_hits"))
+        if coverage_profile and coverage_profile.get("concept_min_hits") is not None
+        else int(getattr(config, "summary_coverage_concept_min_hits", 2))
+    )
+
+    formula_active = bool(signals.get("has_formulas"))
+    procedure_active = bool(signals.get("has_procedures"))
+    example_active = bool(signals.get("has_examples"))
+    concept_active = bool(signals.get("has_concepts")) and int(signals.get("concept_chunks", 0)) >= concept_min_hits
+
+    formula_cov = min(1.0, formula_hits / 2.0) if formula_active else 1.0
+    procedure_cov = min(1.0, float(procedure_hits)) if procedure_active else 1.0
+    example_cov = min(1.0, float(example_hits)) if example_active else 1.0
+    concept_cov = min(1.0, float(concept_hits)) if concept_active else 1.0
+
+    weight_formula = float(
+        coverage_profile.get("weight_formula", getattr(config, "summary_coverage_weight_formula", 0.30))
+        if coverage_profile else getattr(config, "summary_coverage_weight_formula", 0.30)
+    )
+    weight_procedure = float(
+        coverage_profile.get("weight_procedure", getattr(config, "summary_coverage_weight_procedure", 0.30))
+        if coverage_profile else getattr(config, "summary_coverage_weight_procedure", 0.30)
+    )
+    weight_example = float(
+        coverage_profile.get("weight_example", getattr(config, "summary_coverage_weight_example", 0.20))
+        if coverage_profile else getattr(config, "summary_coverage_weight_example", 0.20)
+    )
+    weight_concept = float(
+        coverage_profile.get("weight_concept", getattr(config, "summary_coverage_weight_concept", 0.20))
+        if coverage_profile else getattr(config, "summary_coverage_weight_concept", 0.20)
+    )
+
+    weighted_parts: list[tuple[float, float]] = []
+    if formula_active:
+        weighted_parts.append((formula_cov, weight_formula))
+    if procedure_active:
+        weighted_parts.append((procedure_cov, weight_procedure))
+    if example_active:
+        weighted_parts.append((example_cov, weight_example))
+    if concept_active:
+        weighted_parts.append((concept_cov, weight_concept))
+
+    if not weighted_parts:
+        overall = 1.0
+    else:
+        denom = sum(w for _, w in weighted_parts)
+        if denom <= 0:
+            overall = sum(v for v, _ in weighted_parts) / len(weighted_parts)
+        else:
+            overall = sum(v * w for v, w in weighted_parts) / denom
+
+    return {
+        "formula_coverage": round(max(0.0, min(1.0, formula_cov)), 4),
+        "procedure_coverage": round(max(0.0, min(1.0, procedure_cov)), 4),
+        "example_coverage": round(max(0.0, min(1.0, example_cov)), 4),
+        "concept_coverage": round(max(0.0, min(1.0, concept_cov)), 4),
+        "overall_coverage_score": round(max(0.0, min(1.0, overall)), 4),
+    }
+
+
 def detect_coverage_signals(chunks: list[Document]) -> dict[str, Any]:
     """Detect content signal types present in document chunks using LLM.
 
@@ -2250,6 +2383,35 @@ def detect_coverage_signals(chunks: list[Document]) -> dict[str, Any]:
             "total_chunks": 0,
             "has_formulas": False, "has_procedures": False,
             "has_examples": False, "has_concepts": False,
+        }
+
+    # Deterministic regex fallback (also used as primary in no-key CI).
+    formula_chunks = 0
+    procedure_chunks = 0
+    example_chunks = 0
+    concept_chunks = 0
+    for chunk in chunks:
+        chunk_text = chunk.page_content if hasattr(chunk, "page_content") else str(chunk)
+        if _COVERAGE_FORMULA_SIGNAL_RE.search(chunk_text or ""):
+            formula_chunks += 1
+        if _COVERAGE_PROCEDURE_SIGNAL_RE.search(chunk_text or ""):
+            procedure_chunks += 1
+        if _COVERAGE_EXAMPLE_SIGNAL_RE.search(chunk_text or ""):
+            example_chunks += 1
+        if _COVERAGE_CONCEPT_SIGNAL_RE.search(chunk_text or ""):
+            concept_chunks += 1
+
+    if not _has_usable_gemini_api_key():
+        return {
+            "formula_chunks": formula_chunks,
+            "procedure_chunks": procedure_chunks,
+            "example_chunks": example_chunks,
+            "concept_chunks": concept_chunks,
+            "total_chunks": total,
+            "has_formulas": formula_chunks >= 1,
+            "has_procedures": procedure_chunks >= 1,
+            "has_examples": example_chunks >= 1,
+            "has_concepts": concept_chunks >= 1,
         }
 
     # Sample up to 20 chunks for the prompt
@@ -2273,13 +2435,14 @@ def detect_coverage_signals(chunks: list[Document]) -> dict[str, Any]:
         raw = re.sub(r"\s*```$", "", raw).strip()
         parsed = _json.loads(raw)
 
-        formula_chunks = int(parsed.get("formula_chunks", 0))
-        procedure_chunks = int(parsed.get("procedure_chunks", 0))
-        example_chunks = int(parsed.get("example_chunks", 0))
-        concept_chunks = int(parsed.get("concept_chunks", 0))
+        formula_chunks = int(parsed.get("formula_chunks", formula_chunks))
+        procedure_chunks = int(parsed.get("procedure_chunks", procedure_chunks))
+        example_chunks = int(parsed.get("example_chunks", example_chunks))
+        concept_chunks = int(parsed.get("concept_chunks", concept_chunks))
     except Exception as exc:
-        _pipeline_logger.warning(f"LLM coverage signal detection failed ({exc}); defaulting to zeros.")
-        formula_chunks = procedure_chunks = example_chunks = concept_chunks = 0
+        logger.warning(
+            f"LLM coverage signal detection failed ({exc}); using heuristic fallback."
+        )
 
     return {
         "formula_chunks": formula_chunks,
@@ -2322,6 +2485,9 @@ def score_coverage(
         f"concept: has={signals.get('has_concepts', False)}, chunks={signals.get('concept_chunks', 0)}"
     )
 
+    if not _has_usable_gemini_api_key():
+        return _score_coverage_heuristic(final_text, signals, coverage_profile=coverage_profile)
+
     try:
         import json as _json
         from langchain_core.messages import HumanMessage
@@ -2358,8 +2524,8 @@ def score_coverage(
             "overall_coverage_score": round(overall, 4),
         }
     except Exception as exc:
-        _pipeline_logger.warning(f"LLM coverage scoring failed ({exc}); returning 1.0.")
-        return _default
+        logger.warning(f"LLM coverage scoring failed ({exc}); using heuristic fallback.")
+        return _score_coverage_heuristic(final_text, signals, coverage_profile=coverage_profile)
 
 
 def _compute_weak_ratio(grounding_info: dict[str, Any]) -> float:
@@ -2823,6 +2989,20 @@ _LOW_INFO_SECTION_LABELS: frozenset[str] = frozenset({
     "lista de abreviaturas", "lista de siglas", "prefácio", "prefacio",
     "apresentação", "apresentacao", "agradecimentos",
 })
+_LOW_INFO_SECTION_KEYWORDS_ASCII: tuple[str, ...] = (
+    "sumario",
+    "indice",
+    "conteudo",
+    "contents",
+    "table of contents",
+    "lista de figuras",
+    "lista de tabelas",
+    "lista de abreviaturas",
+    "lista de siglas",
+    "prefacio",
+    "apresentacao",
+    "agradecimentos",
+)
 
 # Regex patterns for sentence-level risk classification.
 # These complement the existing coverage-signal patterns but operate at
@@ -2887,20 +3067,33 @@ _low_info_cache: dict[str, bool] = {}
 def _is_low_info_source(anchor: "Document") -> bool:
     """Return True if the anchor chunk comes from a low-information section.
 
-    Uses LLM semantic judgment instead of a hardcoded keyword list.
-    Falls back to False (high-info) on LLM error to avoid false positives.
+    Uses deterministic keyword matching first and only consults LLM when a
+    usable API key is available and the section is ambiguous.
     """
     meta = anchor.metadata
-    section_title = str(meta.get("section_title") or "").strip().lower()
-    section_path = str(meta.get("section_path") or "").strip().lower()
+    section_title = str(meta.get("section_title") or "").strip()
+    section_path = str(meta.get("section_path") or "").strip()
 
-    # Fast path: empty metadata → treat as high-info
+    # Fast path: empty metadata -> treat as high-info
     if not section_title and not section_path:
         return False
 
     cache_key = f"{section_title}||{section_path}"
     if cache_key in _low_info_cache:
         return _low_info_cache[cache_key]
+
+    title_norm = _normalize_ascii_text(section_title)
+    path_norm = _normalize_ascii_text(section_path)
+    if any(
+        kw in title_norm or kw in path_norm
+        for kw in _LOW_INFO_SECTION_KEYWORDS_ASCII
+    ):
+        _low_info_cache[cache_key] = True
+        return True
+
+    if not _has_usable_gemini_api_key():
+        _low_info_cache[cache_key] = False
+        return False
 
     try:
         from langchain_core.messages import HumanMessage
@@ -2914,7 +3107,7 @@ def _is_low_info_source(anchor: "Document") -> bool:
         raw = response_text(response).strip().lower()
         result = "low_info" in raw and "high_info" not in raw
     except Exception as exc:
-        _pipeline_logger.warning(f"LLM low-info check failed ({exc}); treating as high-info.")
+        logger.warning(f"LLM low-info check failed ({exc}); treating as high-info.")
         result = False
 
     _low_info_cache[cache_key] = result
@@ -2963,6 +3156,8 @@ def _classify_claim_risks_llm(
     citation_anchors: list["Document"],
 ) -> list[dict[str, Any]] | None:
     """Use LLM to classify all sentences at once. Returns None on failure."""
+    if not _has_usable_gemini_api_key():
+        return None
     try:
         import json as _json
         from langchain_core.messages import HumanMessage
@@ -2999,7 +3194,7 @@ def _classify_claim_risks_llm(
             return None
         return parsed
     except Exception as exc:
-        _pipeline_logger.warning(f"LLM claim risk classification failed ({exc}); using fallback.")
+        logger.warning(f"LLM claim risk classification failed ({exc}); using fallback.")
         return None
 
 
@@ -3007,7 +3202,7 @@ def _classify_claim_risks_fallback(
     sentences: list[str],
     citation_anchors: list["Document"],
 ) -> list[dict[str, Any]]:
-    """Minimal fallback: mark all sentences as descriptive with citation check only."""
+    """Deterministic fallback claim-risk classifier (regex-based)."""
     _require_non_low_info = bool(
         getattr(config, "summary_require_non_low_info_for_high_risk", True)
     )
@@ -3018,14 +3213,53 @@ def _classify_claim_risks_fallback(
             i - 1 for i in cited_indices_1based
             if 1 <= i <= len(citation_anchors)
         ]
+        sentence_norm = _normalize_ascii_text(sentence)
+
+        risk_type = "descriptive"
+        if (
+            _COVERAGE_FORMULA_SIGNAL_RE.search(sentence)
+            or re.search(r"\b[A-Za-z]\w*\s*\([^)]*\)\s*=\s*[^=\s]", sentence)
+            or re.search(r"\b[A-Za-z]\w*\s*=\s*[^=\s]", sentence)
+            or re.search(r"\b\d+\s*/\s*[A-Za-z0-9]+\b", sentence)
+        ):
+            risk_type = "formula"
+        elif _RISK_QUANTITATIVE_RE.search(sentence):
+            risk_type = "quantitative"
+        elif _RISK_COMPARISON_RE.search(sentence):
+            risk_type = "taxonomy_comparison"
+        elif _RISK_TECHNICAL_ASSERTION_RE.search(sentence) or (
+            re.search(r"\b(mitig|reduz|melhor|aument|otimiz|estabiliz|control|valida)\w*", sentence_norm)
+            and re.search(r"\b(varianc|overfitting|sobreajust|generaliz|robust|desempenh|hiperparam)\w*", sentence_norm)
+        ):
+            risk_type = "technical_assertion"
+        elif _COVERAGE_PROCEDURE_SIGNAL_RE.search(sentence):
+            risk_type = "procedural"
+
+        high_risk = risk_type != "descriptive"
+        low_info_only = False
+        if cited_indices_0based:
+            cited_low_info = [
+                _is_low_info_source(citation_anchors[i])
+                for i in cited_indices_0based
+                if i < len(citation_anchors)
+            ]
+            if cited_low_info:
+                low_info_only = all(cited_low_info)
+
+        unsupported = False
+        if high_risk and not cited_indices_0based:
+            unsupported = True
+        elif high_risk and low_info_only and _require_non_low_info:
+            unsupported = True
+
         classified.append({
             "idx": idx,
             "text": sentence,
-            "risk_type": "descriptive",
-            "high_risk": False,
+            "risk_type": risk_type,
+            "high_risk": high_risk,
             "cited_indices": cited_indices_0based,
-            "low_info_only": False,
-            "unsupported": False,
+            "low_info_only": low_info_only,
+            "unsupported": unsupported,
         })
     return classified
 
@@ -6548,3 +6782,4 @@ def run_deep_summary(
     if include_diagnostics or _active_profile == "strict":
         result["diagnostics"] = diagnostics
     return result
+

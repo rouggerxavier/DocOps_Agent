@@ -108,7 +108,7 @@ class Config:
     @property
     def gemini_model_qa_simple(self) -> str:
         """Model for simple QA responses (default: gemini-2.5-flash)."""
-        return os.getenv("GEMINI_MODEL_QA_SIMPLE", "gemini-3-flash-preview")
+        return os.getenv("GEMINI_MODEL_QA_SIMPLE", "gemini-2.5-flash")
 
     @property
     def max_retries(self) -> int:
@@ -201,7 +201,7 @@ class Config:
 
         Default: 'heuristic' â€” safe to use without extra API calls.
         """
-        return os.getenv("GROUNDED_VERIFIER_MODE", "llm").lower()
+        return os.getenv("GROUNDED_VERIFIER_MODE", "heuristic").lower()
 
     @property
     def grounded_verifier_threshold(self) -> float:
@@ -219,7 +219,7 @@ class Config:
     @property
     def grounded_claims_mode(self) -> str:
         """Claim extraction mode: heuristic | llm | hybrid."""
-        return os.getenv("GROUNDED_CLAIMS_MODE", "llm").lower()
+        return os.getenv("GROUNDED_CLAIMS_MODE", "heuristic").lower()
 
     @property
     def grounding_repair_max_passes(self) -> int:
@@ -833,3 +833,4 @@ class Config:
 
 # Singleton instance used throughout the package
 config = Config()
+

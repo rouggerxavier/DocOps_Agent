@@ -120,9 +120,10 @@ def extract_claims(
 
     llm_claims = _llm_claims(text)
     if effective_mode == "llm":
+        selected = llm_claims or heur
         if include_cited:
-            return _dedupe(llm_claims)
-        return _dedupe([c for c in llm_claims if not _CITATION_RE.search(c)])
+            return _dedupe(selected)
+        return _dedupe([c for c in selected if not _CITATION_RE.search(c)])
 
     merged = heur + llm_claims
     if not include_cited:
