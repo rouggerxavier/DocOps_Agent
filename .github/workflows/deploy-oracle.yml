@@ -101,8 +101,18 @@ jobs:
             git checkout main
             git pull --ff-only origin main
             source .venv/bin/activate
+            python --version
             if [ -f requirements.lock.txt ]; then
-              pip install -r requirements.lock.txt
+              if python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"; then
+                echo "Installing from requirements.lock.txt (python >= 3.11)"
+                if ! pip install -r requirements.lock.txt; then
+                  echo "Lock install failed; falling back to requirements.txt"
+                  pip install -r requirements.txt
+                fi
+              else
+                echo "Python < 3.11 detected; using requirements.txt fallback"
+                pip install -r requirements.txt
+              fi
             else
               pip install -r requirements.txt
             fi
