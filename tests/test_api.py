@@ -565,6 +565,8 @@ def test_ingest_photo_rejects_oversized_file(monkeypatch):
 
 def test_delete_doc_does_not_unlink_external_source(monkeypatch):
     auth_client, fake_user = _make_auth_client()
+    app.dependency_overrides[get_db] = _override_get_db
+    Base.metadata.create_all(bind=_test_engine)
     monkeypatch.setattr("docops.ingestion.indexer.delete_doc_from_index", lambda **_kwargs: None, raising=False)
 
     from docops.db.crud import create_document_record, get_document_by_user_and_doc_id
@@ -598,6 +600,8 @@ def test_delete_doc_does_not_unlink_external_source(monkeypatch):
 
 def test_artifact_pdf_temp_file_is_cleaned_up(monkeypatch):
     auth_client, fake_user = _make_auth_client()
+    app.dependency_overrides[get_db] = _override_get_db
+    Base.metadata.create_all(bind=_test_engine)
 
     from docops.db.crud import create_artifact_record
     from docops.storage.paths import get_user_artifacts_dir
