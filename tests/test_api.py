@@ -332,6 +332,10 @@ def test_artifact_not_found():
 def test_artifact_duplicate_filename_requires_id_for_legacy_routes():
     from docops.db import crud
 
+    # Full-suite CI can mutate app dependency overrides across modules.
+    # Pin get_db here so API calls use the same in-memory DB as _TestSession.
+    app.dependency_overrides[get_db] = _override_get_db
+    Base.metadata.create_all(bind=_test_engine)
     auth_client, _ = _make_auth_client()
     with tempfile.TemporaryDirectory() as tmpdir:
         path_a = Path(tmpdir) / "artifact_a.md"
@@ -385,6 +389,7 @@ def test_artifact_duplicate_filename_requires_id_for_legacy_routes():
         assert auth_client.get(f"/api/artifacts/id/{rec_b_id}").status_code == 200
 
     _clear_auth_override()
+    app.dependency_overrides[get_db] = _override_get_db
 
 
 def test_alembic_upgrade_creates_supported_schema(tmp_path):
