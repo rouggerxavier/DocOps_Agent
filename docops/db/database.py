@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Iterator
 
 from sqlalchemy import create_engine
@@ -15,6 +16,18 @@ def _make_engine():
     url = config.database_url
     kwargs = {}
     if url.startswith("sqlite"):
+        # CI and fresh environments may not have the DB parent dir yet.
+        # Ensure SQLite file path can be opened before creating the engine.
+        try:
+            from sqlalchemy.engine.url import make_url
+
+            parsed = make_url(url)
+            db_path = parsed.database
+            if db_path and db_path != ":memory:":
+                Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # Fallback: keep behavior unchanged if URL parsing fails.
+            pass
         kwargs["connect_args"] = {"check_same_thread": False}
     return create_engine(url, **kwargs)
 
