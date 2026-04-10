@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+from typing import Any, Iterator
+
 from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from docops.config import config
 
@@ -22,6 +25,24 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 class Base(DeclarativeBase):
     pass
+
+
+@contextmanager
+def session_scope(bind: Any | None = None) -> Iterator[Session]:
+    """Open/close a SQLAlchemy session, optionally bound to a specific engine/bind.
+
+    Useful for thread workers that must not reuse request-scoped sessions.
+    """
+    SessionFactory = (
+        SessionLocal
+        if bind is None
+        else sessionmaker(autocommit=False, autoflush=False, bind=bind)
+    )
+    db = SessionFactory()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def get_db():

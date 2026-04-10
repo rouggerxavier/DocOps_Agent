@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from threading import Lock
 from types import SimpleNamespace
 import pytest
 from unittest.mock import MagicMock, patch
@@ -489,4 +491,279 @@ def test_chat_forwards_strict_grounding(monkeypatch):
     )
     assert resp.status_code == 200
     assert captured["strict_grounding"] is True
+    _clear_auth_override()
+
+
+def test_chat_to_thread_uses_local_session(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    captured: dict = {}
+    request_db_ref: dict = {}
+
+    def _tracking_get_db():
+        Base.metadata.create_all(bind=_test_engine)
+        db = _TestSession()
+        request_db_ref["db"] = db
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _tracking_get_db
+
+    monkeypatch.setattr(
+        "docops.api.routes.chat._resolve_doc_context",
+        lambda *_args, **_kwargs: {"active_doc_ids": [], "active_doc_names": []},
+    )
+
+    def _fake_orchestrate(message, user_id, db, history=None, session_id=None, active_context=None):
+        captured["thread_db"] = db
+        return {"answer": "ok", "intent": "action"}
+
+    monkeypatch.setattr("docops.services.orchestrator.maybe_orchestrate", _fake_orchestrate)
+
+    resp = auth_client.post("/api/chat", json={"message": "crie uma tarefa"})
+    assert resp.status_code == 200
+    assert captured["thread_db"] is not request_db_ref["db"]
+    assert hasattr(captured["thread_db"], "close")
+
+    app.dependency_overrides[get_db] = _override_get_db
+    _clear_auth_override()
+
+
+def test_pipeline_digest_to_thread_uses_local_session(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    captured: dict = {}
+    request_db_ref: dict = {}
+
+    def _tracking_get_db():
+        Base.metadata.create_all(bind=_test_engine)
+        db = _TestSession()
+        request_db_ref["db"] = db
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _tracking_get_db
+
+    monkeypatch.setattr(
+        "docops.api.routes.pipeline.require_user_document",
+        lambda *_args, **_kwargs: SimpleNamespace(file_name="manual.pdf", doc_id="doc-1"),
+    )
+
+    def _fake_run_digest(
+        doc_name,
+        doc_id,
+        user_id,
+        generate_flashcards,
+        extract_tasks,
+        num_cards,
+        max_tasks,
+        db,
+        schedule_reviews=False,
+    ):
+        captured["thread_db"] = db
+        return {
+            "summary": "Resumo",
+            "deck_id": None,
+            "tasks_created": 0,
+            "task_titles": [],
+            "reviews_scheduled": 0,
+        }
+
+    monkeypatch.setattr("docops.api.routes.pipeline._run_digest", _fake_run_digest)
+
+    resp = auth_client.post("/api/pipeline/digest", json={"doc_name": "manual.pdf"})
+    assert resp.status_code == 200
+    assert captured["thread_db"] is not request_db_ref["db"]
+
+    app.dependency_overrides[get_db] = _override_get_db
+    _clear_auth_override()
+
+
+def test_pipeline_gap_analysis_to_thread_uses_local_session(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    captured: dict = {}
+    request_db_ref: dict = {}
+
+    def _tracking_get_db():
+        Base.metadata.create_all(bind=_test_engine)
+        db = _TestSession()
+        request_db_ref["db"] = db
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _tracking_get_db
+
+    monkeypatch.setattr(
+        "docops.api.routes.pipeline.crud.list_documents_for_user",
+        lambda *_args, **_kwargs: [SimpleNamespace(file_name="manual.pdf", doc_id="doc-1", chunk_count=1)],
+    )
+
+    def _fake_run_gap_analysis(user_id, doc_names, db):
+        captured["thread_db"] = db
+        return [
+            {
+                "topico": "Topico",
+                "descricao": "Descricao",
+                "prioridade": "normal",
+                "sugestao": "Sugestao",
+            }
+        ]
+
+    monkeypatch.setattr("docops.api.routes.pipeline._run_gap_analysis", _fake_run_gap_analysis)
+
+    resp = auth_client.post("/api/pipeline/gap-analysis", json={"doc_names": []})
+    assert resp.status_code == 200
+    assert captured["thread_db"] is not request_db_ref["db"]
+
+    app.dependency_overrides[get_db] = _override_get_db
+    _clear_auth_override()
+
+
+def test_pipeline_study_plan_to_thread_uses_local_session(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    captured: dict = {}
+    request_db_ref: dict = {}
+
+    def _tracking_get_db():
+        Base.metadata.create_all(bind=_test_engine)
+        db = _TestSession()
+        request_db_ref["db"] = db
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _tracking_get_db
+
+    monkeypatch.setattr(
+        "docops.api.routes.pipeline.require_user_document",
+        lambda *_args, **_kwargs: SimpleNamespace(file_name="manual.pdf", doc_id="doc-1"),
+    )
+
+    def _fake_generate_study_plan(
+        doc_name,
+        doc_id,
+        user_id,
+        hours_per_day,
+        deadline,
+        db,
+        generate_flashcards=True,
+        num_cards=15,
+        preferred_start_time="20:00",
+    ):
+        captured["thread_db"] = db
+        return {
+            "plan_text": "Plano",
+            "tasks_created": 1,
+            "reminders_created": 1,
+            "sessions_count": 1,
+            "deck_id": None,
+            "titulo": "Plano",
+            "conflicts": [],
+        }
+
+    monkeypatch.setattr(
+        "docops.services.study_plan_generator.generate_study_plan",
+        _fake_generate_study_plan,
+    )
+    monkeypatch.setattr(
+        "docops.api.routes.pipeline.crud.create_study_plan_record",
+        lambda *_args, **_kwargs: SimpleNamespace(id=123),
+    )
+
+    future_date = (datetime.now(timezone.utc) + timedelta(days=7)).date().isoformat()
+    resp = auth_client.post(
+        "/api/pipeline/study-plan",
+        json={
+            "doc_name": "manual.pdf",
+            "hours_per_day": 2,
+            "deadline_date": future_date,
+            "generate_flashcards": False,
+            "num_cards": 10,
+            "preferred_start_time": "20:00",
+        },
+    )
+    assert resp.status_code == 200
+    assert captured["thread_db"] is not request_db_ref["db"]
+
+    app.dependency_overrides[get_db] = _override_get_db
+    _clear_auth_override()
+
+
+def test_concurrent_chat_and_pipeline_thread_sessions(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    chat_db_ids: list[int] = []
+    digest_db_ids: list[int] = []
+    lock = Lock()
+    Base.metadata.create_all(bind=_test_engine)
+
+    def _thread_safe_get_db():
+        db = _TestSession()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _thread_safe_get_db
+
+    monkeypatch.setattr(
+        "docops.api.routes.chat._resolve_doc_context",
+        lambda *_args, **_kwargs: {"active_doc_ids": [], "active_doc_names": []},
+    )
+
+    def _fake_orchestrate(message, user_id, db, history=None, session_id=None, active_context=None):
+        with lock:
+            chat_db_ids.append(id(db))
+        return {"answer": "ok", "intent": "action"}
+
+    monkeypatch.setattr("docops.services.orchestrator.maybe_orchestrate", _fake_orchestrate)
+    monkeypatch.setattr(
+        "docops.api.routes.pipeline.require_user_document",
+        lambda *_args, **_kwargs: SimpleNamespace(file_name="manual.pdf", doc_id="doc-1"),
+    )
+
+    def _fake_run_digest(
+        doc_name,
+        doc_id,
+        user_id,
+        generate_flashcards,
+        extract_tasks,
+        num_cards,
+        max_tasks,
+        db,
+        schedule_reviews=False,
+    ):
+        with lock:
+            digest_db_ids.append(id(db))
+        return {
+            "summary": "Resumo",
+            "deck_id": None,
+            "tasks_created": 0,
+            "task_titles": [],
+            "reviews_scheduled": 0,
+        }
+
+    monkeypatch.setattr("docops.api.routes.pipeline._run_digest", _fake_run_digest)
+
+    def _hit_chat(i: int) -> int:
+        return auth_client.post("/api/chat", json={"message": f"msg {i}"}).status_code
+
+    def _hit_digest(i: int) -> int:
+        return auth_client.post("/api/pipeline/digest", json={"doc_name": "manual.pdf"}).status_code
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        chat_status = list(pool.map(_hit_chat, range(3)))
+        digest_status = list(pool.map(_hit_digest, range(3)))
+
+    assert all(code == 200 for code in chat_status + digest_status)
+    assert len(chat_db_ids) == 3
+    assert len(digest_db_ids) == 3
+    assert len(set(chat_db_ids)) >= 2
+    assert len(set(digest_db_ids)) >= 2
+
+    app.dependency_overrides[get_db] = _override_get_db
     _clear_auth_override()
