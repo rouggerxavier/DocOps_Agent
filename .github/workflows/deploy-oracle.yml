@@ -102,18 +102,9 @@ jobs:
             git pull --ff-only origin main
             source .venv/bin/activate
             python --version
-            INSTALL_OK=0
-            if [ -f requirements.lock.txt ]; then
-              echo "Trying install from requirements.lock.txt"
-              if pip install -r requirements.lock.txt; then
-                INSTALL_OK=1
-              else
-                echo "Lock install failed; falling back to requirements.txt"
-              fi
-            fi
-            if [ "$INSTALL_OK" -ne 1 ]; then
-              pip install -r requirements.txt
-            fi
+            # Oracle host is currently pinned to Python 3.10, so deploy uses the
+            # compatible dependency spec instead of the CI lockfile.
+            pip install -r requirements.txt
             sudo systemctl restart docops
             sudo systemctl --no-pager --full status docops | head -n 20
             for i in $(seq 1 30); do
