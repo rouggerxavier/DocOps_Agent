@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from docops.api.schemas import ChatRequest, ChatResponse, SourceItem
 from docops.auth.dependencies import get_current_user
 from docops.config import config
-from docops.db.database import get_db
+from docops.db.database import get_db, session_scope
 from docops.db.models import User
 from docops.logging import get_logger
 from docops.rag.citations import _strip_embedding_header
@@ -141,30 +141,33 @@ async def _invoke_orchestrator(
     """Call maybe_orchestrate with compatibility for older monkeypatch signatures."""
     from docops.services.orchestrator import maybe_orchestrate
 
-    try:
-        return await asyncio.to_thread(
-            maybe_orchestrate,
-            message,
-            user_id,
-            db,
-            history,
-            session_id,
-            active_context,
-        )
-    except TypeError:
-        try:
-            return await asyncio.to_thread(
-                maybe_orchestrate,
-                message,
-                user_id,
-                db,
-                history,
-            )
-        except TypeError:
+    def _run_with_local_session() -> dict | None:
+        db_bind = db.get_bind()
+        with session_scope(bind=db_bind) as db_local:
             try:
-                return await asyncio.to_thread(maybe_orchestrate, message, user_id, db)
+                return maybe_orchestrate(
+                    message,
+                    user_id,
+                    db_local,
+                    history,
+                    session_id,
+                    active_context,
+                )
             except TypeError:
-                return await asyncio.to_thread(maybe_orchestrate, message, user_id)
+                try:
+                    return maybe_orchestrate(
+                        message,
+                        user_id,
+                        db_local,
+                        history,
+                    )
+                except TypeError:
+                    try:
+                        return maybe_orchestrate(message, user_id, db_local)
+                    except TypeError:
+                        return maybe_orchestrate(message, user_id)
+
+    return await asyncio.to_thread(_run_with_local_session)
 
 
 def _resolve_doc_context(doc_refs: list[str], user_id: int, db: Session) -> dict:

@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from docops.auth.dependencies import get_current_user
 from docops.db import crud
-from docops.db.database import get_db
+from docops.db.database import get_db, session_scope
 from docops.db.models import User
 from docops.logging import get_logger
 from docops.services.ownership import require_user_document
@@ -206,6 +206,31 @@ def _run_digest(
     }
 
 
+def _run_digest_with_thread_session(
+    doc_name: str,
+    doc_id: str,
+    user_id: int,
+    generate_flashcards: bool,
+    extract_tasks: bool,
+    num_cards: int,
+    max_tasks: int,
+    db_bind,
+    schedule_reviews: bool = False,
+) -> dict:
+    with session_scope(bind=db_bind) as db_local:
+        return _run_digest(
+            doc_name,
+            doc_id,
+            user_id,
+            generate_flashcards,
+            extract_tasks,
+            num_cards,
+            max_tasks,
+            db_local,
+            schedule_reviews,
+        )
+
+
 # ── Schemas ───────────────────────────────────────────────────────────────────
 
 class DigestRequest(BaseModel):
@@ -275,6 +300,32 @@ class StudyPlanListItem(BaseModel):
     created_at: str
     plan_text: str
 
+def _run_study_plan_with_thread_session(
+    doc_name: str,
+    doc_id: str,
+    user_id: int,
+    hours_per_day: float,
+    deadline,
+    db_bind,
+    generate_flashcards: bool,
+    num_cards: int,
+    preferred_start_time: str,
+) -> dict:
+    from docops.services import study_plan_generator
+
+    with session_scope(bind=db_bind) as db_local:
+        return study_plan_generator.generate_study_plan(
+            doc_name,
+            doc_id,
+            user_id,
+            hours_per_day,
+            deadline,
+            db_local,
+            generate_flashcards,
+            num_cards,
+            preferred_start_time,
+        )
+
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -290,9 +341,10 @@ async def digest_document(
         "Smart Digest solicitado por user=%d para doc='%s'",
         current_user.id, payload.doc_name,
     )
+    db_bind = db.get_bind()
 
     result = await asyncio.to_thread(
-        _run_digest,
+        _run_digest_with_thread_session,
         doc_record.file_name,
         doc_record.doc_id,
         current_user.id,
@@ -300,7 +352,7 @@ async def digest_document(
         payload.extract_tasks,
         payload.num_cards,
         payload.max_tasks,
-        db,
+        db_bind,
         payload.schedule_reviews,
     )
     return DigestResponse(**result)
@@ -375,16 +427,15 @@ async def create_study_plan(
         payload.preferred_start_time,
     )
 
-    from docops.services import study_plan_generator
-
+    db_bind = db.get_bind()
     result = await asyncio.to_thread(
-        study_plan_generator.generate_study_plan,
+        _run_study_plan_with_thread_session,
         doc_record.file_name,
         doc_record.doc_id,
         current_user.id,
         payload.hours_per_day,
         deadline,
-        db,
+        db_bind,
         payload.generate_flashcards,
         payload.num_cards,
         payload.preferred_start_time,
@@ -652,6 +703,15 @@ def _run_gap_analysis(user_id: int, doc_names: list[str], db: Session) -> list[d
         return []
 
 
+def _run_gap_analysis_with_thread_session(
+    user_id: int,
+    doc_names: list[str],
+    db_bind,
+) -> list[dict]:
+    with session_scope(bind=db_bind) as db_local:
+        return _run_gap_analysis(user_id, doc_names, db_local)
+
+
 class GapAnalysisRequest(BaseModel):
     doc_names: list[str] = Field(default_factory=list)  # vazio = todos os docs
 
@@ -683,9 +743,15 @@ async def run_gap_analysis(
         "Gap analysis solicitada por user=%d, %d doc(s) alvo",
         current_user.id, len(payload.doc_names) or len(docs),
     )
+    db_bind = db.get_bind()
 
     try:
-        gaps_raw = await asyncio.to_thread(_run_gap_analysis, current_user.id, payload.doc_names, db)
+        gaps_raw = await asyncio.to_thread(
+            _run_gap_analysis_with_thread_session,
+            current_user.id,
+            payload.doc_names,
+            db_bind,
+        )
     except Exception as exc:
         logger.error("Falha na gap analysis: %s", exc)
         raise HTTPException(status_code=500, detail=f"Erro na análise: {exc}")
