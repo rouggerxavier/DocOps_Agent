@@ -66,6 +66,7 @@ export interface IngestResponse {
 }
 
 export interface ArtifactItem {
+  id: number
   filename: string
   size: number
   created_at: string
@@ -77,6 +78,7 @@ export interface ArtifactResponse {
   answer: string
   filename: string
   path: string
+  artifact_id?: number | null
 }
 
 export interface SummarizeResponse {
@@ -366,6 +368,24 @@ export const apiClient = {
 
   listArtifacts: (): Promise<ArtifactItem[]> =>
     api.get('/api/artifacts').then(r => r.data),
+
+  getArtifactTextById: (artifactId: number): Promise<string> =>
+    api
+      .get(`/api/artifacts/id/${artifactId}`, { responseType: 'text' })
+      .then(r => (typeof r.data === 'string' ? r.data : String(r.data))),
+
+  getArtifactBlobById: (artifactId: number): Promise<Blob> =>
+    api
+      .get(`/api/artifacts/id/${artifactId}`, { responseType: 'blob' })
+      .then(r => r.data as Blob),
+
+  getArtifactPdfBlobById: (artifactId: number): Promise<Blob> =>
+    api
+      .get(`/api/artifacts/id/${artifactId}/pdf`, { responseType: 'blob' })
+      .then(r => r.data as Blob),
+
+  deleteArtifactById: (artifactId: number): Promise<void> =>
+    api.delete(`/api/artifacts/id/${artifactId}`).then(() => undefined),
 
   getArtifactText: (filename: string): Promise<string> =>
     api

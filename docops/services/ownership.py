@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 from docops.db.crud import (
     get_document_by_user_and_doc_id,
     get_document_by_user_and_file_name,
-    get_artifact_by_user_and_filename,
     get_artifact_by_user_and_id,
+    list_artifacts_by_user_and_filename,
 )
 from docops.db.models import ArtifactRecord, DocumentRecord
 
@@ -50,7 +50,17 @@ def require_user_artifact(
     if isinstance(artifact_id_or_name, int) or str(artifact_id_or_name).isdigit():
         artifact = get_artifact_by_user_and_id(db, user_id, int(artifact_id_or_name))
     else:
-        artifact = get_artifact_by_user_and_filename(db, user_id, str(artifact_id_or_name))
+        matches = list_artifacts_by_user_and_filename(db, user_id, str(artifact_id_or_name))
+        if len(matches) > 1:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "artifact_filename_ambiguous",
+                    "message": "More than one artifact found with this filename. Use artifact_id.",
+                    "artifact_ids": [item.id for item in matches],
+                },
+            )
+        artifact = matches[0] if matches else None
     if artifact is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

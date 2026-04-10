@@ -532,7 +532,8 @@ function CreateArtifactDialog({ onClose }: { onClose: () => void }) {
 
 // ── Preview Dialog ────────────────────────────────────────────────────────────
 
-function PreviewDialog({ filename, onClose }: { filename: string; onClose: () => void }) {
+function PreviewDialog({ artifact, onClose }: { artifact: { id: number; filename: string }; onClose: () => void }) {
+  const { id: artifactId, filename } = artifact
   const [content, setContent] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [downloading, setDownloading] = useState(false)
@@ -544,22 +545,22 @@ function PreviewDialog({ filename, onClose }: { filename: string; onClose: () =>
       return
     }
     setLoading(true)
-    apiClient.getArtifactText(filename)
+    apiClient.getArtifactTextById(artifactId)
       .then(text => { if (cancelled) return; setContent(text) })
       .catch((err: any) => { if (cancelled) return; setContent(err?.response?.data?.detail ?? 'Erro ao carregar arquivo.') })
       .finally(() => { if (cancelled) return; setLoading(false) })
     return () => { cancelled = true }
-  }, [filename])
+  }, [artifactId, filename])
 
   async function handleDownload() {
     setDownloading(true)
-    try { const blob = await apiClient.getArtifactBlob(filename); downloadBlobFile(blob, filename) }
+    try { const blob = await apiClient.getArtifactBlobById(artifactId); downloadBlobFile(blob, filename) }
     catch { toast.error('Erro ao baixar arquivo') } finally { setDownloading(false) }
   }
 
   async function handleDownloadPdf() {
     setDownloading(true)
-    try { const blob = await apiClient.getArtifactPdfBlob(filename); downloadBlobFile(blob, toPdfName(filename)) }
+    try { const blob = await apiClient.getArtifactPdfBlobById(artifactId); downloadBlobFile(blob, toPdfName(filename)) }
     catch { toast.error('Erro ao baixar PDF') } finally { setDownloading(false) }
   }
 
@@ -595,7 +596,7 @@ export function Artifacts() {
   const [showCreate, setShowCreate] = useState(false)
   const [showSummarize, setShowSummarize] = useState(false)
   const [showDigest, setShowDigest] = useState(false)
-  const [previewFile, setPreviewFile] = useState<string | null>(null)
+  const [previewFile, setPreviewFile] = useState<{ id: number; filename: string } | null>(null)
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null)
 
   const { data: artifacts, isLoading, error } = useQuery<ArtifactItem[]>({
@@ -605,20 +606,20 @@ export function Artifacts() {
   })
 
   const deleteMut = useMutation({
-    mutationFn: (filename: string) => apiClient.deleteArtifact(filename),
+    mutationFn: (artifactId: number) => apiClient.deleteArtifactById(artifactId),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['artifacts'] }); toast.success('Artefato removido.') },
     onError: () => toast.error('Erro ao remover artefato.'),
   })
 
-  async function handleDownload(filename: string) {
-    const key = `${filename}:file`; setDownloadingKey(key)
-    try { const blob = await apiClient.getArtifactBlob(filename); downloadBlobFile(blob, filename) }
+  async function handleDownload(artifactId: number, filename: string) {
+    const key = `${artifactId}:file`; setDownloadingKey(key)
+    try { const blob = await apiClient.getArtifactBlobById(artifactId); downloadBlobFile(blob, filename) }
     catch { toast.error('Erro ao baixar arquivo') } finally { setDownloadingKey(null) }
   }
 
-  async function handleDownloadPdf(filename: string) {
-    const key = `${filename}:pdf`; setDownloadingKey(key)
-    try { const blob = await apiClient.getArtifactPdfBlob(filename); downloadBlobFile(blob, toPdfName(filename)) }
+  async function handleDownloadPdf(artifactId: number, filename: string) {
+    const key = `${artifactId}:pdf`; setDownloadingKey(key)
+    try { const blob = await apiClient.getArtifactPdfBlobById(artifactId); downloadBlobFile(blob, toPdfName(filename)) }
     catch { toast.error('Erro ao baixar PDF') } finally { setDownloadingKey(null) }
   }
 
@@ -728,23 +729,23 @@ export function Artifacts() {
                   </div>
                   <div className="flex items-center gap-2 shrink-0 ml-4">
                     {isMarkdown && (
-                      <Button variant="ghost" size="sm" onClick={() => setPreviewFile(artifact.filename)}>
+                      <Button variant="ghost" size="sm" onClick={() => setPreviewFile({ id: artifact.id, filename: artifact.filename })}>
                         <Eye className="h-4 w-4 mr-1" />Preview
                       </Button>
                     )}
-                    <Button variant="outline" size="sm" onClick={() => handleDownload(artifact.filename)} disabled={downloadingKey !== null}>
+                    <Button variant="outline" size="sm" onClick={() => handleDownload(artifact.id, artifact.filename)} disabled={downloadingKey !== null}>
                       <Download className="h-4 w-4 mr-1" />
-                      {downloadingKey === `${artifact.filename}:file` ? 'Baixando...' : 'Download'}
+                      {downloadingKey === `${artifact.id}:file` ? 'Baixando...' : 'Download'}
                     </Button>
                     {isMarkdown && (
-                      <Button variant="outline" size="sm" onClick={() => handleDownloadPdf(artifact.filename)} disabled={downloadingKey !== null}>
+                      <Button variant="outline" size="sm" onClick={() => handleDownloadPdf(artifact.id, artifact.filename)} disabled={downloadingKey !== null}>
                         <FileText className="h-4 w-4 mr-1" />
-                        {downloadingKey === `${artifact.filename}:pdf` ? 'Baixando...' : 'PDF'}
+                        {downloadingKey === `${artifact.id}:pdf` ? 'Baixando...' : 'PDF'}
                       </Button>
                     )}
                     <Button
                       variant="ghost" size="sm"
-                      onClick={() => { if (confirm(`Remover "${artifact.filename}"?`)) deleteMut.mutate(artifact.filename) }}
+                      onClick={() => { if (confirm(`Remover "${artifact.filename}"?`)) deleteMut.mutate(artifact.id) }}
                       disabled={deleteMut.isPending}
                       className="text-zinc-600 hover:text-red-400"
                     >
@@ -761,7 +762,7 @@ export function Artifacts() {
       {showSummarize && <SummarizeDocDialog onClose={() => setShowSummarize(false)} />}
       {showDigest && <SmartDigestDialog onClose={() => setShowDigest(false)} />}
       {showCreate && <CreateArtifactDialog onClose={() => setShowCreate(false)} />}
-      {previewFile && <PreviewDialog filename={previewFile} onClose={() => setPreviewFile(null)} />}
+      {previewFile && <PreviewDialog artifact={previewFile} onClose={() => setPreviewFile(null)} />}
     </PageShell>
   )
 }

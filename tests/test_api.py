@@ -18,7 +18,7 @@ os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-for-pytest-only")
 os.environ.setdefault("GEMINI_API_KEY", "fake-key-for-tests")
 
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -327,6 +327,89 @@ def test_artifact_not_found():
         resp = auth_client.get("/api/artifacts/nonexistent.md")
     assert resp.status_code == 404
     _clear_auth_override()
+
+
+def test_artifact_duplicate_filename_requires_id_for_legacy_routes():
+    from docops.db import crud
+
+    # Full-suite CI can mutate app dependency overrides across modules.
+    # Pin get_db here so API calls use the same in-memory DB as _TestSession.
+    app.dependency_overrides[get_db] = _override_get_db
+    Base.metadata.create_all(bind=_test_engine)
+    auth_client, _ = _make_auth_client()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path_a = Path(tmpdir) / "artifact_a.md"
+        path_b = Path(tmpdir) / "artifact_b.md"
+        path_a.write_text("conteudo A", encoding="utf-8")
+        path_b.write_text("conteudo B", encoding="utf-8")
+
+        db = _TestSession()
+        try:
+            rec_a = crud.create_artifact_record(
+                db,
+                user_id=1,
+                artifact_type="summary",
+                filename="duplicado.md",
+                path=str(path_a),
+            )
+            rec_b = crud.create_artifact_record(
+                db,
+                user_id=1,
+                artifact_type="summary",
+                filename="duplicado.md",
+                path=str(path_b),
+            )
+            rec_a_id = rec_a.id
+            rec_b_id = rec_b.id
+        finally:
+            db.close()
+
+        listed = auth_client.get("/api/artifacts")
+        assert listed.status_code == 200
+        ids = [item["id"] for item in listed.json() if item["filename"] == "duplicado.md"]
+        assert rec_a_id in ids and rec_b_id in ids
+
+        legacy = auth_client.get("/api/artifacts/duplicado.md")
+        assert legacy.status_code == 409
+        detail = legacy.json()["detail"]
+        assert detail["error"] == "artifact_filename_ambiguous"
+        assert rec_a_id in detail["artifact_ids"]
+        assert rec_b_id in detail["artifact_ids"]
+
+        by_id_a = auth_client.get(f"/api/artifacts/id/{rec_a_id}")
+        by_id_b = auth_client.get(f"/api/artifacts/id/{rec_b_id}")
+        assert by_id_a.status_code == 200
+        assert by_id_b.status_code == 200
+        assert by_id_a.text == "conteudo A"
+        assert by_id_b.text == "conteudo B"
+
+        deleted = auth_client.delete(f"/api/artifacts/id/{rec_a_id}")
+        assert deleted.status_code == 204
+        assert auth_client.get(f"/api/artifacts/id/{rec_a_id}").status_code == 404
+        assert auth_client.get(f"/api/artifacts/id/{rec_b_id}").status_code == 200
+
+    _clear_auth_override()
+    app.dependency_overrides[get_db] = _override_get_db
+
+
+def test_alembic_upgrade_creates_supported_schema(tmp_path):
+    from docops.db.database import run_db_migrations
+
+    db_file = tmp_path / "migr_test.db"
+    db_url = f"sqlite:///{db_file.as_posix()}"
+
+    assert run_db_migrations(db_url) is True
+
+    engine = create_engine(db_url)
+    try:
+        inspector = inspect(engine)
+        table_names = set(inspector.get_table_names())
+        assert "alembic_version" in table_names
+        assert "users" in table_names
+        assert "documents" in table_names
+        assert "artifacts" in table_names
+    finally:
+        engine.dispose()
 
 
 def test_summarize_debug_true_includes_diagnostics(monkeypatch):
