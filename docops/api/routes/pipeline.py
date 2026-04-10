@@ -753,8 +753,8 @@ async def run_gap_analysis(
             db_bind,
         )
     except Exception as exc:
-        logger.error("Falha na gap analysis: %s", exc)
-        raise HTTPException(status_code=500, detail=f"Erro na análise: {exc}")
+        logger.exception("Falha na gap analysis: %s", exc)
+        raise HTTPException(status_code=500, detail="Erro interno ao executar análise de lacunas.")
 
     target_count = len([d for d in docs if not payload.doc_names or d.file_name in payload.doc_names]) or len(docs)
     return GapAnalysisResponse(
@@ -828,7 +828,7 @@ async def evaluate_answer(
             payload.answer_hint,
         )
     except Exception as exc:
-        logger.error("Falha ao avaliar resposta: %s", exc)
-        raise HTTPException(status_code=500, detail=f"Erro ao avaliar: {exc}")
+        logger.exception("Falha ao avaliar resposta: %s", exc)
+        raise HTTPException(status_code=500, detail="Erro interno ao avaliar resposta.")
 
     return EvaluateAnswerResponse(feedback=feedback, score=score)

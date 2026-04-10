@@ -54,7 +54,7 @@ npm run dev
 │              Frontend (React)           │
 │  Landing · Chat · Docs · Ingest · ...   │
 └──────────────────┬──────────────────────┘
-                   │ HTTP / REST (HTTPS via Vercel rewrite)
+                   │ HTTP / REST (HTTPS via VITE_API_URL)
 ┌──────────────────▼──────────────────────┐
 │            FastAPI  /api/*              │
 │  auth · chat · ingest · summarize · ... │
@@ -164,7 +164,7 @@ DocOps_Agent/
 │       ├── lib/stagger.ts      # getDynamicDelay (stagger position-aware)
 │       ├── pages/              # 14 páginas React
 │       └── components/         # Layout, Sidebar, UI primitives
-├── vercel.json                 # Rewrites Vercel (SPA + proxy /api/* → Oracle)
+├── vercel.json                 # Rewrites Vercel (SPA fallback)
 ├── docker-compose.yml
 ├── docker/
 │   ├── backend/Dockerfile
@@ -390,7 +390,7 @@ LOG_LEVEL=INFO
 ```env
 VITE_API_URL=http://localhost:8000
 ```
-> Em produção no Vercel, **não configure** `VITE_API_URL` — as chamadas são roteadas via rewrite para o backend.
+> Em produção no Vercel, configure `VITE_API_URL` com a URL pública do backend.
 
 ---
 
@@ -464,9 +464,8 @@ docker-compose up --build
    - **Root Directory:** *(deixe em branco — usa `vercel.json` na raiz)*
    - **Build Command:** `cd web && npm install && npm run build`
    - **Output Directory:** `web/dist`
-3. **Não configure** `VITE_API_URL` — o `vercel.json` já faz o proxy:
-   - `/api/*` → proxied para o backend Oracle (HTTP → rewrite server-side)
-   - Todas as outras rotas → `index.html` (SPA fallback)
+3. Configure a variável de ambiente `VITE_API_URL` no projeto Vercel apontando para o backend (ex.: `https://api.seudominio.com`).
+4. O `vercel.json` mantém apenas o fallback SPA para `index.html`.
 
 ### Backend — Oracle Cloud (ou qualquer VM)
 

@@ -1,6 +1,7 @@
 # DocOps Agent dependencies
 # Python 3.11 or 3.12 required (ChromaDB 0.5.x requires Python <=3.13)
 # On Python 3.14+ hosts: py -3.11 -m venv .venv
+# For reproducible CI/deploy, prefer requirements.lock.txt when available.
 
 langchain>=1.0.0
 langchain-text-splitters>=1.0.0

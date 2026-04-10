@@ -45,6 +45,11 @@ def _path_env(key: str, default: str) -> Path:
     return (_project_root / p).resolve()
 
 
+def _csv_env(key: str, default: str) -> list[str]:
+    raw = os.getenv(key, default)
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
 class Config:
     """Central configuration object. Instantiate once and share."""
 
@@ -83,6 +88,30 @@ class Config:
     @property
     def log_level(self) -> str:
         return os.getenv("LOG_LEVEL", "INFO").upper()
+
+    @property
+    def runtime_env(self) -> str:
+        return os.getenv("DOCOPS_ENV", os.getenv("APP_ENV", "development")).strip().lower()
+
+    @property
+    def is_production(self) -> bool:
+        return self.runtime_env in {"prod", "production"}
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return _csv_env("CORS_ORIGINS", "http://localhost:5173,http://localhost:3000")
+
+    @property
+    def cors_allow_methods(self) -> list[str]:
+        return _csv_env("CORS_ALLOW_METHODS", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
+
+    @property
+    def cors_allow_headers(self) -> list[str]:
+        return _csv_env("CORS_ALLOW_HEADERS", "Authorization,Content-Type,Accept,Origin")
+
+    @property
+    def cors_allow_credentials(self) -> bool:
+        return os.getenv("CORS_ALLOW_CREDENTIALS", "true").lower() in ("true", "1", "yes")
 
     @property
     def gemini_model(self) -> str:

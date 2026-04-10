@@ -272,6 +272,6 @@ async def create_study_plan(
             artifact_filename=md_final_name,
             pdf_filename=pdf_final_name,
         )
-    except Exception as e:
-        logger.exception("Erro ao gerar plano de estudos: %s", e)
-        raise HTTPException(status_code=500, detail=f"Erro ao gerar plano: {e}")
+    except Exception:
+        logger.exception("Erro ao gerar plano de estudos")
+        raise HTTPException(status_code=500, detail="Erro interno ao gerar plano de estudos.")
