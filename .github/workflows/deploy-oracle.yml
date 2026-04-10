@@ -102,19 +102,16 @@ jobs:
             git pull --ff-only origin main
             source .venv/bin/activate
             python --version
+            INSTALL_OK=0
             if [ -f requirements.lock.txt ]; then
-              PY311_PLUS=$(python -c "import sys; print('1' if sys.version_info >= (3, 11) else '0')")
-              if [ "$PY311_PLUS" = "1" ]; then
-                echo "Installing from requirements.lock.txt (python >= 3.11)"
-                if ! pip install -r requirements.lock.txt; then
-                  echo "Lock install failed; falling back to requirements.txt"
-                  pip install -r requirements.txt
-                fi
+              echo "Trying install from requirements.lock.txt"
+              if pip install -r requirements.lock.txt; then
+                INSTALL_OK=1
               else
-                echo "Python < 3.11 detected; using requirements.txt fallback"
-                pip install -r requirements.txt
+                echo "Lock install failed; falling back to requirements.txt"
               fi
-            else
+            fi
+            if [ "$INSTALL_OK" -ne 1 ]; then
               pip install -r requirements.txt
             fi
             sudo systemctl restart docops
