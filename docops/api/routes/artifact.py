@@ -15,13 +15,17 @@ from sqlalchemy.orm import Session
 from docops.api.schemas import ArtifactItem, ArtifactRequest, ArtifactResponse, JobCreateResponse
 from docops.auth.dependencies import get_current_user
 from docops.config import config  # kept for backward-compatible test patching
-from docops.db.crud import create_artifact_record, list_artifacts_for_user, get_artifact_by_user_and_filename
+from docops.db.crud import (
+    create_artifact_record,
+    get_artifact_by_user_and_id,
+    list_artifacts_by_user_and_filename,
+    list_artifacts_for_user,
+)
 from docops.db.database import SessionLocal, get_db
-from docops.db.models import User
+from docops.db.models import ArtifactRecord, User
 from docops.logging import get_logger
 from docops.services.jobs import create_job, run_thread_with_progress, schedule_job, update_job
-from docops.services.ownership import require_user_artifact, require_user_document
-from docops.storage.paths import get_user_artifacts_dir
+from docops.services.ownership import require_user_document
 
 logger = get_logger("docops.api.artifact")
 router = APIRouter()
@@ -68,6 +72,110 @@ def _run_artifact(
     return {"answer": answer, "filename": path.name, "path": str(path)}
 
 
+def _resolve_artifact_by_id_or_404(db: Session, user_id: int, artifact_id: int) -> ArtifactRecord:
+    artifact = get_artifact_by_user_and_id(db, user_id, artifact_id)
+    if artifact is None:
+        raise HTTPException(status_code=404, detail="Artefato nao encontrado.")
+    return artifact
+
+
+def _resolve_artifact_by_filename_or_raise(db: Session, user_id: int, filename: str) -> ArtifactRecord:
+    safe_name = Path(filename).name
+    matches = list_artifacts_by_user_and_filename(db, user_id, safe_name)
+    if not matches:
+        raise HTTPException(status_code=404, detail=f"Artifact not found: {safe_name}")
+    if len(matches) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "artifact_filename_ambiguous",
+                "message": "More than one artifact found with this filename. Use artifact_id.",
+                "filename": safe_name,
+                "artifact_ids": [item.id for item in matches],
+            },
+        )
+    return matches[0]
+
+
+def _artifact_file_response(artifact: ArtifactRecord) -> FileResponse:
+    artifact_path = Path(artifact.path)
+    safe_name = Path(artifact.filename).name
+
+    if not artifact_path.exists() or not artifact_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Artifact not found: {safe_name}")
+
+    media_type = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
+    return FileResponse(path=str(artifact_path), filename=safe_name, media_type=media_type)
+
+
+def _delete_artifact_file_best_effort(artifact: ArtifactRecord) -> None:
+    try:
+        artifact_path = Path(artifact.path)
+        if artifact_path.exists() and artifact_path.is_file():
+            artifact_path.unlink()
+    except Exception as exc:
+        logger.warning("Falha ao remover arquivo de artefato %s: %s", artifact.path, exc)
+
+
+def _artifact_pdf_response(artifact: ArtifactRecord, background_tasks: BackgroundTasks) -> FileResponse:
+    import tempfile
+    from docops.tools.doc_tools import _markdown_to_pdf
+
+    artifact_path = Path(artifact.path)
+    safe_name = Path(artifact.filename).name
+
+    if not artifact_path.exists() or not artifact_path.is_file():
+        raise HTTPException(status_code=404, detail=f"Artifact not found: {safe_name}")
+
+    ext = artifact_path.suffix.lower()
+    if ext == ".pdf":
+        raise HTTPException(
+            status_code=400,
+            detail="Arquivo ja esta em PDF. Use o download direto do arquivo.",
+        )
+    if ext not in {".md", ".markdown", ".txt"}:
+        raise HTTPException(
+            status_code=415,
+            detail="Conversao para PDF suporta apenas arquivos .md, .markdown ou .txt.",
+        )
+
+    try:
+        content = artifact_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        try:
+            content = artifact_path.read_text(encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            try:
+                content = artifact_path.read_text(encoding="cp1252")
+            except UnicodeDecodeError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Arquivo de texto invalido para conversao em PDF.",
+                )
+
+    pdf_name = Path(safe_name).stem + ".pdf"
+    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    tmp.close()
+    pdf_path = Path(tmp.name)
+
+    try:
+        _markdown_to_pdf(content, pdf_path)
+    except Exception as exc:
+        import traceback
+
+        logger.error(f"PDF generation error: {exc}\n{traceback.format_exc()}")
+        pdf_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail="Erro ao gerar PDF")
+
+    background_tasks.add_task(pdf_path.unlink, missing_ok=True)
+    return FileResponse(
+        path=str(pdf_path),
+        filename=pdf_name,
+        media_type="application/pdf",
+        background=background_tasks,
+    )
+
+
 @router.post("/artifact", response_model=ArtifactResponse)
 async def create_artifact(
     body: ArtifactRequest,
@@ -99,7 +207,7 @@ async def create_artifact(
         logger.error(f"Artifact error: {exc}")
         raise HTTPException(status_code=500, detail="Agent error")
 
-    create_artifact_record(
+    artifact_record = create_artifact_record(
         db,
         user_id=current_user.id,
         artifact_type=body.type,
@@ -110,7 +218,7 @@ async def create_artifact(
         source_doc_id_2=doc_ids[1] if len(doc_ids) >= 2 else None,
     )
 
-    return ArtifactResponse(**result)
+    return ArtifactResponse(**result, artifact_id=artifact_record.id)
 
 
 @router.post("/artifact/async", response_model=JobCreateResponse)
@@ -191,6 +299,7 @@ async def list_artifacts(
         size = p.stat().st_size if p.exists() else 0
         items.append(
             ArtifactItem(
+                id=r.id,
                 filename=r.filename,
                 size=size,
                 created_at=r.created_at.isoformat(),
@@ -201,28 +310,51 @@ async def list_artifacts(
     return items
 
 
+@router.get("/artifacts/id/{artifact_id}")
+async def download_artifact_by_id(
+    artifact_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    """Download artifact by primary id."""
+    artifact = _resolve_artifact_by_id_or_404(db, current_user.id, artifact_id)
+    return _artifact_file_response(artifact)
+
+
+@router.delete("/artifacts/id/{artifact_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_artifact_by_id(
+    artifact_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> None:
+    """Delete artifact by primary id."""
+    artifact = _resolve_artifact_by_id_or_404(db, current_user.id, artifact_id)
+    _delete_artifact_file_best_effort(artifact)
+    db.delete(artifact)
+    db.commit()
+
+
+@router.get("/artifacts/id/{artifact_id}/pdf")
+async def download_artifact_pdf_by_id(
+    artifact_id: int,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    """Convert/download artifact as PDF by primary id."""
+    artifact = _resolve_artifact_by_id_or_404(db, current_user.id, artifact_id)
+    return _artifact_pdf_response(artifact, background_tasks)
+
+
 @router.get("/artifacts/{filename}")
 async def download_artifact(
     filename: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> FileResponse:
-    """Download a specific artifact file — ownership validated."""
-    require_user_artifact(db, current_user.id, filename)
-
-    safe_name = Path(filename).name
-    artifact_path = get_user_artifacts_dir(current_user.id) / safe_name
-
-    if not artifact_path.exists() or not artifact_path.is_file():
-        raise HTTPException(status_code=404, detail=f"Artifact not found: {filename}")
-
-    media_type = mimetypes.guess_type(safe_name)[0] or "application/octet-stream"
-
-    return FileResponse(
-        path=str(artifact_path),
-        filename=safe_name,
-        media_type=media_type,
-    )
+    """Legacy filename route, fails with 409 when filename is ambiguous."""
+    artifact = _resolve_artifact_by_filename_or_raise(db, current_user.id, filename)
+    return _artifact_file_response(artifact)
 
 
 @router.delete("/artifacts/{filename}", status_code=status.HTTP_204_NO_CONTENT)
@@ -231,19 +363,9 @@ async def delete_artifact(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> None:
-    """Delete an artifact file and its database record — ownership validated."""
-    artifact = get_artifact_by_user_and_filename(db, current_user.id, filename)
-    if not artifact:
-        raise HTTPException(status_code=404, detail="Artefato não encontrado.")
-
-    # Remove arquivo do disco (best-effort)
-    try:
-        artifact_path = Path(artifact.path)
-        if artifact_path.exists() and artifact_path.is_file():
-            artifact_path.unlink()
-    except Exception as exc:
-        logger.warning("Falha ao remover arquivo de artefato %s: %s", artifact.path, exc)
-
+    """Legacy filename route, fails with 409 when filename is ambiguous."""
+    artifact = _resolve_artifact_by_filename_or_raise(db, current_user.id, filename)
+    _delete_artifact_file_best_effort(artifact)
     db.delete(artifact)
     db.commit()
 
@@ -255,63 +377,6 @@ async def download_artifact_pdf(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> FileResponse:
-    """Convert a Markdown artifact to PDF and return it for download — ownership validated."""
-    import tempfile
-    from docops.tools.doc_tools import _markdown_to_pdf
-
-    require_user_artifact(db, current_user.id, filename)
-
-    safe_name = Path(filename).name
-    artifact_path = get_user_artifacts_dir(current_user.id) / safe_name
-
-    if not artifact_path.exists() or not artifact_path.is_file():
-        raise HTTPException(status_code=404, detail=f"Artifact not found: {filename}")
-
-    ext = artifact_path.suffix.lower()
-    if ext == ".pdf":
-        raise HTTPException(
-            status_code=400,
-            detail="Arquivo ja esta em PDF. Use o download direto do arquivo.",
-        )
-    if ext not in {".md", ".markdown", ".txt"}:
-        raise HTTPException(
-            status_code=415,
-            detail="Conversao para PDF suporta apenas arquivos .md, .markdown ou .txt.",
-        )
-
-    try:
-        content = artifact_path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        try:
-            content = artifact_path.read_text(encoding="utf-8-sig")
-        except UnicodeDecodeError:
-            try:
-                content = artifact_path.read_text(encoding="cp1252")
-            except UnicodeDecodeError:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Arquivo de texto invalido para conversao em PDF.",
-                )
-
-    pdf_name = Path(safe_name).stem + ".pdf"
-
-    tmp = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
-    tmp.close()
-    pdf_path = Path(tmp.name)
-
-    try:
-        _markdown_to_pdf(content, pdf_path)
-    except Exception as exc:
-        import traceback
-        logger.error(f"PDF generation error: {exc}\n{traceback.format_exc()}")
-        pdf_path.unlink(missing_ok=True)
-        raise HTTPException(status_code=500, detail="Erro ao gerar PDF")
-
-    background_tasks.add_task(pdf_path.unlink, missing_ok=True)
-
-    return FileResponse(
-        path=str(pdf_path),
-        filename=pdf_name,
-        media_type="application/pdf",
-        background=background_tasks,
-    )
+    """Legacy filename route, fails with 409 when filename is ambiguous."""
+    artifact = _resolve_artifact_by_filename_or_raise(db, current_user.id, filename)
+    return _artifact_pdf_response(artifact, background_tasks)

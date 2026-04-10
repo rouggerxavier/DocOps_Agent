@@ -185,11 +185,13 @@ class ArtifactResponse(BaseModel):
     answer: str
     filename: str
     path: str
+    artifact_id: Optional[int] = None
 
 
 # ── /api/artifacts ────────────────────────────────────────────────────────────
 
 class ArtifactItem(BaseModel):
+    id: int
     filename: str
     size: int
     created_at: str

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import logging
+import os
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -10,6 +12,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from docops.config import config
+
+logger = logging.getLogger("docops.db.database")
+PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def _make_engine():
@@ -67,7 +72,36 @@ def get_db():
         db.close()
 
 
+def run_db_migrations(database_url: str | None = None) -> bool:
+    """Apply Alembic migrations up to head.
+
+    Returns True when migrations succeed, False when Alembic is disabled/missing/fails.
+    """
+    if os.getenv("DB_MIGRATIONS_ENABLED", "true").strip().lower() not in ("true", "1", "yes"):
+        return False
+
+    alembic_ini = PROJECT_ROOT / "alembic.ini"
+    if not alembic_ini.exists():
+        logger.warning("alembic.ini not found at %s; falling back to create_all.", alembic_ini)
+        return False
+
+    try:
+        from alembic import command
+        from alembic.config import Config as AlembicConfig
+
+        cfg = AlembicConfig(str(alembic_ini))
+        cfg.set_main_option("script_location", str(PROJECT_ROOT / "alembic"))
+        cfg.set_main_option("sqlalchemy.url", database_url or config.database_url)
+        command.upgrade(cfg, "head")
+        return True
+    except Exception:
+        logger.exception("Alembic migration failed; falling back to create_all.")
+        return False
+
+
 def init_db() -> None:
-    """Cria todas as tabelas se não existirem (idempotente)."""
+    """Initialize schema preferring Alembic, with create_all fallback."""
     from docops.db import models  # noqa: F401 — importar para registrar modelos na Base
-    Base.metadata.create_all(bind=engine)
+    migrated = run_db_migrations(config.database_url)
+    if not migrated:
+        Base.metadata.create_all(bind=engine)

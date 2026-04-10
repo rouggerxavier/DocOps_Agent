@@ -151,7 +151,17 @@ def get_artifact_by_user_and_filename(db: Session, user_id: int, filename: str) 
     return (
         db.query(ArtifactRecord)
         .filter(ArtifactRecord.user_id == user_id, ArtifactRecord.filename == filename)
+        .order_by(ArtifactRecord.created_at.desc(), ArtifactRecord.id.desc())
         .first()
+    )
+
+
+def list_artifacts_by_user_and_filename(db: Session, user_id: int, filename: str) -> list[ArtifactRecord]:
+    return (
+        db.query(ArtifactRecord)
+        .filter(ArtifactRecord.user_id == user_id, ArtifactRecord.filename == filename)
+        .order_by(ArtifactRecord.created_at.desc(), ArtifactRecord.id.desc())
+        .all()
     )
 
 

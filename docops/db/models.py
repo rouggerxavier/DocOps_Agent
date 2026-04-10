@@ -86,6 +86,10 @@ class ArtifactRecord(Base):
 
     owner: Mapped[User] = relationship(back_populates="artifacts")
 
+    __table_args__ = (
+        Index("ix_artifact_user_filename", "user_id", "filename"),
+    )
+
     def __repr__(self) -> str:
         return f"<ArtifactRecord id={self.id} user={self.user_id} file={self.filename!r}>"
 
