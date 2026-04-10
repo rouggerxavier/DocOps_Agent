@@ -6,6 +6,7 @@ import asyncio
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.orm import Session
 
 from docops.api.schemas import JobCreateResponse, SummarizeRequest, SummarizeResponse
@@ -155,7 +156,9 @@ async def summarize(
         answer=str(result.get("answer", "")),
         artifact_path=result.get("artifact_path"),
         artifact_filename=result.get("artifact_filename"),
-        summary_diagnostics=result.get("diagnostics") if body.debug_summary else None,
+        summary_diagnostics=(
+            jsonable_encoder(result.get("diagnostics")) if body.debug_summary else None
+        ),
     )
 
 
@@ -216,7 +219,9 @@ async def summarize_async(
             "answer": str(result.get("answer", "")),
             "artifact_path": result.get("artifact_path"),
             "artifact_filename": result.get("artifact_filename"),
-            "summary_diagnostics": result.get("diagnostics") if body.debug_summary else None,
+            "summary_diagnostics": (
+                jsonable_encoder(result.get("diagnostics")) if body.debug_summary else None
+            ),
         }
 
     schedule_job(job["job_id"], _runner)
