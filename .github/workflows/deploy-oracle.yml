@@ -103,7 +103,8 @@ jobs:
             source .venv/bin/activate
             python --version
             if [ -f requirements.lock.txt ]; then
-              if python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"; then
+              PY311_PLUS=$(python -c "import sys; print('1' if sys.version_info >= (3, 11) else '0')")
+              if [ "$PY311_PLUS" = "1" ]; then
                 echo "Installing from requirements.lock.txt (python >= 3.11)"
                 if ! pip install -r requirements.lock.txt; then
                   echo "Lock install failed; falling back to requirements.txt"
