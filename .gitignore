@@ -45,9 +45,12 @@ v2_*.png
 dashboard-*.png
 !web/public/dashboard-preview.png
 
-# Docs (user's own documents, not committed — keep .gitkeep)
+# Docs (user's own documents, not committed - keep .gitkeep)
 docs/*
 !docs/.gitkeep
+!docs/README.md
+!docs/runbooks/
+!docs/runbooks/*.md
 
 # Logs
 *.log
