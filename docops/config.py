@@ -270,6 +270,21 @@ class Config:
         """Master switch for the semantic grounding verifier (default: True)."""
         return os.getenv("SEMANTIC_GROUNDING_ENABLED", "true").lower() in ("true", "1", "yes")
 
+    @property
+    def semantic_grounding_max_claims(self) -> int:
+        """Hard cap for claim count evaluated by semantic grounding (default: 24)."""
+        return int(os.getenv("SEMANTIC_GROUNDING_MAX_CLAIMS", "24"))
+
+    @property
+    def semantic_grounding_max_chunks(self) -> int:
+        """Hard cap for evidence chunks evaluated per grounding pass (default: 12)."""
+        return int(os.getenv("SEMANTIC_GROUNDING_MAX_CHUNKS", "12"))
+
+    @property
+    def semantic_grounding_max_evidence_chars(self) -> int:
+        """Max chars per evidence chunk passed to support checker (default: 1600)."""
+        return int(os.getenv("SEMANTIC_GROUNDING_MAX_EVIDENCE_CHARS", "1600"))
+
     # â”€â”€ Deep summary pipeline tuning â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @property

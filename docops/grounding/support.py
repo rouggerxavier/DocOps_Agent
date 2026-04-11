@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from time import perf_counter
 from typing import List, Literal
 
 from langchain_core.documents import Document
@@ -209,17 +210,52 @@ def compute_support_rate(
     claims: List[str],
     evidence_chunks: List[Document],
     mode: str | None = None,
+    *,
+    max_claims: int | None = None,
+    max_chunks: int | None = None,
+    max_evidence_chars: int | None = None,
 ) -> dict:
-    """Compute support rate by taking best evidence score per claim."""
+    """Compute support rate by taking best evidence score per claim.
+
+    Optional caps protect latency/cost in large claim x chunk combinations.
+    """
     if not claims:
-        return {"support_rate": 1.0, "unsupported_claims": [], "results": []}
+        return {
+            "support_rate": 1.0,
+            "unsupported_claims": [],
+            "results": [],
+            "claims_total": 0,
+            "claims_used": 0,
+            "claims_truncated": 0,
+            "chunks_total": len(evidence_chunks),
+            "chunks_used": 0,
+            "chunks_truncated": 0,
+            "latency_ms": 0.0,
+        }
+
+    claims_total = len(claims)
+    chunks_total = len(evidence_chunks)
+
+    effective_claim_cap = max_claims if (max_claims and max_claims > 0) else claims_total
+    effective_chunk_cap = max_chunks if (max_chunks and max_chunks > 0) else chunks_total
+    effective_chars_cap = (
+        max_evidence_chars
+        if (max_evidence_chars and max_evidence_chars > 0)
+        else None
+    )
+
+    claims_used = claims[:effective_claim_cap]
+    chunks_used = evidence_chunks[:effective_chunk_cap]
 
     per_claim_results = []
     unsupported: List[str] = []
-    for claim in claims:
+    started = perf_counter()
+    for claim in claims_used:
         best = SupportResult("NOT_SUPPORTED", 0.0, "No evidence chunk.")
-        for chunk in evidence_chunks:
+        for chunk in chunks_used:
             ev_text = chunk.page_content if hasattr(chunk, "page_content") else str(chunk)
+            if effective_chars_cap is not None:
+                ev_text = ev_text[:effective_chars_cap]
             result = check_support(claim, ev_text, mode=mode)
             if result.score > best.score:
                 best = result
@@ -236,8 +272,18 @@ def compute_support_rate(
 
     supported_count = sum(1 for r in per_claim_results if r["label"] == "SUPPORTED")
     support_rate = round(supported_count / len(per_claim_results), 3)
+    claims_truncated = max(0, claims_total - len(claims_used))
+    chunks_truncated = max(0, chunks_total - len(chunks_used))
+    elapsed_ms = round((perf_counter() - started) * 1000.0, 2)
     return {
         "support_rate": support_rate,
         "unsupported_claims": unsupported,
         "results": per_claim_results,
+        "claims_total": claims_total,
+        "claims_used": len(claims_used),
+        "claims_truncated": claims_truncated,
+        "chunks_total": chunks_total,
+        "chunks_used": len(chunks_used),
+        "chunks_truncated": chunks_truncated,
+        "latency_ms": elapsed_ms,
     }
