@@ -251,7 +251,7 @@ def test_chat_success(monkeypatch):
             )
         ],
     }
-    monkeypatch.setattr("docops.api.routes.chat._run_chat", lambda msg, top_k: fake_state)
+    monkeypatch.setattr("docops.api.routes.chat._run_chat", lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state)
     resp = auth_client.post("/api/chat", json={"message": "hello", "session_id": "s1"})
     assert resp.status_code == 200
     data = resp.json()
@@ -281,7 +281,7 @@ def test_chat_returns_only_cited_sources(monkeypatch):
             ),
         ],
     }
-    monkeypatch.setattr("docops.api.routes.chat._run_chat", lambda msg, top_k: fake_state)
+    monkeypatch.setattr("docops.api.routes.chat._run_chat", lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state)
 
     resp = auth_client.post("/api/chat", json={"message": "hello"})
     assert resp.status_code == 200
@@ -296,7 +296,7 @@ def test_chat_forwards_doc_filters(monkeypatch):
     auth_client, _ = _make_auth_client()
     captured: dict = {}
 
-    def _fake_run(msg, top_k, user_id=0, doc_names=None):
+    def _fake_run(msg, top_k, user_id=0, doc_names=None, strict_grounding=False):
         captured["message"] = msg
         captured["top_k"] = top_k
         captured["user_id"] = user_id
@@ -322,7 +322,7 @@ def test_chat_returns_active_context_from_selected_docs(monkeypatch):
     )
     monkeypatch.setattr(
         "docops.api.routes.chat._run_chat",
-        lambda msg, top_k, user_id=0, doc_names=None: {"answer": "ok", "intent": "qa", "retrieved_chunks": []},
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: {"answer": "ok", "intent": "qa", "retrieved_chunks": []},
     )
 
     resp = auth_client.post(
@@ -735,7 +735,7 @@ def test_chat_calendar_query_bypasses_llm(monkeypatch):
     # Mock orchestrator (pass-through) e calendar assistant (resposta sem chamar Gemini)
     monkeypatch.setattr(
         "docops.services.orchestrator.maybe_orchestrate",
-        lambda msg, uid, db: None,
+        lambda msg, uid, db, history=None, session_id=None, active_context=None: None,
     )
     monkeypatch.setattr(
         "docops.api.routes.chat.maybe_answer_calendar_query",
@@ -1195,3 +1195,4 @@ def test_concurrent_chat_and_pipeline_thread_sessions(monkeypatch):
 
     app.dependency_overrides[get_db] = _override_get_db
     _clear_auth_override()
+

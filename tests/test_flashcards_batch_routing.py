@@ -49,7 +49,7 @@ def test_create_flashcards_batch_for_all_docs(monkeypatch):
     )
     monkeypatch.setattr(crud, "list_documents_for_user", lambda db, user_id: docs)
     monkeypatch.setattr(
-        "docops.api.routes.flashcards._generate_cards",
+        "docops.services.flashcard_generation.generate_cards",
         lambda **kwargs: [{"front": f"{kwargs['doc_name']} Q{i}", "back": "A", "difficulty": "facil"} for i in range(10)],
     )
 
@@ -145,7 +145,7 @@ def test_flashcard_command_uses_active_context_document(monkeypatch):
     )
     monkeypatch.setattr(crud, "list_documents_for_user", lambda db, user_id: docs)
     monkeypatch.setattr(
-        "docops.api.routes.flashcards._generate_cards",
+        "docops.services.flashcard_generation.generate_cards",
         lambda **kwargs: [{"front": f"{kwargs['doc_name']} Q{i}", "back": "A", "difficulty": "facil"} for i in range(kwargs["num_cards"])],
     )
 
@@ -181,3 +181,4 @@ def test_action_router_leaves_flashcard_commands_for_orchestrator():
     )
 
     assert result is None
+

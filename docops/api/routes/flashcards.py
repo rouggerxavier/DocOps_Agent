@@ -680,44 +680,16 @@ def _generate_cards(
     difficulty_mode: str = "any",
     difficulty_custom: dict | None = None,
 ) -> list[dict]:
-    from docops.config import config
-    from google import genai
+    from docops.services.flashcard_generation import generate_cards
 
-    chunks = _collect_diverse_chunks(doc_name, doc_id, user_id, content_filter)
-    if not chunks:
-        raise HTTPException(status_code=404, detail="Nenhum chunk encontrado para este documento.")
-
-    # Use up to 50 chunks, each up to 1200 chars, total capped at 24 000 chars
-    content = "\n\n".join(chunk.page_content[:1200] for chunk in chunks[:50])
-
-    filter_instruction = ""
-    if content_filter.strip():
-        filter_instruction = (
-            f'\nFoco: gere flashcards APENAS sobre "{content_filter.strip()}". '
-            "Ignore conteudo nao relacionado.\n"
-        )
-
-    target_counts = _build_target_difficulty_counts(difficulty_mode, num_cards, difficulty_custom)
-    initial_difficulty_instruction = _build_difficulty_instruction(difficulty_mode, difficulty_custom)
-
-    client = genai.Client(api_key=config.gemini_api_key)
-
-    def _fetch_batch(*, num_cards: int, difficulty_instruction: str, excluded_fronts: list[str]) -> list[object]:
-        effective_instruction = difficulty_instruction or initial_difficulty_instruction
-        return _request_flashcard_batch(
-            client=client,
-            model=config.gemini_model,
-            content=content,
-            num_cards=num_cards,
-            filter_instruction=filter_instruction,
-            difficulty_instruction=effective_instruction,
-            excluded_fronts=excluded_fronts,
-        )
-
-    return _collect_flashcards(
-        _fetch_batch,
-        total_cards=num_cards,
-        target_counts=target_counts,
+    return generate_cards(
+        doc_name=doc_name,
+        doc_id=doc_id,
+        user_id=user_id,
+        num_cards=num_cards,
+        content_filter=content_filter,
+        difficulty_mode=difficulty_mode,
+        difficulty_custom=difficulty_custom,
     )
 
 

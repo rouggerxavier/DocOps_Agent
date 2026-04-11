@@ -372,10 +372,10 @@ def generate_study_plan(
     deck_id: Optional[int] = None
     if generate_flashcards:
         try:
-            from docops.api.routes.flashcards import _generate_cards
-            from docops.api.routes.pipeline import _schedule_srs_reminders
+            from docops.services.flashcard_generation import generate_cards
+            from docops.services.flashcard_generation import schedule_srs_reminders
 
-            cards = _generate_cards(
+            cards = generate_cards(
                 doc_name=doc_name,
                 doc_id=doc_id,
                 user_id=user_id,
@@ -391,7 +391,7 @@ def generate_study_plan(
             )
             deck_id = deck.id
             logger.info("Study plan: deck criado (id=%s, %d cards)", deck_id, len(cards))
-            _schedule_srs_reminders(deck_id, deck.title, user_id, db)
+            schedule_srs_reminders(deck_id, deck.title, user_id, db)
         except Exception as exc:
             logger.warning("Falha ao gerar flashcards no plano: %s", exc)
 
@@ -422,3 +422,4 @@ def generate_study_plan(
         "titulo": titulo,
         "conflicts": conflicts,
     }
+

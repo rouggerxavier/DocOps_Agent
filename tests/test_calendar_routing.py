@@ -102,7 +102,7 @@ class TestCalendarRouting:
         # Orchestrator retorna None (pass-through)
         monkeypatch.setattr(
             "docops.services.orchestrator.maybe_orchestrate",
-            lambda msg, uid, db: None,
+            lambda msg, uid, db, history=None, session_id=None, active_context=None: None,
         )
         # Calendar assistant cria o lembrete
         monkeypatch.setattr(
@@ -130,7 +130,7 @@ class TestCalendarRouting:
         """'quero criar minha rotina' sem horários → clarificação de calendário, não nota/tarefa."""
         monkeypatch.setattr(
             "docops.services.orchestrator.maybe_orchestrate",
-            lambda msg, uid, db: None,
+            lambda msg, uid, db, history=None, session_id=None, active_context=None: None,
         )
         monkeypatch.setattr(
             "docops.api.routes.chat.maybe_answer_calendar_query",
@@ -153,7 +153,7 @@ class TestCalendarRouting:
         """'segunda a sexta 08:00-12:00 estágio; ...' → create_schedule no calendário."""
         monkeypatch.setattr(
             "docops.services.orchestrator.maybe_orchestrate",
-            lambda msg, uid, db: None,
+            lambda msg, uid, db, history=None, session_id=None, active_context=None: None,
         )
         monkeypatch.setattr(
             "docops.api.routes.chat.maybe_answer_calendar_query",
@@ -182,7 +182,7 @@ class TestCalendarRouting:
         """'não é nas notas, é no calendário' → orchestrator passa para calendar_assistant."""
         orchestrator_calls = []
 
-        def _spy_orchestrate(msg, uid, db):
+        def _spy_orchestrate(msg, uid, db, history=None, session_id=None, active_context=None):
             orchestrator_calls.append(msg)
             return None  # pass-through esperado
 
@@ -205,7 +205,7 @@ class TestCalendarRouting:
     def test_nota_explicita_vai_para_nota(self, monkeypatch):
         """'anota isso nas notas: revisar capítulo 3' → nota (não calendário)."""
 
-        def _fake_orchestrate(msg, uid, db):
+        def _fake_orchestrate(msg, uid, db, history=None, session_id=None, active_context=None):
             return {
                 "answer": "📝 Nota criada: **Nota: revisar capítulo 3**\n[Ver Notas →](/notes)",
                 "intent": "cascade_create_note",
@@ -229,7 +229,7 @@ class TestCalendarRouting:
     def test_tarefa_explicita_vai_para_tarefa(self, monkeypatch):
         """'criar tarefa: entregar trabalho amanhã' → tarefa (não calendário)."""
 
-        def _fake_orchestrate(msg, uid, db):
+        def _fake_orchestrate(msg, uid, db, history=None, session_id=None, active_context=None):
             return {
                 "answer": "✅ Tarefa criada: **Entregar trabalho amanhã**",
                 "intent": "create_task",
@@ -262,7 +262,7 @@ class TestStudyPlanRegression:
 
         study_plan_triggered = {}
 
-        def _fake_orchestrate(msg, uid, db):
+        def _fake_orchestrate(msg, uid, db, history=None, session_id=None, active_context=None):
             study_plan_triggered["called"] = True
             return {
                 "answer": (
@@ -385,3 +385,4 @@ class TestOrchestratorCalendarPassthrough:
         if result is not None:
             assert "calendar" not in result.get("intent", ""), \
                 "Tarefa não deve virar intent de calendário"
+

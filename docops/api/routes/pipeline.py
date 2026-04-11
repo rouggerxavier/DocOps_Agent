@@ -85,35 +85,10 @@ def _extract_task_items(content: str, max_tasks: int) -> list[dict]:
 
 
 def _schedule_srs_reminders(deck_id: int, deck_title: str, user_id: int, db: Session) -> int:
-    """Cria lembretes de revisão espaçada (SRS) para um deck de flashcards.
+    """Create spaced repetition reminders (+1d, +3d, +7d at 19:00)."""
+    from docops.services.flashcard_generation import schedule_srs_reminders
 
-    Agenda: +1 dia, +3 dias, +7 dias a partir de hoje às 19h.
-    Retorna o número de lembretes criados.
-    """
-    from datetime import datetime, timedelta, timezone
-    from docops.db import crud as _crud
-
-    now = datetime.now(timezone.utc)
-    slots = [
-        ("🔁 1ª revisão", now + timedelta(days=1)),
-        ("🔁 2ª revisão", now + timedelta(days=3)),
-        ("🔁 3ª revisão", now + timedelta(days=7)),
-    ]
-    created = 0
-    for label, dt in slots:
-        scheduled = dt.replace(hour=19, minute=0, second=0, microsecond=0)
-        try:
-            _crud.create_reminder_record(
-                db,
-                user_id=user_id,
-                title=f"{label} — {deck_title}",
-                starts_at=scheduled,
-                note=f"Revisão espaçada automática. Deck ID: {deck_id}",
-            )
-            created += 1
-        except Exception as exc:
-            logger.warning("Falha ao criar lembrete SRS para deck %d: %s", deck_id, exc)
-    return created
+    return schedule_srs_reminders(deck_id=deck_id, deck_title=deck_title, user_id=user_id, db=db)
 
 
 def _run_digest(
@@ -155,8 +130,8 @@ def _run_digest(
     deck_id: Optional[int] = None
     if generate_flashcards:
         try:
-            from docops.api.routes.flashcards import _generate_cards
-            cards = _generate_cards(
+            from docops.services.flashcard_generation import generate_cards
+            cards = generate_cards(
                 doc_name=doc_name,
                 doc_id=doc_id,
                 user_id=user_id,
@@ -832,3 +807,4 @@ async def evaluate_answer(
         raise HTTPException(status_code=500, detail="Erro interno ao avaliar resposta.")
 
     return EvaluateAnswerResponse(feedback=feedback, score=score)
+
