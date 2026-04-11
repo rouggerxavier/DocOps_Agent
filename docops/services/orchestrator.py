@@ -708,8 +708,8 @@ def _exec_cascade_doc_review(entities: dict, user_id: int, db: Session) -> dict:
     deck_id = None
     deck_line = ""
     try:
-        from docops.api.routes.flashcards import _generate_cards
-        cards = _generate_cards(
+        from docops.services.flashcard_generation import generate_cards
+        cards = generate_cards(
             doc_name=matched_doc.file_name,
             doc_id=matched_doc.doc_id,
             user_id=user_id,
@@ -978,7 +978,7 @@ def _exec_create_flashcards_batch(
     active_context: dict | None = None,
 ) -> dict:
     from docops.db import crud
-    from docops.api.routes.flashcards import _generate_cards
+    from docops.services.flashcard_generation import generate_cards
 
     docs = crud.list_documents_for_user(db, user_id)
     if not docs:
@@ -1004,7 +1004,7 @@ def _exec_create_flashcards_batch(
 
     for doc in target_docs:
         try:
-            cards = _generate_cards(
+            cards = generate_cards(
                 doc_name=doc.file_name,
                 doc_id=doc.doc_id,
                 user_id=user_id,
@@ -1598,3 +1598,4 @@ def maybe_orchestrate(
         return None
 
     return None
+

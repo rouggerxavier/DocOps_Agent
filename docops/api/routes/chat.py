@@ -110,24 +110,15 @@ async def _invoke_chat_runner(
     doc_names: list[str] | None = None,
     strict_grounding: bool = False,
 ) -> dict:
-    """Call _run_chat with compatibility for legacy monkeypatch signatures."""
-    try:
-        return await asyncio.to_thread(
-            _run_chat,
-            message,
-            top_k,
-            user_id,
-            doc_names,
-            strict_grounding,
-        )
-    except TypeError:
-        try:
-            return await asyncio.to_thread(_run_chat, message, top_k, user_id, doc_names)
-        except TypeError:
-            try:
-                return await asyncio.to_thread(_run_chat, message, top_k, user_id)
-            except TypeError:
-                return await asyncio.to_thread(_run_chat, message, top_k)
+    """Run chat inference in a worker thread with the canonical signature."""
+    return await asyncio.to_thread(
+        _run_chat,
+        message,
+        top_k,
+        user_id,
+        doc_names,
+        strict_grounding,
+    )
 
 
 async def _invoke_orchestrator(
@@ -138,34 +129,20 @@ async def _invoke_orchestrator(
     session_id: str | None = None,
     active_context: dict | None = None,
 ) -> dict | None:
-    """Call maybe_orchestrate with compatibility for older monkeypatch signatures."""
+    """Run orchestrator logic in a worker thread using a local DB session."""
     from docops.services.orchestrator import maybe_orchestrate
 
     def _run_with_local_session() -> dict | None:
         db_bind = db.get_bind()
         with session_scope(bind=db_bind) as db_local:
-            try:
-                return maybe_orchestrate(
-                    message,
-                    user_id,
-                    db_local,
-                    history,
-                    session_id,
-                    active_context,
-                )
-            except TypeError:
-                try:
-                    return maybe_orchestrate(
-                        message,
-                        user_id,
-                        db_local,
-                        history,
-                    )
-                except TypeError:
-                    try:
-                        return maybe_orchestrate(message, user_id, db_local)
-                    except TypeError:
-                        return maybe_orchestrate(message, user_id)
+            return maybe_orchestrate(
+                message,
+                user_id,
+                db_local,
+                history,
+                session_id,
+                active_context,
+            )
 
     return await asyncio.to_thread(_run_with_local_session)
 
