@@ -28,12 +28,23 @@ export interface SourceItem {
   chunk_id: string
 }
 
+export interface ChatQualitySignal {
+  level: 'high' | 'medium' | 'low'
+  score: number
+  label: string
+  reasons: string[]
+  suggested_action?: string | null
+  source_count: number
+  retrieved_count: number
+}
+
 export interface ChatResponse {
   answer: string
   sources: SourceItem[]
   intent: string
   session_id: string | null
   calendar_action: Record<string, any> | null
+  quality_signal?: ChatQualitySignal | null
   action_metadata?: Record<string, any> | null
   needs_confirmation?: boolean
   confirmation_text?: string | null
