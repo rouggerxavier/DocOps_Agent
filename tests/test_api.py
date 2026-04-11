@@ -260,6 +260,9 @@ def test_chat_success(monkeypatch):
     assert len(data["sources"]) == 1
     assert data["sources"][0]["file_name"] == "manual.pdf"
     assert data["session_id"] == "s1"
+    assert data["quality_signal"] is not None
+    assert data["quality_signal"]["level"] in {"high", "medium", "low"}
+    assert "score" in data["quality_signal"]
     _clear_auth_override()
 
 
@@ -289,6 +292,56 @@ def test_chat_returns_only_cited_sources(monkeypatch):
     assert len(data["sources"]) == 1
     assert data["sources"][0]["fonte_n"] == 2
     assert data["sources"][0]["file_name"] == "doc2.pdf"
+    _clear_auth_override()
+
+
+def test_chat_quality_signal_low_when_no_retrieval(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    fake_state = {
+        "answer": "Nao encontrei dados suficientes.",
+        "intent": "qa",
+        "retrieved_chunks": [],
+    }
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    resp = auth_client.post("/api/chat", json={"message": "hello"})
+    assert resp.status_code == 200
+    signal = resp.json()["quality_signal"]
+    assert signal["level"] == "low"
+    assert signal["retrieved_count"] == 0
+    assert signal["suggested_action"] is not None
+    _clear_auth_override()
+
+
+def test_chat_quality_signal_uses_support_rate_when_available(monkeypatch):
+    from langchain_core.documents import Document
+
+    auth_client, _ = _make_auth_client()
+    fake_state = {
+        "answer": "Resposta com suporte [Fonte 1]",
+        "intent": "qa",
+        "retrieved_chunks": [
+            Document(
+                page_content="evidencia forte",
+                metadata={"file_name": "manual.pdf", "page": "1", "chunk_id": "abc"},
+            )
+        ],
+        "grounding_info": {"support_rate": 0.91, "unsupported_claims": []},
+    }
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    resp = auth_client.post("/api/chat", json={"message": "hello"})
+    assert resp.status_code == 200
+    signal = resp.json()["quality_signal"]
+    assert signal["level"] == "high"
+    assert signal["score"] >= 0.8
+    assert "support_rate=0.91" in signal["reasons"]
     _clear_auth_override()
 
 

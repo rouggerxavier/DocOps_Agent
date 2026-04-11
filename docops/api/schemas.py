@@ -112,6 +112,16 @@ class ChatRequest(BaseModel):
     active_context: Optional[ActiveChatContext] = None
 
 
+class ChatQualitySignal(BaseModel):
+    level: str = Field(description="high | medium | low")
+    score: float = Field(ge=0.0, le=1.0)
+    label: str
+    reasons: List[str] = Field(default_factory=list)
+    suggested_action: Optional[str] = None
+    source_count: int = 0
+    retrieved_count: int = 0
+
+
 class ChatResponse(BaseModel):
     answer: str
     sources: List[SourceItem]
@@ -124,6 +134,7 @@ class ChatResponse(BaseModel):
     confirmation_text: Optional[str] = None
     suggested_reply: Optional[str] = None
     active_context: Optional[ActiveChatContext] = None
+    quality_signal: Optional[ChatQualitySignal] = None
 
 
 # ── /api/summarize ────────────────────────────────────────────────────────────

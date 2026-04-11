@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import List
+from typing import Any, List
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from docops.api.schemas import ChatRequest, ChatResponse, SourceItem
+from docops.api.schemas import ChatQualitySignal, ChatRequest, ChatResponse, SourceItem
 from docops.auth.dependencies import get_current_user
 from docops.config import config
 from docops.db.database import get_db, session_scope
@@ -81,6 +81,88 @@ def _extract_sources(state: dict) -> List[SourceItem]:
         )
 
     return sources
+
+
+def _as_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_quality_signal(state: dict, sources: list[SourceItem]) -> ChatQualitySignal:
+    """Compute a lightweight confidence signal for chat UX."""
+    retrieved_chunks = state.get("retrieved_chunks") or []
+    retrieved_count = len(retrieved_chunks)
+    source_count = len(sources)
+
+    grounding = state.get("grounding") or state.get("grounding_info") or {}
+    support_rate = _as_float(grounding.get("support_rate"))
+    unsupported_claims = grounding.get("unsupported_claims") or []
+    unsupported_count = len(unsupported_claims) if isinstance(unsupported_claims, list) else 0
+
+    score = support_rate if support_rate is not None else 0.55
+    reasons: list[str] = []
+
+    if support_rate is not None:
+        reasons.append(f"support_rate={support_rate:.2f}")
+    if source_count == 0:
+        reasons.append("no_inline_sources")
+        score -= 0.25
+    elif source_count == 1:
+        reasons.append("single_source")
+        score -= 0.08
+    else:
+        reasons.append("multi_source")
+        score += 0.08
+    if retrieved_count == 0:
+        reasons.append("no_retrieval")
+        score -= 0.35
+    if unsupported_count > 0:
+        reasons.append(f"unsupported_claims={unsupported_count}")
+        score -= min(0.3, unsupported_count * 0.05)
+
+    score = max(0.0, min(1.0, round(score, 2)))
+
+    if score >= 0.8:
+        level = "high"
+        label = "Alta confiabilidade"
+    elif score >= 0.55:
+        level = "medium"
+        label = "Confiabilidade moderada"
+    else:
+        level = "low"
+        label = "Baixa confiabilidade"
+
+    suggested_action: str | None = None
+    if level == "low":
+        if retrieved_count == 0:
+            suggested_action = (
+                "Nao encontrei evidencias nos documentos atuais. "
+                "Considere ingerir mais material sobre este tema."
+            )
+        elif source_count == 0:
+            suggested_action = (
+                "Tente pedir uma resposta com citacoes explicitas "
+                "(por exemplo: inclua [Fonte N] no texto)."
+            )
+        else:
+            suggested_action = (
+                "A resposta tem suporte parcial. Vale reformular a pergunta "
+                "ou ampliar o conjunto de documentos."
+            )
+
+    return ChatQualitySignal(
+        level=level,
+        score=score,
+        label=label,
+        reasons=reasons,
+        suggested_action=suggested_action,
+        source_count=source_count,
+        retrieved_count=retrieved_count,
+    )
 
 
 def _run_chat(
@@ -310,6 +392,15 @@ async def chat(
     sources = _extract_sources(state)
     include_grounding = body.debug_grounding or config.debug_grounding
     grounding_payload = state.get("grounding") or state.get("grounding_info")
+    quality_signal = _build_quality_signal(state, sources)
+    logger.info(
+        "Chat quality signal user=%s intent=%s level=%s score=%.2f reasons=%s",
+        current_user.id,
+        state.get("intent", "qa"),
+        quality_signal.level,
+        quality_signal.score,
+        ",".join(quality_signal.reasons),
+    )
     next_context = remember_active_context(
         current_user.id,
         body.session_id,
@@ -333,4 +424,5 @@ async def chat(
         confirmation_text=state.get("confirmation_text"),
         suggested_reply=state.get("suggested_reply"),
         active_context=next_context,
+        quality_signal=quality_signal,
     )

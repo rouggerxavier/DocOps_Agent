@@ -13,7 +13,14 @@ import { CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { apiClient, type ChatResponse, type SourceItem, type DocItem, type FlashcardDeck } from '@/api/client'
+import {
+  apiClient,
+  type ChatResponse,
+  type ChatQualitySignal,
+  type SourceItem,
+  type DocItem,
+  type FlashcardDeck,
+} from '@/api/client'
 import { cn } from '@/lib/utils'
 
 interface Message {
@@ -22,6 +29,7 @@ interface Message {
   sources?: SourceItem[]
   intent?: string
   calendar_action?: Record<string, any> | null
+  quality_signal?: ChatQualitySignal | null
   action_metadata?: ChatActionMetadata | null
   needs_confirmation?: boolean
   confirmation_text?: string | null
@@ -578,6 +586,32 @@ const INTENT_LABELS: Record<string, string> = {
 
 // ── Message bubble ────────────────────────────────────────────────────────
 
+const QUALITY_TONE_CLASS: Record<'high' | 'medium' | 'low', string> = {
+  high: 'border-emerald-700/40 bg-emerald-600/10 text-emerald-200',
+  medium: 'border-amber-700/40 bg-amber-600/10 text-amber-100',
+  low: 'border-red-700/40 bg-red-600/10 text-red-100',
+}
+
+function QualitySignalCard({ signal }: { signal: ChatQualitySignal }) {
+  const scorePct = Math.round(Math.max(0, Math.min(1, signal.score)) * 100)
+  return (
+    <div
+      data-testid="chat-quality-signal"
+      className={cn(
+        'rounded-xl border px-3 py-2 text-[11px] leading-5',
+        QUALITY_TONE_CLASS[signal.level],
+      )}
+    >
+      <p className="font-semibold">
+        Confiabilidade: {signal.label} ({scorePct}%)
+      </p>
+      {signal.suggested_action && (
+        <p className="mt-1 text-[11px] opacity-95">{signal.suggested_action}</p>
+      )}
+    </div>
+  )
+}
+
 function MessageBubble({
   message, onSourceClick, onCitationClick,
 }: {
@@ -657,6 +691,10 @@ function MessageBubble({
               ],
             }}
           />
+        )}
+
+        {!isUser && message.quality_signal && (
+          <QualitySignalCard signal={message.quality_signal} />
         )}
 
         {!isUser && message.sources && message.sources.length > 0 && (
@@ -900,6 +938,7 @@ export function Chat() {
     sources: SourceItem[],
     intent: string,
     calendarAction: any,
+    qualitySignal: ChatQualitySignal | null,
     actionMetadata: ChatActionMetadata | null,
   ) => {
     const charsPerTick = 6
@@ -910,7 +949,21 @@ export function Chat() {
     setSessions(prev =>
       prev.map(s =>
         s.id === activeSessionId
-          ? { ...s, messages: [...s.messages, { role: 'assistant', content: '', streaming: true, sources: [], intent, action_metadata: null }] }
+          ? {
+            ...s,
+            messages: [
+              ...s.messages,
+              {
+                role: 'assistant',
+                content: '',
+                streaming: true,
+                sources: [],
+                intent,
+                quality_signal: null,
+                action_metadata: null,
+              },
+            ],
+          }
           : s
       )
     )
@@ -932,6 +985,7 @@ export function Chat() {
             streaming: !done,
             sources: done ? sources : [],
             calendar_action: done ? calendarAction : null,
+            quality_signal: done ? qualitySignal : null,
             action_metadata: done ? actionMetadata : null,
           }
           return { ...s, messages: msgs }
@@ -976,6 +1030,7 @@ export function Chat() {
         data.sources,
         data.intent,
         data.calendar_action ?? null,
+        data.quality_signal ?? null,
         (data.action_metadata as ChatActionMetadata | null) ?? null,
       )
       if (data.calendar_action) {
