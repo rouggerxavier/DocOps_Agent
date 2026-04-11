@@ -206,6 +206,16 @@ class HealthResponse(BaseModel):
     version: str = "0.1.0"
 
 
+class ReadinessCheck(BaseModel):
+    ok: bool
+    detail: str = "ok"
+
+
+class ReadyResponse(BaseModel):
+    status: str = "ok"
+    checks: dict[str, ReadinessCheck]
+
+
 # -- /api/jobs ----------------------------------------------------------------
 
 class JobCreateResponse(BaseModel):

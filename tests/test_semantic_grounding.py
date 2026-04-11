@@ -190,3 +190,39 @@ class TestComputeSupportRate:
         result = compute_support_rate(claims, evidence, mode="heuristic")
         # Should be in unsupported list
         assert isinstance(result["unsupported_claims"], list)
+
+    def test_support_rate_applies_claim_and_chunk_caps(self):
+        from docops.grounding.support import compute_support_rate
+
+        claims = [
+            "Claim 1 com data 2024.",
+            "Claim 2 com data 2025.",
+            "Claim 3 com data 2026.",
+        ]
+        evidence = [
+            _doc("Claim 1 com data 2024."),
+            _doc("Claim 2 com data 2025."),
+            _doc("Claim 3 com data 2026."),
+        ]
+        result = compute_support_rate(
+            claims,
+            evidence,
+            mode="heuristic",
+            max_claims=2,
+            max_chunks=1,
+        )
+        assert result["claims_total"] == 3
+        assert result["claims_used"] == 2
+        assert result["claims_truncated"] == 1
+        assert result["chunks_total"] == 3
+        assert result["chunks_used"] == 1
+        assert result["chunks_truncated"] == 2
+
+    def test_support_rate_reports_latency_ms(self):
+        from docops.grounding.support import compute_support_rate
+
+        claims = ["A taxa foi de 10%."]
+        evidence = [_doc("A taxa foi de 10% no experimento.")]
+        result = compute_support_rate(claims, evidence, mode="heuristic")
+        assert "latency_ms" in result
+        assert result["latency_ms"] >= 0.0

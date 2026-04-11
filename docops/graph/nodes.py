@@ -1,6 +1,7 @@
 """LangGraph node functions — each takes AgentState and returns a partial state update."""
 
 from datetime import datetime, timezone
+from time import perf_counter
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -213,16 +214,61 @@ def _semantic_grounding_payload(answer: str, chunks: list) -> dict:
     from docops.grounding.claims import extract_claims, extract_cited_claims
     from docops.grounding.support import compute_support_rate
 
+    def _coerce_non_negative_int(value: Any, default: int) -> int:
+        if not isinstance(value, (int, float, str)):
+            return default
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            return default
+        return parsed if parsed >= 0 else default
+
+    total_started = perf_counter()
+    claims_started = perf_counter()
     cited_claims = extract_cited_claims(answer)
     claims = [c["claim"] for c in cited_claims] if cited_claims else extract_claims(answer)
-    support = compute_support_rate(
-        claims,
-        chunks,
-        mode=config.grounded_verifier_mode,
+    claims_elapsed_ms = round((perf_counter() - claims_started) * 1000.0, 2)
+
+    claims_total = len(claims)
+    chunks_total = len(chunks)
+    claim_cap = _coerce_non_negative_int(getattr(config, "semantic_grounding_max_claims", 24), 24)
+    chunk_cap = _coerce_non_negative_int(getattr(config, "semantic_grounding_max_chunks", 12), 12)
+    evidence_chars_cap = _coerce_non_negative_int(
+        getattr(config, "semantic_grounding_max_evidence_chars", 1600),
+        1600,
     )
+
+    claims_used = claims if claim_cap == 0 else claims[:claim_cap]
+    chunks_used = chunks if chunk_cap == 0 else chunks[:chunk_cap]
+
+    support_started = perf_counter()
+    support = compute_support_rate(
+        claims_used,
+        chunks_used,
+        mode=config.grounded_verifier_mode,
+        max_evidence_chars=evidence_chars_cap,
+    )
+    support_elapsed_ms = round((perf_counter() - support_started) * 1000.0, 2)
+    total_elapsed_ms = round((perf_counter() - total_started) * 1000.0, 2)
+
     return {
         **support,
-        "claims_checked": len(claims),
+        "claims_checked": len(claims_used),
+        "claims_total": claims_total,
+        "claims_truncated": max(0, claims_total - len(claims_used)),
+        "chunks_total": chunks_total,
+        "chunks_checked": len(chunks_used),
+        "chunks_truncated": max(0, chunks_total - len(chunks_used)),
+        "caps": {
+            "max_claims": claim_cap,
+            "max_chunks": chunk_cap,
+            "max_evidence_chars": evidence_chars_cap,
+        },
+        "timings_ms": {
+            "extract_claims": claims_elapsed_ms,
+            "compute_support": support_elapsed_ms,
+            "total": total_elapsed_ms,
+        },
         "mode": config.grounded_verifier_mode,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
@@ -301,10 +347,17 @@ def verify_grounding_node(state: AgentState) -> dict[str, Any]:
         update["grounding_info"] = grounding_info
         update["grounding"] = grounding_info
         support_rate = float(grounding_info.get("support_rate", 1.0))
+        timings = grounding_info.get("timings_ms", {})
         logger.info(
-            f"Semantic grounding: support_rate={support_rate:.2f}, "
-            f"claims={grounding_info.get('claims_checked', 0)}, "
-            f"unsupported={len(grounding_info.get('unsupported_claims', []))}"
+            "Semantic grounding: support_rate=%.2f, claims=%s/%s, chunks=%s/%s, "
+            "unsupported=%s, latency_ms=%s",
+            support_rate,
+            grounding_info.get("claims_checked", 0),
+            grounding_info.get("claims_total", grounding_info.get("claims_checked", 0)),
+            grounding_info.get("chunks_checked", 0),
+            grounding_info.get("chunks_total", grounding_info.get("chunks_checked", 0)),
+            len(grounding_info.get("unsupported_claims", [])),
+            timings.get("total", grounding_info.get("latency_ms")),
         )
     except Exception as exc:
         logger.warning(f"Semantic grounding check failed: {exc}")

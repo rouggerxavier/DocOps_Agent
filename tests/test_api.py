@@ -78,6 +78,36 @@ def test_health():
     assert resp.json()["status"] == "ok"
 
 
+def test_ready_ok():
+    checks = {
+        "database": {"ok": True, "detail": "ok"},
+        "uploads_dir": {"ok": True, "detail": "ok"},
+        "artifacts_dir": {"ok": True, "detail": "ok"},
+        "chroma_dir": {"ok": True, "detail": "ok"},
+    }
+    with patch("docops.api.routes.health._run_readiness_checks", return_value=(True, checks)):
+        resp = client.get("/api/ready")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["checks"]["database"]["ok"] is True
+
+
+def test_ready_returns_503_when_dependency_fails():
+    checks = {
+        "database": {"ok": False, "detail": "OperationalError"},
+        "uploads_dir": {"ok": True, "detail": "ok"},
+        "artifacts_dir": {"ok": True, "detail": "ok"},
+        "chroma_dir": {"ok": True, "detail": "ok"},
+    }
+    with patch("docops.api.routes.health._run_readiness_checks", return_value=(False, checks)):
+        resp = client.get("/api/ready")
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["status"] == "unready"
+    assert body["checks"]["database"]["ok"] is False
+
+
 # ── Auth: register ────────────────────────────────────────────────────────────
 
 def test_register_ok():
