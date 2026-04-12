@@ -67,6 +67,22 @@ def _make_auth_client():
     return TestClient(app), fake_user
 
 
+def _make_auth_client_for_user(user_id: int):
+    fake_user = User(
+        id=int(user_id),
+        name=f"Tester {int(user_id)}",
+        email=f"tester{int(user_id)}@example.com",
+        password_hash="x",
+        is_active=True,
+    )
+
+    def _fake_auth():
+        return fake_user
+
+    app.dependency_overrides[get_current_user] = _fake_auth
+    return TestClient(app), fake_user
+
+
 def _clear_auth_override():
     app.dependency_overrides.pop(get_current_user, None)
 
@@ -539,6 +555,23 @@ def test_preferences_endpoint_requires_feature_flag(monkeypatch):
     _clear_auth_override()
 
 
+def test_preferences_endpoints_require_auth_for_read_write_delete(monkeypatch):
+    monkeypatch.setenv("FEATURE_PERSONALIZATION_ENABLED", "true")
+    _clear_auth_override()
+
+    get_resp = client.get("/api/preferences")
+    assert get_resp.status_code == 401
+
+    put_resp = client.put("/api/preferences", json={"tone": "objective"})
+    assert put_resp.status_code == 401
+
+    reset_resp = client.post("/api/preferences/reset")
+    assert reset_resp.status_code == 401
+
+    delete_resp = client.delete("/api/preferences")
+    assert delete_resp.status_code == 401
+
+
 def test_preferences_get_returns_defaults_and_persists(monkeypatch):
     auth_client, _ = _make_auth_client()
     monkeypatch.setenv("FEATURE_PERSONALIZATION_ENABLED", "true")
@@ -570,6 +603,52 @@ def test_preferences_get_returns_defaults_and_persists(monkeypatch):
         assert record.schedule_preference == "flexible"
     finally:
         db.close()
+    _clear_auth_override()
+
+
+def test_preferences_retention_policy_purges_stale_record(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PERSONALIZATION_ENABLED", "true")
+    monkeypatch.setenv("PREFERENCES_RETENTION_DAYS", "30")
+    Base.metadata.create_all(bind=_test_engine)
+
+    captured_events: list[str] = []
+
+    def _capture_emit(_logger, event, *args, **kwargs):
+        captured_events.append(str(event))
+        return {"event": event}
+
+    monkeypatch.setattr("docops.api.routes.preferences.emit_event", _capture_emit)
+
+    stale_ts = datetime.now(timezone.utc) - timedelta(days=45)
+    db = _TestSession()
+    try:
+        db.query(UserPreferenceRecord).filter(UserPreferenceRecord.user_id == 1).delete()
+        db.add(
+            UserPreferenceRecord(
+                user_id=1,
+                schema_version=1,
+                default_depth="deep",
+                tone="didactic",
+                strictness_preference="strict",
+                schedule_preference="intensive",
+                created_at=stale_ts,
+                updated_at=stale_ts,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = auth_client.get("/api/preferences")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["default_depth"] == "brief"
+    assert payload["tone"] == "neutral"
+    assert payload["strictness_preference"] == "balanced"
+    assert payload["schedule_preference"] == "flexible"
+    assert "preferences.retention.purged" in captured_events
+
     _clear_auth_override()
 
 
@@ -610,6 +689,47 @@ def test_preferences_update_and_reset_flow(monkeypatch):
     assert reset_payload["tone"] == "neutral"
     assert reset_payload["strictness_preference"] == "balanced"
     assert reset_payload["schedule_preference"] == "flexible"
+    _clear_auth_override()
+
+
+def test_preferences_delete_endpoint_clears_only_current_user(monkeypatch):
+    monkeypatch.setenv("FEATURE_PERSONALIZATION_ENABLED", "true")
+    Base.metadata.create_all(bind=_test_engine)
+
+    db = _TestSession()
+    try:
+        db.query(UserPreferenceRecord).filter(UserPreferenceRecord.user_id.in_([101, 202])).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    client_user_101, _ = _make_auth_client_for_user(101)
+    response_101 = client_user_101.put(
+        "/api/preferences",
+        json={
+            "default_depth": "deep",
+            "tone": "didactic",
+            "strictness_preference": "strict",
+            "schedule_preference": "intensive",
+        },
+    )
+    assert response_101.status_code == 200
+    _clear_auth_override()
+
+    client_user_202, _ = _make_auth_client_for_user(202)
+    user_202_get = client_user_202.get("/api/preferences")
+    assert user_202_get.status_code == 200
+    assert user_202_get.json()["default_depth"] == "brief"
+
+    user_202_delete = client_user_202.delete("/api/preferences")
+    assert user_202_delete.status_code == 204
+    _clear_auth_override()
+
+    client_user_101_again, _ = _make_auth_client_for_user(101)
+    user_101_get = client_user_101_again.get("/api/preferences")
+    assert user_101_get.status_code == 200
+    assert user_101_get.json()["default_depth"] == "deep"
+    assert user_101_get.json()["tone"] == "didactic"
     _clear_auth_override()
 
 

@@ -710,6 +710,11 @@ class Config:
         return int(os.getenv("JWT_ACCESS_TOKEN_EXPIRES_MINUTES", "60"))
 
     @property
+    def preferences_retention_days(self) -> int:
+        """Retention window in days for persisted user preferences (default: 365)."""
+        return max(0, int(os.getenv("PREFERENCES_RETENTION_DAYS", "365")))
+
+    @property
     def ingest_allowed_dirs(self) -> list[Path]:
         """DiretÃ³rios permitidos para ingest por path (evita leitura arbitrÃ¡ria de disco)."""
         raw = os.getenv("INGEST_ALLOWED_DIRS", "")

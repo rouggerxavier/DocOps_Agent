@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import re
 import unicodedata
 
@@ -102,6 +102,62 @@ def get_user_preference_record(db: Session, user_id: int) -> UserPreferenceRecor
     )
 
 
+def _resolve_preference_retention_days(retention_days: int | None = None) -> int:
+    if retention_days is not None:
+        return max(0, int(retention_days))
+    from docops.config import config
+
+    return max(0, int(config.preferences_retention_days))
+
+
+def _preference_record_last_updated_at(record: UserPreferenceRecord) -> datetime | None:
+    latest = record.updated_at or record.created_at
+    if latest is None:
+        return None
+    if latest.tzinfo is None:
+        return latest.replace(tzinfo=timezone.utc)
+    return latest
+
+
+def _is_user_preference_record_retention_expired(
+    record: UserPreferenceRecord,
+    *,
+    retention_days: int,
+    now: datetime | None = None,
+) -> bool:
+    if retention_days <= 0:
+        return False
+    last_updated = _preference_record_last_updated_at(record)
+    if last_updated is None:
+        return False
+    now_utc = now or datetime.now(timezone.utc)
+    return last_updated < (now_utc - timedelta(days=retention_days))
+
+
+def apply_user_preference_retention_policy(
+    db: Session,
+    *,
+    user_id: int,
+    retention_days: int | None = None,
+    now: datetime | None = None,
+) -> bool:
+    record = get_user_preference_record(db, user_id)
+    if record is None:
+        return False
+
+    resolved_days = _resolve_preference_retention_days(retention_days)
+    if not _is_user_preference_record_retention_expired(
+        record,
+        retention_days=resolved_days,
+        now=now,
+    ):
+        return False
+
+    db.delete(record)
+    db.commit()
+    return True
+
+
 def _apply_preference_defaults(record: UserPreferenceRecord) -> None:
     defaults = default_user_preferences_payload()
     record.schema_version = int(defaults["schema_version"])
@@ -138,6 +194,7 @@ def _migrate_user_preference_record(db: Session, record: UserPreferenceRecord) -
 
 
 def get_or_create_user_preference_record(db: Session, user_id: int) -> UserPreferenceRecord:
+    apply_user_preference_retention_policy(db, user_id=user_id)
     record = get_user_preference_record(db, user_id)
     if record is not None:
         return _migrate_user_preference_record(db, record)
@@ -203,6 +260,15 @@ def reset_user_preference_record(db: Session, *, user_id: int) -> UserPreference
     db.commit()
     db.refresh(record)
     return record
+
+
+def delete_user_preference_record(db: Session, *, user_id: int) -> bool:
+    record = get_user_preference_record(db, user_id)
+    if record is None:
+        return False
+    db.delete(record)
+    db.commit()
+    return True
 
 
 # -- DocumentRecord -----------------------------------------------------------
