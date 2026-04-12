@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect } from 'react'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
@@ -105,6 +105,15 @@ interface FlashcardBatchResult {
   success: boolean
   deck?: FlashcardDeck
   error?: string
+}
+
+interface ChatRunPayload {
+  message: string
+  sessionId: string
+  docIds: string[]
+  strictGrounding: boolean
+  history: Array<{ role: 'user' | 'assistant'; content: string }>
+  activeContext: ChatActiveContext
 }
 
 const WELCOME_MESSAGE: Message = {
@@ -753,7 +762,7 @@ export function Chat() {
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [pendingFlashcardCommand, setPendingFlashcardCommand] = useState<FlashcardCommandPlan | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
-  const streamTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const streamAbortRef = useRef<AbortController | null>(null)
 
   const activeSession = sessions.find(s => s.id === activeSessionId) ?? sessions[0]
   const messages = activeSession?.messages ?? EMPTY_MESSAGES
@@ -799,13 +808,106 @@ export function Chat() {
     )
   }
 
-  function updateActiveContext(nextContext: ChatActiveContext) {
+  function updateSessionActiveContext(sessionId: string, nextContext: ChatActiveContext) {
     setSessions(prev =>
       prev.map(s =>
-        s.id === activeSessionId
+        s.id === sessionId
           ? { ...s, activeContext: normalizeActiveContext(nextContext) }
           : s
       )
+    )
+  }
+
+  function updateActiveContext(nextContext: ChatActiveContext) {
+    updateSessionActiveContext(activeSessionId, nextContext)
+  }
+
+  function appendStreamingAssistantPlaceholder(sessionId: string) {
+    setSessions(prev =>
+      prev.map(s =>
+        s.id === sessionId
+          ? {
+            ...s,
+            messages: [
+              ...s.messages,
+              {
+                role: 'assistant',
+                content: '',
+                streaming: true,
+                sources: [],
+                intent: 'qa',
+                quality_signal: null,
+                action_metadata: null,
+                calendar_action: null,
+              },
+            ],
+          }
+          : s
+      )
+    )
+  }
+
+  function appendDeltaToStreamingMessage(sessionId: string, delta: string) {
+    if (!delta) return
+    setSessions(prev =>
+      prev.map(s => {
+        if (s.id !== sessionId || s.messages.length === 0) return s
+        const msgs = [...s.messages]
+        const last = msgs[msgs.length - 1]
+        if (!last || last.role !== 'assistant' || !last.streaming) return s
+        msgs[msgs.length - 1] = {
+          ...last,
+          content: `${last.content}${delta}`,
+        }
+        return { ...s, messages: msgs }
+      })
+    )
+  }
+
+  function finalizeStreamingAssistantMessage(sessionId: string, data: ChatResponse) {
+    setSessions(prev =>
+      prev.map(s => {
+        if (s.id !== sessionId || s.messages.length === 0) return s
+        const msgs = [...s.messages]
+        const last = msgs[msgs.length - 1]
+        if (!last || last.role !== 'assistant') return s
+        msgs[msgs.length - 1] = {
+          ...last,
+          content: data.answer ?? last.content ?? '',
+          streaming: false,
+          sources: data.sources ?? [],
+          intent: data.intent,
+          calendar_action: data.calendar_action ?? null,
+          quality_signal: data.quality_signal ?? null,
+          action_metadata: (data.action_metadata as ChatActionMetadata | null) ?? null,
+          needs_confirmation: Boolean(data.needs_confirmation ?? false),
+          confirmation_text: data.confirmation_text ?? null,
+          suggested_reply: data.suggested_reply ?? null,
+        }
+        return { ...s, messages: msgs }
+      })
+    )
+  }
+
+  function failStreamingAssistantMessage(sessionId: string, message: string) {
+    setSessions(prev =>
+      prev.map(s => {
+        if (s.id !== sessionId) return s
+        const msgs = [...s.messages]
+        const last = msgs[msgs.length - 1]
+        if (last && last.role === 'assistant' && last.streaming) {
+          msgs[msgs.length - 1] = {
+            ...last,
+            content: message,
+            streaming: false,
+          }
+          return { ...s, messages: msgs }
+        }
+        return {
+          ...s,
+          messages: [...msgs, { role: 'assistant', content: message }],
+        }
+      })
     )
   }
 
@@ -932,122 +1034,67 @@ export function Chat() {
     },
   })
 
-  // Pseudo-streaming: reveals text char by char after response arrives
-  const streamMessage = useCallback((
-    fullText: string,
-    sources: SourceItem[],
-    intent: string,
-    calendarAction: any,
-    qualitySignal: ChatQualitySignal | null,
-    actionMetadata: ChatActionMetadata | null,
-  ) => {
-    const charsPerTick = 6
-    const intervalMs = 16
-    let pos = 0
+  const mutation = useMutation<ChatResponse, Error, ChatRunPayload>({
+    mutationFn: async (payload) => {
+      appendStreamingAssistantPlaceholder(payload.sessionId)
 
-    // Add placeholder streaming message
-    setSessions(prev =>
-      prev.map(s =>
-        s.id === activeSessionId
-          ? {
-            ...s,
-            messages: [
-              ...s.messages,
-              {
-                role: 'assistant',
-                content: '',
-                streaming: true,
-                sources: [],
-                intent,
-                quality_signal: null,
-                action_metadata: null,
-              },
-            ],
-          }
-          : s
-      )
-    )
+      if (streamAbortRef.current) {
+        streamAbortRef.current.abort()
+      }
+      const controller = new AbortController()
+      streamAbortRef.current = controller
 
-    function tick() {
-      pos = Math.min(pos + charsPerTick, fullText.length)
-      const chunk = fullText.slice(0, pos)
-      const done = pos >= fullText.length
-
-      setSessions(prev =>
-        prev.map(s => {
-          if (s.id !== activeSessionId) return s
-          const msgs = [...s.messages]
-          const last = msgs[msgs.length - 1]
-          if (!last || last.role !== 'assistant') return s
-          msgs[msgs.length - 1] = {
-            ...last,
-            content: chunk,
-            streaming: !done,
-            sources: done ? sources : [],
-            calendar_action: done ? calendarAction : null,
-            quality_signal: done ? qualitySignal : null,
-            action_metadata: done ? actionMetadata : null,
-          }
-          return { ...s, messages: msgs }
-        })
-      )
-
-      if (!done) {
-        streamTimerRef.current = setTimeout(tick, intervalMs)
-      } else {
-        if (sources.length > 0) {
-          setActiveSources(sources)
-          setSelectedSource(null)
+      try {
+        return await apiClient.chatStream(
+          payload.message,
+          payload.sessionId,
+          undefined,
+          payload.docIds,
+          payload.strictGrounding,
+          payload.history,
+          payload.activeContext,
+          {
+            onDelta: delta => appendDeltaToStreamingMessage(payload.sessionId, delta),
+          },
+          controller.signal,
+        )
+      } catch (streamError: any) {
+        if (controller.signal.aborted || streamError?.name === 'AbortError') {
+          throw streamError
+        }
+        return apiClient.chat(
+          payload.message,
+          payload.sessionId,
+          undefined,
+          payload.docIds,
+          payload.strictGrounding,
+          payload.history,
+          payload.activeContext,
+        )
+      } finally {
+        if (streamAbortRef.current === controller) {
+          streamAbortRef.current = null
         }
       }
-    }
-
-    tick()
-  }, [activeSessionId])
-
-  const mutation = useMutation({
-    mutationFn: (message: string) => {
-      // Envia as últimas 6 mensagens como histórico para o backend resolver referências anafóricas
-      const recentHistory = (activeSession?.messages ?? [])
-        .filter(m => !m.streaming)
-        .slice(-6)
-        .map(m => ({ role: m.role, content: m.content }))
-      return apiClient.chat(
-        message,
-        activeSession?.id,
-        undefined,
-        selectedDocs.map(doc => doc.doc_id),
-        strictGrounding,
-        recentHistory,
-        activeSession?.activeContext ?? emptyActiveContext()
-      )
     },
-    onSuccess: (data: ChatResponse) => {
-      if (streamTimerRef.current) clearTimeout(streamTimerRef.current)
-      updateActiveContext(normalizeActiveContext(data.active_context))
-      streamMessage(
-        data.answer,
-        data.sources,
-        data.intent,
-        data.calendar_action ?? null,
-        data.quality_signal ?? null,
-        (data.action_metadata as ChatActionMetadata | null) ?? null,
-      )
+    onSuccess: (data, variables) => {
+      finalizeStreamingAssistantMessage(variables.sessionId, data)
+      updateSessionActiveContext(variables.sessionId, normalizeActiveContext(data.active_context))
+
+      if (data.sources.length > 0) {
+        setActiveSources(data.sources)
+        setSelectedSource(null)
+      }
       if (data.calendar_action) {
         qc.invalidateQueries({ queryKey: ['calendar-reminders'] })
         qc.invalidateQueries({ queryKey: ['calendar-schedules'] })
         qc.invalidateQueries({ queryKey: ['calendar-overview'] })
       }
     },
-    onError: (err: any) => {
-      toast.error(err?.response?.data?.detail ?? 'Erro ao consultar o agente')
-      setSessions(prev =>
-        prev.map(s =>
-          s.id === activeSessionId
-            ? { ...s, messages: [...s.messages, { role: 'assistant', content: 'Ocorreu um erro ao processar sua mensagem.' }] }
-            : s
-        )
-      )
+    onError: (err: any, variables) => {
+      const errorText = err?.response?.data?.detail ?? err?.message ?? 'Erro ao consultar o agente'
+      toast.error(errorText)
+      failStreamingAssistantMessage(variables.sessionId, 'Ocorreu um erro ao processar sua mensagem.')
     },
   })
 
@@ -1056,7 +1103,14 @@ export function Chat() {
   }, [messages, mutation.isPending, flashcardBatchMut.isPending, pendingFlashcardCommand])
 
   // Cleanup stream on unmount
-  useEffect(() => () => { if (streamTimerRef.current) clearTimeout(streamTimerRef.current) }, [])
+  useEffect(
+    () => () => {
+      if (streamAbortRef.current) {
+        streamAbortRef.current.abort()
+      }
+    },
+    [],
+  )
 
   function confirmFlashcardCommand() {
     if (!pendingFlashcardCommand) return
@@ -1139,7 +1193,20 @@ export function Chat() {
       return
     }
 
-    mutation.mutate(text)
+    const targetSession = activeSession
+    const recentHistory = (targetSession?.messages ?? [])
+      .filter(m => !m.streaming)
+      .slice(-6)
+      .map(m => ({ role: m.role, content: m.content }))
+
+    mutation.mutate({
+      message: text,
+      sessionId: targetSession?.id ?? activeSessionId,
+      docIds: selectedDocs.map(doc => doc.doc_id),
+      strictGrounding,
+      history: recentHistory,
+      activeContext: targetSession?.activeContext ?? emptyActiveContext(),
+    })
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {

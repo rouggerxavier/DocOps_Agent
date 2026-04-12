@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from typing import Any, List
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 
 from docops.api.schemas import ChatQualitySignal, ChatRequest, ChatResponse, SourceItem
 from docops.auth.dependencies import get_current_user
@@ -29,6 +31,8 @@ router = APIRouter()
 
 
 _CITATION_RE = re.compile(r"\[Fonte\s*(\d+)\]", re.IGNORECASE)
+_STREAM_CHARS_PER_CHUNK = 1
+_STREAM_DELAY_SECONDS = 0.01
 
 
 def _extract_cited_indices(answer: str, total_chunks: int) -> list[int]:
@@ -299,15 +303,12 @@ def _derive_calendar_context(message: str, calendar_answer: dict) -> dict:
     return patch
 
 
-@router.post("/chat", response_model=ChatResponse)
-async def chat(
+async def _build_chat_response(
     body: ChatRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    current_user: User,
+    db: Session,
 ) -> ChatResponse:
     """Run chat pipeline with retrieval scoped to current_user."""
-    logger.info("Chat request from user %s: '%s'", current_user.id, body.message[:80])
-
     # Converte history do schema para lista de dicts simples
     history = [{"role": m.role, "content": m.content} for m in (body.history or [])]
     stored_context = get_active_context(current_user.id, body.session_id)
@@ -425,4 +426,74 @@ async def chat(
         suggested_reply=state.get("suggested_reply"),
         active_context=next_context,
         quality_signal=quality_signal,
+    )
+
+
+def _sse_payload(payload: dict[str, Any]) -> str:
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(
+    body: ChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ChatResponse:
+    logger.info("Chat request from user %s: '%s'", current_user.id, body.message[:80])
+    return await _build_chat_response(body, current_user, db)
+
+
+@router.post("/chat/stream")
+async def chat_stream(
+    body: ChatRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> StreamingResponse:
+    """Stream chat answer incrementally as SSE events."""
+    logger.info("Chat stream request from user %s: '%s'", current_user.id, body.message[:80])
+
+    async def event_generator():
+        yield _sse_payload({"type": "start", "session_id": body.session_id})
+
+        try:
+            response = await _build_chat_response(body, current_user, db)
+        except HTTPException as exc:
+            yield _sse_payload(
+                {
+                    "type": "error",
+                    "status_code": exc.status_code,
+                    "detail": str(exc.detail),
+                }
+            )
+            return
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            logger.error("Chat stream error: %s", exc)
+            yield _sse_payload(
+                {
+                    "type": "error",
+                    "status_code": 500,
+                    "detail": "Agent error - check server logs",
+                }
+            )
+            return
+
+        answer = response.answer or ""
+        for idx in range(0, len(answer), _STREAM_CHARS_PER_CHUNK):
+            chunk = answer[idx : idx + _STREAM_CHARS_PER_CHUNK]
+            if chunk:
+                yield _sse_payload({"type": "delta", "delta": chunk})
+                await asyncio.sleep(_STREAM_DELAY_SECONDS)
+
+        yield _sse_payload({"type": "final", "response": response.model_dump(mode="json")})
+        yield _sse_payload({"type": "done"})
+
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers=headers,
     )

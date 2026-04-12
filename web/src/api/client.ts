@@ -52,6 +52,11 @@ export interface ChatResponse {
   active_context?: Record<string, any> | null
 }
 
+export interface ChatStreamCallbacks {
+  onStart?: () => void
+  onDelta?: (delta: string) => void
+}
+
 export interface JobCreateResponse {
   job_id: string
   status: string
@@ -337,6 +342,111 @@ export const apiClient = {
     active_context?: Record<string, any> | null
   ): Promise<ChatResponse> =>
     api.post('/api/chat', { message, session_id, top_k, doc_names, strict_grounding, history, active_context }, { timeout: 180000 }).then(r => r.data),
+
+  chatStream: async (
+    message: string,
+    session_id?: string,
+    top_k?: number,
+    doc_names?: string[],
+    strict_grounding?: boolean,
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>,
+    active_context?: Record<string, any> | null,
+    callbacks?: ChatStreamCallbacks,
+    signal?: AbortSignal,
+  ): Promise<ChatResponse> => {
+    const token = localStorage.getItem('docops_token')
+    const resp = await fetch(`${BASE_URL}/api/chat/stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'text/event-stream',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        message,
+        session_id,
+        top_k,
+        doc_names,
+        strict_grounding,
+        history,
+        active_context,
+      }),
+      signal,
+    })
+
+    if (!resp.ok) {
+      const detail = await resp.text().catch(() => '')
+      throw new Error(detail || `HTTP ${resp.status}`)
+    }
+    if (!resp.body) throw new Error('Stream indisponivel no navegador.')
+
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let finalResponse: ChatResponse | null = null
+
+    const flushBlocks = () => {
+      const blocks = buffer.split(/\r?\n\r?\n/)
+      buffer = blocks.pop() ?? ''
+      return blocks
+    }
+
+    const handleBlock = (block: string) => {
+      const payloadText = block
+        .split(/\r?\n/)
+        .filter(line => line.startsWith('data:'))
+        .map(line => line.slice(5).trimStart())
+        .join('\n')
+      if (!payloadText) return
+
+      let payload: any
+      try {
+        payload = JSON.parse(payloadText)
+      } catch {
+        return
+      }
+
+      const type = String(payload?.type ?? '')
+      if (type === 'start') {
+        callbacks?.onStart?.()
+        return
+      }
+      if (type === 'delta') {
+        callbacks?.onDelta?.(String(payload?.delta ?? ''))
+        return
+      }
+      if (type === 'final' && payload?.response) {
+        finalResponse = payload.response as ChatResponse
+        return
+      }
+      if (type === 'error') {
+        const detail = String(payload?.detail ?? 'Erro no streaming de chat.')
+        throw new Error(detail)
+      }
+    }
+
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      for (const block of flushBlocks()) {
+        handleBlock(block)
+      }
+    }
+
+    buffer += decoder.decode()
+    for (const block of flushBlocks()) {
+      handleBlock(block)
+    }
+    if (buffer.trim()) {
+      handleBlock(buffer)
+    }
+
+    if (!finalResponse) {
+      throw new Error('Stream encerrado sem resposta final.')
+    }
+    return finalResponse
+  },
 
   ingestPath: (path: string, chunk_size = 0, chunk_overlap = 0): Promise<IngestResponse> =>
     api.post('/api/ingest', { path, chunk_size, chunk_overlap }, { timeout: INGEST_TIMEOUT_MS }).then(r => r.data),

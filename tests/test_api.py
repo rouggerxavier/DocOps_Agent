@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import tempfile
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -263,6 +264,66 @@ def test_chat_success(monkeypatch):
     assert data["quality_signal"] is not None
     assert data["quality_signal"]["level"] in {"high", "medium", "low"}
     assert "score" in data["quality_signal"]
+    _clear_auth_override()
+
+
+def test_chat_stream_success(monkeypatch):
+    from langchain_core.documents import Document
+
+    auth_client, _ = _make_auth_client()
+    fake_state = {
+        "answer": "Test answer [Fonte 1]",
+        "intent": "qa",
+        "retrieved_chunks": [
+            Document(
+                page_content="some chunk text",
+                metadata={"file_name": "manual.pdf", "page": "1", "chunk_id": "abc"},
+            )
+        ],
+    }
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    resp = auth_client.post("/api/chat/stream", json={"message": "hello", "session_id": "s1"})
+    assert resp.status_code == 200
+    assert "text/event-stream" in (resp.headers.get("content-type") or "")
+
+    events = [
+        json.loads(line[6:])
+        for line in resp.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert events
+    assert events[0]["type"] == "start"
+
+    deltas = "".join(event.get("delta", "") for event in events if event.get("type") == "delta")
+    final_event = next(event for event in events if event.get("type") == "final")
+    assert deltas == "Test answer [Fonte 1]"
+    assert final_event["response"]["answer"] == "Test answer [Fonte 1]"
+    assert final_event["response"]["session_id"] == "s1"
+    _clear_auth_override()
+
+
+def test_chat_stream_emits_error_event_on_environment_error(monkeypatch):
+    auth_client, _ = _make_auth_client()
+
+    def raise_env(*a, **kw):
+        raise EnvironmentError("Required environment variable 'GEMINI_API_KEY' is not set.")
+
+    monkeypatch.setattr("docops.api.routes.chat._run_chat", raise_env)
+    resp = auth_client.post("/api/chat/stream", json={"message": "hello"})
+    assert resp.status_code == 200
+
+    events = [
+        json.loads(line[6:])
+        for line in resp.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    error_event = next(event for event in events if event.get("type") == "error")
+    assert error_event["status_code"] == 503
+    assert "GEMINI_API_KEY" in error_event["detail"]
     _clear_auth_override()
 
 
