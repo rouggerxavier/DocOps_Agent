@@ -26,6 +26,9 @@ Every SSE payload includes:
   - fields: `response` (`ChatResponse` object)
 - `error`
   - fields: `status_code` (`integer`), `detail` (`string`)
+  - semantics:
+    - includes retry-oriented detail for transient failures
+    - timeout paths use `status_code=504`
 - `done`
   - no additional required fields
 

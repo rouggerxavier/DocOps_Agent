@@ -99,6 +99,17 @@ Expected:
 - one `data: {"type":"final"...}`
 - every SSE payload includes `correlation_id`
 
+## 4.4 Stream recovery behavior
+Open chat UI and validate fallback behavior during streaming:
+- Start a streamed question with a long answer.
+- Simulate interruption (disable network briefly or restart backend during stream).
+- Expected:
+  - partial streamed content remains visible (not lost)
+  - UI shows interruption guidance and recovery attempt
+  - app performs at most one automatic fallback to `/api/chat`
+  - no duplicate assistant bubble is created for the same user message
+  - composer remains usable after failure (no locked state)
+
 ## 5. Summary and artifact creation
 ```bash
 curl -s -X POST "http://127.0.0.1:$PORT/api/summarize" \

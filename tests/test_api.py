@@ -465,6 +465,58 @@ def test_chat_stream_emits_error_event_on_environment_error(monkeypatch):
     _clear_auth_override()
 
 
+def test_chat_stream_emits_timeout_error_event(monkeypatch):
+    auth_client, _ = _make_auth_client()
+
+    async def _raise_timeout(*_args, **_kwargs):
+        raise TimeoutError("model timed out")
+
+    monkeypatch.setattr("docops.api.routes.chat._build_chat_response", _raise_timeout)
+    resp = auth_client.post("/api/chat/stream", json={"message": "hello"})
+    assert resp.status_code == 200
+
+    events = [
+        json.loads(line[6:])
+        for line in resp.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    error_event = next(event for event in events if event.get("type") == "error")
+    assert error_event["status_code"] == 504
+    assert "timed out" in error_event["detail"].lower()
+    assert events[-1]["type"] == "error"
+    _clear_auth_override()
+
+
+def test_chat_stream_handles_many_small_chunks_without_breaking_sequence(monkeypatch):
+    from docops.api.contracts import validate_chat_stream_sequence
+
+    auth_client, _ = _make_auth_client()
+    answer = "0123456789" * 25
+    fake_state = {"answer": answer, "intent": "qa", "retrieved_chunks": []}
+
+    monkeypatch.setattr("docops.api.routes.chat._STREAM_DELAY_SECONDS", 0.0)
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    resp = auth_client.post("/api/chat/stream", json={"message": "hello", "session_id": "s-jitter"})
+    assert resp.status_code == 200
+
+    events = [
+        json.loads(line[6:])
+        for line in resp.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    errors = validate_chat_stream_sequence(events)
+    assert not errors, f"invalid stream sequence under many chunks: {errors}"
+
+    delta_chunks = [event.get("delta", "") for event in events if event.get("type") == "delta"]
+    assert len(delta_chunks) >= 50
+    assert "".join(delta_chunks) == answer
+    _clear_auth_override()
+
+
 def test_capabilities_returns_feature_flags():
     auth_client, _ = _make_auth_client()
     resp = auth_client.get("/api/capabilities")

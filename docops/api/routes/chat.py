@@ -454,6 +454,31 @@ def _stream_event_payload(
     return payload
 
 
+def _is_timeout_message(detail: str) -> bool:
+    text = detail.casefold()
+    return "timeout" in text or "timed out" in text
+
+
+def _normalize_stream_error_detail(status_code: int, detail: Any) -> str:
+    raw_detail = str(detail or "").strip()
+    fallback_detail = "Stream request failed before completion."
+
+    if status_code == 504 or _is_timeout_message(raw_detail):
+        prefix = "Stream timed out before completion."
+    elif status_code >= 500:
+        prefix = "Stream failed before completion."
+    elif status_code in {408, 429}:
+        prefix = "Stream was interrupted and may be retried."
+    else:
+        return raw_detail or fallback_detail
+
+    if not raw_detail:
+        return prefix
+    if raw_detail.casefold() == prefix.casefold():
+        return prefix
+    return f"{prefix} Detail: {raw_detail}"
+
+
 class _StreamLifecycleEmitter:
     """Emit SSE payloads while enforcing a single final/terminal lifecycle."""
 
@@ -587,6 +612,7 @@ async def chat_stream(
         try:
             response = await _build_chat_response(body, current_user, db)
         except HTTPException as exc:
+            detail = _normalize_stream_error_detail(exc.status_code, exc.detail)
             emit_event(
                 logger,
                 "chat.stream.failed",
@@ -597,18 +623,42 @@ async def chat_stream(
                 user_id=current_user.id,
                 session_id=body.session_id,
                 status_code=exc.status_code,
-                detail=str(exc.detail),
+                detail=detail,
             )
             error_event = emitter.emit(
                 "error",
                 status_code=exc.status_code,
-                detail=str(exc.detail),
+                detail=detail,
+            )
+            if error_event is not None:
+                yield error_event
+            return
+        except (TimeoutError, asyncio.TimeoutError) as exc:
+            detail = _normalize_stream_error_detail(504, str(exc))
+            emit_event(
+                logger,
+                "chat.stream.failed",
+                level="error",
+                category="chat_stream",
+                route="/api/chat/stream",
+                correlation_id=correlation_id,
+                user_id=current_user.id,
+                session_id=body.session_id,
+                status_code=504,
+                detail=detail,
+                error_type=exc.__class__.__name__,
+            )
+            error_event = emitter.emit(
+                "error",
+                status_code=504,
+                detail=detail,
             )
             if error_event is not None:
                 yield error_event
             return
         except Exception as exc:  # pragma: no cover - defensive fallback
             logger.error("Chat stream error: %s", exc)
+            detail = _normalize_stream_error_detail(500, "Agent error - check server logs")
             emit_event(
                 logger,
                 "chat.stream.failed",
@@ -619,13 +669,13 @@ async def chat_stream(
                 user_id=current_user.id,
                 session_id=body.session_id,
                 status_code=500,
-                detail="Agent error - check server logs",
+                detail=detail,
                 error_type=exc.__class__.__name__,
             )
             error_event = emitter.emit(
                 "error",
                 status_code=500,
-                detail="Agent error - check server logs",
+                detail=detail,
             )
             if error_event is not None:
                 yield error_event

@@ -15,6 +15,7 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
   apiClient,
+  ChatStreamError,
   type ChatResponse,
   type ChatQualitySignal,
   type SourceItem,
@@ -1017,9 +1018,10 @@ export function Chat() {
         const msgs = [...s.messages]
         const last = msgs[msgs.length - 1]
         if (!last || last.role !== 'assistant') return s
+        const safeAnswer = typeof data.answer === 'string' ? data.answer.trim() : ''
         msgs[msgs.length - 1] = {
           ...last,
-          content: data.answer ?? last.content ?? '',
+          content: safeAnswer ? data.answer : (last.content ?? ''),
           streaming: false,
           stream_stage: null,
           stream_status_text: null,
@@ -1074,6 +1076,50 @@ export function Chat() {
         }
       })
     )
+  }
+
+  function extractStreamFailureDetail(error: unknown): string {
+    if (error instanceof ChatStreamError) return error.message
+    if (axios.isAxiosError(error)) {
+      if (typeof error.response?.data?.detail === 'string') return error.response.data.detail
+      return error.message || 'Falha no streaming.'
+    }
+    if (error instanceof Error) return error.message || 'Falha no streaming.'
+    return 'Falha no streaming.'
+  }
+
+  function isRecoverableStreamFailure(error: unknown): boolean {
+    if (error instanceof ChatStreamError) return error.recoverable
+    if ((error as { name?: string } | null)?.name === 'AbortError') return false
+
+    if (axios.isAxiosError(error)) {
+      const status = error.response?.status
+      if (!status) return true
+      return status >= 500 || status === 408 || status === 429
+    }
+
+    if (error instanceof Error) {
+      const detail = error.message.toLowerCase()
+      if (
+        detail.includes('timeout')
+        || detail.includes('timed out')
+        || detail.includes('failed to fetch')
+        || detail.includes('network')
+        || detail.includes('stream encerrado')
+      ) {
+        return true
+      }
+      if (
+        detail.includes('401')
+        || detail.includes('403')
+        || detail.includes('unauthorized')
+        || detail.includes('forbidden')
+      ) {
+        return false
+      }
+    }
+
+    return true
   }
 
   const flashcardBatchMut = useMutation({
@@ -1208,6 +1254,7 @@ export function Chat() {
       }
       const controller = new AbortController()
       streamAbortRef.current = controller
+      let fallbackAttempted = false
 
       try {
         if (!isStreamingEnabled) {
@@ -1251,9 +1298,15 @@ export function Chat() {
         if (controller.signal.aborted || streamError?.name === 'AbortError') {
           throw streamError
         }
+        if (!isRecoverableStreamFailure(streamError) || fallbackAttempted) {
+          throw streamError
+        }
+        fallbackAttempted = true
+
+        const streamFailureDetail = extractStreamFailureDetail(streamError)
         markStreamingInterruption(
           payload.sessionId,
-          'Conexao instavel no streaming. Continuando em modo padrao.',
+          `${streamFailureDetail} Continuando em modo padrao.`,
         )
         updateStreamingStage(
           payload.sessionId,
@@ -1272,9 +1325,10 @@ export function Chat() {
             { streamFallback: true },
           )
         } catch (fallbackError: any) {
+          const fallbackDetail = extractStreamFailureDetail(fallbackError)
           markStreamingInterruption(
             payload.sessionId,
-            'Nao consegui recuperar automaticamente. Reenvie a pergunta para tentar de novo.',
+            `${fallbackDetail} Nao consegui recuperar automaticamente. Reenvie a pergunta para tentar de novo.`,
           )
           throw fallbackError
         }
@@ -1299,6 +1353,7 @@ export function Chat() {
       }
     },
     onError: (err: any, variables) => {
+      if (err?.name === 'AbortError') return
       const errorText = err?.response?.data?.detail ?? err?.message ?? 'Erro ao consultar o agente'
       toast.error(errorText)
       failStreamingAssistantMessage(

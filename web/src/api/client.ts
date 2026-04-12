@@ -79,6 +79,27 @@ export interface ChatRequestOptions {
   streamFallback?: boolean
 }
 
+export class ChatStreamError extends Error {
+  statusCode: number | null
+  recoverable: boolean
+  reason: string
+
+  constructor(
+    message: string,
+    options?: {
+      statusCode?: number | null
+      recoverable?: boolean
+      reason?: string
+    },
+  ) {
+    super(message)
+    this.name = 'ChatStreamError'
+    this.statusCode = options?.statusCode ?? null
+    this.recoverable = options?.recoverable ?? true
+    this.reason = options?.reason ?? 'stream_failure'
+  }
+}
+
 export interface JobCreateResponse {
   job_id: string
   status: string
@@ -407,16 +428,33 @@ export const apiClient = {
       signal,
     })
 
+    const isRecoverableStatus = (statusCode: number): boolean => (
+      statusCode >= 500 || statusCode === 408 || statusCode === 429
+    )
+
     if (!resp.ok) {
       const detail = await resp.text().catch(() => '')
-      throw new Error(detail || `HTTP ${resp.status}`)
+      throw new ChatStreamError(
+        detail || `HTTP ${resp.status}`,
+        {
+          statusCode: resp.status,
+          recoverable: isRecoverableStatus(resp.status),
+          reason: 'http_error',
+        },
+      )
     }
-    if (!resp.body) throw new Error('Stream indisponivel no navegador.')
+    if (!resp.body) {
+      throw new ChatStreamError(
+        'Stream indisponivel no navegador.',
+        { recoverable: true, reason: 'missing_body' },
+      )
+    }
 
     const reader = resp.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
     let finalResponse: ChatResponse | null = null
+    let doneReceived = false
 
     const flushBlocks = () => {
       const blocks = buffer.split(/\r?\n\r?\n/)
@@ -459,10 +497,22 @@ export const apiClient = {
         finalResponse = payload.response as ChatResponse
         return
       }
+      if (type === 'done') {
+        doneReceived = true
+        return
+      }
       if (type === 'error') {
+        const statusCode = Number(payload?.status_code ?? 500)
         const detail = String(payload?.detail ?? 'Erro no streaming de chat.')
         callbacks?.onError?.(detail)
-        throw new Error(detail)
+        throw new ChatStreamError(
+          detail,
+          {
+            statusCode,
+            recoverable: isRecoverableStatus(statusCode),
+            reason: 'server_error_event',
+          },
+        )
       }
     }
 
@@ -484,7 +534,13 @@ export const apiClient = {
     }
 
     if (!finalResponse) {
-      throw new Error('Stream encerrado sem resposta final.')
+      const reason = doneReceived ? 'done_without_final' : 'abrupt_close'
+      throw new ChatStreamError(
+        doneReceived
+          ? 'Stream finalizado sem payload final.'
+          : 'Stream encerrado sem resposta final.',
+        { recoverable: true, reason },
+      )
     }
     return finalResponse
   },
