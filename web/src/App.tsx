@@ -17,6 +17,7 @@ import { Notes } from '@/pages/Notes'
 import { ReadingKanban } from '@/pages/ReadingKanban'
 import { Register } from '@/pages/Register'
 import { Schedule } from '@/pages/Schedule'
+import { Preferences } from '@/pages/Preferences'
 import { StudyPlan } from '@/pages/StudyPlan'
 import { Tasks } from '@/pages/Tasks'
 
@@ -32,6 +33,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/tasks': 'Tarefas',
   '/flashcards': 'Flashcards',
   '/studyplan': 'Plano de Estudos',
+  '/settings': 'Configurações',
   '/kanban': 'Kanban de Leitura',
   '/login': 'Login',
   '/register': 'Criar conta',
@@ -90,6 +92,7 @@ export default function App() {
               <Route path="/tasks" element={<Tasks />} />
               <Route path="/flashcards" element={<Flashcards />} />
               <Route path="/studyplan" element={<StudyPlan />} />
+              <Route path="/settings" element={<Preferences />} />
               <Route path="/kanban" element={<ReadingKanban />} />
             </Route>
           </Routes>

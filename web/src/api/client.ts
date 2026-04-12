@@ -77,6 +77,21 @@ export interface CapabilitiesResponse {
   enable_all: boolean
 }
 
+export interface UserPreferences {
+  schema_version: number
+  default_depth: 'brief' | 'balanced' | 'deep'
+  tone: 'neutral' | 'didactic' | 'objective' | 'encouraging'
+  strictness_preference: 'relaxed' | 'balanced' | 'strict'
+  schedule_preference: 'flexible' | 'fixed' | 'intensive'
+}
+
+export interface UserPreferencesUpdatePayload {
+  default_depth?: UserPreferences['default_depth']
+  tone?: UserPreferences['tone']
+  strictness_preference?: UserPreferences['strictness_preference']
+  schedule_preference?: UserPreferences['schedule_preference']
+}
+
 export interface ChatStreamCallbacks {
   onStart?: () => void
   onStatus?: (status: { stage: string; detail?: string | null }) => void
@@ -450,6 +465,15 @@ export const apiClient = {
 
   getCapabilities: (): Promise<CapabilitiesResponse> =>
     api.get('/api/capabilities').then(r => r.data),
+
+  getPreferences: (): Promise<UserPreferences> =>
+    api.get('/api/preferences').then(r => r.data),
+
+  updatePreferences: (payload: UserPreferencesUpdatePayload): Promise<UserPreferences> =>
+    api.put('/api/preferences', payload).then(r => r.data),
+
+  resetPreferences: (): Promise<UserPreferences> =>
+    api.post('/api/preferences/reset').then(r => r.data),
 
   deleteDoc: (docId: string): Promise<void> =>
     api.delete(`/api/docs/${encodeURIComponent(docId)}`).then(() => undefined),

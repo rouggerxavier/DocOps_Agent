@@ -12,6 +12,7 @@ import {
   ListTodo,
   LogOut,
   MessageSquare,
+  Settings2,
   StickyNote,
   Upload,
   X,
@@ -62,6 +63,7 @@ export function Sidebar({ mobileOpen, isDesktop, onMobileClose }: SidebarProps) 
     { to: '/tasks', label: 'Tarefas', icon: ListTodo, end: false, badge: null },
     { to: '/flashcards', label: 'Flashcards', icon: Layers, end: false, badge: null },
     { to: '/studyplan', label: 'Plano de Estudos', icon: GraduationCap, end: false, badge: null },
+    { to: '/settings', label: 'Configurações', icon: Settings2, end: false, badge: null },
     { to: '/kanban', label: 'Kanban de Leitura', icon: KanbanSquare, end: false, badge: null },
     { to: '/artifacts', label: 'Artefatos', icon: Archive, end: false, badge: null },
   ]

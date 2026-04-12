@@ -5,7 +5,7 @@ import axios from 'axios'
 import {
   Send, Bot, User, FileText, ChevronRight, Loader2, X,
   Plus, MessageSquare, Clock, CalendarCheck, Trash2,
-  SlidersHorizontal, ChevronDown,
+  SlidersHorizontal, ChevronDown, Sparkles,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
@@ -21,6 +21,7 @@ import {
   type SourceItem,
   type DocItem,
   type FlashcardDeck,
+  type UserPreferences,
 } from '@/api/client'
 import { useCapabilities } from '@/features/CapabilitiesProvider'
 import { cn } from '@/lib/utils'
@@ -118,11 +119,105 @@ interface FlashcardBatchResult {
 
 interface ChatRunPayload {
   message: string
+  displayMessage: string
   sessionId: string
   docIds: string[]
   strictGrounding: boolean
   history: Array<{ role: 'user' | 'assistant'; content: string }>
   activeContext: ChatActiveContext
+}
+
+type ComposerPreferenceOverrides = {
+  default_depth: UserPreferences['default_depth'] | null
+  tone: UserPreferences['tone'] | null
+  strictness_preference: UserPreferences['strictness_preference'] | null
+}
+
+const DEFAULT_USER_PREFERENCES: UserPreferences = {
+  schema_version: 1,
+  default_depth: 'brief',
+  tone: 'neutral',
+  strictness_preference: 'balanced',
+  schedule_preference: 'flexible',
+}
+
+const DEPTH_LABELS: Record<UserPreferences['default_depth'], string> = {
+  brief: 'Breve',
+  balanced: 'Equilibrado',
+  deep: 'Profundo',
+}
+
+const TONE_LABELS: Record<UserPreferences['tone'], string> = {
+  neutral: 'Neutro',
+  didactic: 'Didatico',
+  objective: 'Objetivo',
+  encouraging: 'Encorajador',
+}
+
+const STRICTNESS_LABELS: Record<UserPreferences['strictness_preference'], string> = {
+  relaxed: 'Relaxado',
+  balanced: 'Equilibrado',
+  strict: 'Estrito',
+}
+
+const DEPTH_OPTIONS: Array<{ value: UserPreferences['default_depth'] }> = [
+  { value: 'brief' },
+  { value: 'balanced' },
+  { value: 'deep' },
+]
+
+const TONE_OPTIONS: Array<{ value: UserPreferences['tone'] }> = [
+  { value: 'neutral' },
+  { value: 'didactic' },
+  { value: 'objective' },
+  { value: 'encouraging' },
+]
+
+const STRICTNESS_OPTIONS: Array<{ value: UserPreferences['strictness_preference'] }> = [
+  { value: 'relaxed' },
+  { value: 'balanced' },
+  { value: 'strict' },
+]
+
+const SCHEDULE_LABELS: Record<UserPreferences['schedule_preference'], string> = {
+  flexible: 'Flexivel',
+  fixed: 'Fixo',
+  intensive: 'Intensivo',
+}
+
+function emptyComposerOverrides(): ComposerPreferenceOverrides {
+  return {
+    default_depth: null,
+    tone: null,
+    strictness_preference: null,
+  }
+}
+
+function resolveComposerPreferences(
+  base: UserPreferences,
+  overrides: ComposerPreferenceOverrides,
+): UserPreferences {
+  return {
+    ...base,
+    default_depth: overrides.default_depth ?? base.default_depth,
+    tone: overrides.tone ?? base.tone,
+    strictness_preference: overrides.strictness_preference ?? base.strictness_preference,
+  }
+}
+
+function hasComposerOverrides(overrides: ComposerPreferenceOverrides): boolean {
+  return Boolean(overrides.default_depth || overrides.tone || overrides.strictness_preference)
+}
+
+function buildPreferenceInstructionBlock(preferences: UserPreferences): string {
+  return [
+    '',
+    '[Preferencias para esta resposta]',
+    `- profundidade: ${DEPTH_LABELS[preferences.default_depth]}`,
+    `- tom: ${TONE_LABELS[preferences.tone]}`,
+    `- rigor: ${STRICTNESS_LABELS[preferences.strictness_preference]}`,
+    '- aplique essas preferencias nesta resposta sem mencionar esse bloco.',
+  ].join('\n')
 }
 
 const WELCOME_MESSAGE: Message = {
@@ -1096,6 +1191,7 @@ export function Chat() {
   const [selectedDoc, setSelectedDoc] = useState('')
   const [selectedDocs, setSelectedDocs] = useState<DocItem[]>([])
   const [strictGrounding, setStrictGrounding] = useState(false)
+  const [composerOverrides, setComposerOverrides] = useState<ComposerPreferenceOverrides>(() => emptyComposerOverrides())
   const [activeSources, setActiveSources] = useState<SourceItem[]>([])
   const [selectedSource, setSelectedSource] = useState<SourceItem | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
@@ -1111,6 +1207,19 @@ export function Chat() {
   const isStreamingEnabled = capabilities.isEnabled('chat_streaming_enabled')
   const isStrictGroundingEnabled = capabilities.isEnabled('strict_grounding_enabled')
   const isChatToArtifactEnabled = capabilities.isEnabled('premium_chat_to_artifact_enabled')
+  const isPersonalizationEnabled = capabilities.isEnabled('personalization_enabled')
+
+  const preferencesQuery = useQuery<UserPreferences>({
+    queryKey: ['user-preferences'],
+    queryFn: apiClient.getPreferences,
+    enabled: isPersonalizationEnabled,
+    staleTime: 30_000,
+    retry: 1,
+  })
+
+  const userPreferences = preferencesQuery.data ?? DEFAULT_USER_PREFERENCES
+  const resolvedComposerPreferences = resolveComposerPreferences(userPreferences, composerOverrides)
+  const composerHasOverrides = hasComposerOverrides(composerOverrides)
 
   useEffect(() => {
     saveSessions(sessions)
@@ -1119,6 +1228,7 @@ export function Chat() {
   useEffect(() => {
     setPendingFlashcardCommand(null)
     setSavingArtifactTurnRef(null)
+    setComposerOverrides(emptyComposerOverrides())
   }, [activeSessionId])
 
   const { data: docs } = useQuery<DocItem[]>({
@@ -1520,7 +1630,7 @@ export function Chat() {
 
   const mutation = useMutation<ChatResponse, Error, ChatRunPayload>({
     mutationFn: async (payload) => {
-      appendStreamingAssistantPlaceholder(payload.sessionId, payload.message, payload.activeContext)
+      appendStreamingAssistantPlaceholder(payload.sessionId, payload.displayMessage, payload.activeContext)
 
       if (streamAbortRef.current) {
         streamAbortRef.current.abort()
@@ -1612,7 +1722,7 @@ export function Chat() {
       }
     },
     onSuccess: (data, variables) => {
-      finalizeStreamingAssistantMessage(variables.sessionId, data, variables.message)
+      finalizeStreamingAssistantMessage(variables.sessionId, data, variables.displayMessage)
       updateSessionActiveContext(variables.sessionId, normalizeActiveContext(data.active_context))
 
       if (data.sources.length > 0) {
@@ -1786,15 +1896,29 @@ export function Chat() {
       .filter(m => !m.streaming)
       .slice(-6)
       .map(m => ({ role: m.role, content: m.content }))
+    const strictGroundingFromPreferences = (
+      isPersonalizationEnabled
+      && resolvedComposerPreferences.strictness_preference === 'strict'
+      && isStrictGroundingEnabled
+    )
+    const strictGroundingForRequest = (
+      isStrictGroundingEnabled
+      && (strictGrounding || strictGroundingFromPreferences)
+    )
+    const messageForBackend = isPersonalizationEnabled
+      ? `${text}${buildPreferenceInstructionBlock(resolvedComposerPreferences)}`
+      : text
 
     mutation.mutate({
-      message: text,
+      message: messageForBackend,
+      displayMessage: text,
       sessionId: targetSession?.id ?? activeSessionId,
       docIds: selectedDocs.map(doc => doc.doc_id),
-      strictGrounding,
+      strictGrounding: strictGroundingForRequest,
       history: recentHistory,
       activeContext: targetSession?.activeContext ?? emptyActiveContext(),
     })
+    setComposerOverrides(emptyComposerOverrides())
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -1829,6 +1953,24 @@ export function Chat() {
   const hasSources = activeSources.length > 0
   const isStreaming = messages.some(m => m.streaming)
   const isPending = mutation.isPending || flashcardBatchMut.isPending
+  const isPersonalizationLoading = isPersonalizationEnabled && preferencesQuery.isLoading
+  const personalizationLoadFailed = isPersonalizationEnabled && preferencesQuery.isError
+  const strictGroundingFromPreferences = (
+    isPersonalizationEnabled
+    && resolvedComposerPreferences.strictness_preference === 'strict'
+    && isStrictGroundingEnabled
+  )
+  const effectiveStrictGrounding = strictGrounding || strictGroundingFromPreferences
+  const personalizationBannerText = !isPersonalizationEnabled
+    ? ''
+    : isPersonalizationLoading
+      ? 'Carregando suas preferencias...'
+      : personalizationLoadFailed
+        ? 'Nao foi possivel carregar preferencias. Usando defaults seguros.'
+        : `Usando suas preferencias: ${DEPTH_LABELS[resolvedComposerPreferences.default_depth]}, `
+          + `${TONE_LABELS[resolvedComposerPreferences.tone]}, `
+          + `rigor ${STRICTNESS_LABELS[resolvedComposerPreferences.strictness_preference]} `
+          + `e rotina ${SCHEDULE_LABELS[userPreferences.schedule_preference]}.`
   const contextLabels = [
     ...activeContext.active_doc_names.slice(0, 2).map(name => ({ key: `doc-${name}`, label: name, tone: 'doc' as const })),
     activeContext.active_deck_title ? { key: `deck-${activeContext.active_deck_title}`, label: `Deck: ${activeContext.active_deck_title}`, tone: 'deck' as const } : null,
@@ -1911,6 +2053,20 @@ export function Chat() {
             </Badge>
           )}
         </div>
+        {isPersonalizationEnabled && (
+          <div className="flex items-start gap-2 border-b app-divider bg-[color:var(--ui-bg)] px-4 py-2 text-xs text-zinc-400">
+            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-400" />
+            <div className="min-w-0">
+              <p className="font-medium text-zinc-300">Memoria ativa</p>
+              <p className="text-zinc-500">{personalizationBannerText}</p>
+              {composerHasOverrides && (
+                <p className="mt-1 text-[11px] text-blue-300">
+                  Override desta mensagem ativo.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
         {hasActiveContext && (
           <div className="flex flex-wrap items-center gap-2 border-b app-divider bg-[color:var(--ui-bg)] px-4 py-2">
@@ -2071,10 +2227,103 @@ export function Chat() {
             <SlidersHorizontal className="h-3 w-3" />
             Opções avançadas
             <ChevronDown className={cn('h-3 w-3 transition-transform', filtersOpen && 'rotate-180')} />
-            {(selectedDocs.length > 0 || strictGrounding) && (
+            {(selectedDocs.length > 0 || effectiveStrictGrounding) && (
               <span className="ml-1 h-1.5 w-1.5 rounded-full bg-blue-500" />
             )}
           </button>
+
+          {isPersonalizationEnabled && (
+            <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-zinc-300">Override desta mensagem</p>
+                <button
+                  type="button"
+                  onClick={() => setComposerOverrides(emptyComposerOverrides())}
+                  disabled={isPending || isStreaming}
+                  className="text-[11px] text-zinc-500 transition-colors hover:text-zinc-200 disabled:opacity-50"
+                >
+                  Limpar overrides
+                </button>
+              </div>
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-zinc-500">Profundidade</span>
+                  {DEPTH_OPTIONS.map(option => {
+                    const active = (composerOverrides.default_depth ?? userPreferences.default_depth) === option.value
+                    const overridden = composerOverrides.default_depth === option.value
+                    return (
+                      <button
+                        key={`depth-${option.value}`}
+                        type="button"
+                        disabled={isPending || isStreaming}
+                        onClick={() => setComposerOverrides(prev => ({
+                          ...prev,
+                          default_depth: prev.default_depth === option.value ? null : option.value,
+                        }))}
+                        className={cn(
+                          'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                          active ? 'border-blue-800 bg-blue-950/40 text-blue-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400',
+                          overridden && 'ring-1 ring-blue-700/70',
+                        )}
+                      >
+                        {DEPTH_LABELS[option.value]}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-zinc-500">Tom</span>
+                  {TONE_OPTIONS.map(option => {
+                    const active = (composerOverrides.tone ?? userPreferences.tone) === option.value
+                    const overridden = composerOverrides.tone === option.value
+                    return (
+                      <button
+                        key={`tone-${option.value}`}
+                        type="button"
+                        disabled={isPending || isStreaming}
+                        onClick={() => setComposerOverrides(prev => ({
+                          ...prev,
+                          tone: prev.tone === option.value ? null : option.value,
+                        }))}
+                        className={cn(
+                          'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                          active ? 'border-blue-800 bg-blue-950/40 text-blue-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400',
+                          overridden && 'ring-1 ring-blue-700/70',
+                        )}
+                      >
+                        {TONE_LABELS[option.value]}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-zinc-500">Rigor</span>
+                  {STRICTNESS_OPTIONS.map(option => {
+                    const active = (composerOverrides.strictness_preference ?? userPreferences.strictness_preference) === option.value
+                    const overridden = composerOverrides.strictness_preference === option.value
+                    return (
+                      <button
+                        key={`strictness-${option.value}`}
+                        type="button"
+                        disabled={isPending || isStreaming}
+                        onClick={() => setComposerOverrides(prev => ({
+                          ...prev,
+                          strictness_preference: prev.strictness_preference === option.value ? null : option.value,
+                        }))}
+                        className={cn(
+                          'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                          active ? 'border-blue-800 bg-blue-950/40 text-blue-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400',
+                          overridden && 'ring-1 ring-blue-700/70',
+                        )}
+                      >
+                        {STRICTNESS_LABELS[option.value]}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
 
           {filtersOpen && (
             <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
@@ -2167,6 +2416,11 @@ export function Chat() {
                 />
                 Modo strict grounding (respostas só com evidência forte)
               </label>
+              {isStrictGroundingEnabled && strictGroundingFromPreferences && !strictGrounding && (
+                <p className="text-[11px] text-zinc-500">
+                  Strict grounding desta mensagem está ativo por preferência de rigor.
+                </p>
+              )}
               {!isStrictGroundingEnabled && (
                 <p className="text-[11px] text-zinc-500">
                   Strict grounding está desativado por configuração do workspace.
