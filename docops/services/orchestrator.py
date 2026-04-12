@@ -95,6 +95,20 @@ _FLASHCARD_NEGATION_WORDS = {
     "cancelar",
     "cancela",
 }
+_DEEP_SUMMARY_HINTS = (
+    "aprofundado",
+    "aprofundada",
+    "profundo",
+    "profunda",
+    "detalhado",
+    "detalhada",
+    "secao por secao",
+    "seção por seção",
+    "analitico",
+    "analítico",
+    "completo",
+    "completa",
+)
 
 _pending_study_plans: dict[int, dict] = {}
 _pending_flashcard_batches: dict[int, dict] = {}
@@ -372,6 +386,11 @@ def _looks_like_flashcard_negation(message: str) -> bool:
     if normalized in _FLASHCARD_NEGATION_WORDS:
         return True
     return any(word in normalized for word in _FLASHCARD_NEGATION_WORDS)
+
+
+def _looks_like_deep_summary_request(message: str) -> bool:
+    normalized = _normalize_text(message)
+    return any(word in normalized for word in _DEEP_SUMMARY_HINTS)
 
 
 def _extract_explicit_doc_names(message: str, docs: list) -> list[str]:
@@ -1361,17 +1380,17 @@ def _exec_cascade_create_note(entities: dict, user_id: int, db: Session, origina
 
 
 def _exec_cascade_create_summary(entities: dict, user_id: int, db: Session) -> dict:
-    """Orienta o usuário a criar um resumo via página de Artefatos."""
+    """Orienta o usuário a criar resumo aprofundado via página de Artefatos."""
     doc_hint = entities.get("doc_hint") or ""
 
     if doc_hint:
         return {
             "answer": (
-                f"📄 Para criar um resumo de **{doc_hint}**, acesse [Artefatos →](/artifacts) "
-                f"e clique em **Resumir Documento**. Você pode escolher:\n\n"
-                f"- **Resumo Breve** — síntese concisa com os pontos principais\n"
-                f"- **Resumo Aprofundado** — análise detalhada seção por seção\n\n"
-                f"O resumo será salvo automaticamente em seus artefatos."
+                f"📄 Para um **resumo aprofundado** de **{doc_hint}**, recomendo usar "
+                f"[Artefatos →](/artifacts) e clicar em **Resumir Documento** > "
+                f"**Resumo Aprofundado**.\n"
+                f"Se quiser, **Resumo Breve** eu já faço direto aqui no chat.\n\n"
+                f"Assim o conteúdo fica completo e salvo automaticamente em seus artefatos."
             ),
             "intent": "cascade_create_summary",
             "active_context": {
@@ -1382,9 +1401,9 @@ def _exec_cascade_create_summary(entities: dict, user_id: int, db: Session) -> d
         }
     return {
         "answer": (
-            "📄 Para criar um resumo de um documento, acesse [Artefatos →](/artifacts) "
-            "e clique em **Resumir Documento**.\n\n"
-            "Você pode escolher entre Resumo Breve e Resumo Aprofundado."
+            "📄 Para resumo aprofundado, recomendo usar [Artefatos →](/artifacts) "
+            "e clicar em **Resumir Documento** > **Resumo Aprofundado**.\n"
+            "Se quiser, **Resumo Breve** eu já faço direto aqui no chat."
         ),
         "intent": "cascade_create_summary",
         "active_context": {
@@ -1538,7 +1557,10 @@ def maybe_orchestrate(
         return _exec_cascade_create_note(entities, user_id, db, message)
 
     if intent == "cascade_create_summary":
-        return _exec_cascade_create_summary(entities, user_id, db)
+        if _looks_like_deep_summary_request(message):
+            return _exec_cascade_create_summary(entities, user_id, db)
+        logger.info("Orchestrator: resumo breve/genérico -> pass-through para RAG chat")
+        return None
 
     if intent == "create_flashcards_batch":
         return _exec_create_flashcards_batch(entities, user_id, db, message, active_context=active_context)
