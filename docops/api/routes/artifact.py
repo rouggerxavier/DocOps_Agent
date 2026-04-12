@@ -8,11 +8,17 @@ import re
 from pathlib import Path
 from typing import List
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from docops.api.schemas import ArtifactItem, ArtifactRequest, ArtifactResponse, JobCreateResponse
+from docops.api.schemas import (
+    ArtifactItem,
+    ArtifactRequest,
+    ArtifactResponse,
+    ArtifactTemplateItem,
+    JobCreateResponse,
+)
 from docops.auth.dependencies import get_current_user
 from docops.config import config  # kept for backward-compatible test patching
 from docops.db.crud import (
@@ -25,6 +31,7 @@ from docops.db.database import SessionLocal, get_db
 from docops.db.models import ArtifactRecord, User
 from docops.logging import get_logger
 from docops.observability import emit_event
+from docops.services.artifact_templates import apply_template_layout, list_template_payloads, resolve_template
 from docops.services.jobs import create_job, run_thread_with_progress, schedule_job, update_job
 from docops.services.ownership import require_user_document
 
@@ -43,14 +50,22 @@ def _run_artifact(
     topic: str,
     output: str | None,
     user_id: int,
+    template_id: str | None = None,
     doc_names: list[str] | None = None,
     doc_ids: list[str] | None = None,
 ) -> dict:
     from docops.graph.graph import run
     from docops.tools.doc_tools import tool_write_artifact
 
+    template = resolve_template(
+        template_id=template_id,
+        artifact_type=type_,
+    )
     selected_docs = [name for name in (doc_names or []) if str(name).strip()]
-    query = f"Gere um {type_} sobre: {topic}"
+    query = (
+        f"Gere um {type_} sobre: {topic}. "
+        f"Template obrigatorio: {template.label}. {template.prompt_directive}"
+    )
     if selected_docs:
         query += f". Use apenas os documentos: {', '.join(selected_docs)}."
 
@@ -59,6 +74,7 @@ def _run_artifact(
         extra["doc_names"] = selected_docs
     if doc_ids:
         extra["doc_ids"] = [str(d) for d in doc_ids if str(d).strip()]
+    extra["template_id"] = template.template_id
 
     state = dict(
         run(
@@ -67,10 +83,35 @@ def _run_artifact(
             user_id=user_id,
         )
     )
-    answer = state.get("answer", "")
+    answer = apply_template_layout(
+        state.get("answer", ""),
+        template=template,
+        heading=f"{type_.replace('_', ' ').title()} - {topic}",
+        context_line=(
+            f"Tema: {topic}"
+            if not selected_docs
+            else f"Tema: {topic} | Escopo: {', '.join(selected_docs)}"
+        ),
+    )
     fname = output or f"{type_}_{_safe_stem(topic)}.md"
     path = tool_write_artifact(fname, answer, user_id=user_id)
-    return {"answer": answer, "filename": path.name, "path": str(path)}
+    return {
+        "answer": answer,
+        "filename": path.name,
+        "path": str(path),
+        "template_id": template.template_id,
+        "template_label": template.label,
+        "template_description": template.short_description,
+    }
+
+
+@router.get("/artifact/templates", response_model=List[ArtifactTemplateItem])
+async def list_artifact_templates(
+    summary_mode: str | None = Query(default=None),
+    artifact_type: str | None = Query(default=None),
+) -> List[ArtifactTemplateItem]:
+    payloads = list_template_payloads(summary_mode=summary_mode, artifact_type=artifact_type)
+    return [ArtifactTemplateItem(**item) for item in payloads]
 
 
 def _resolve_artifact_by_id_or_404(db: Session, user_id: int, artifact_id: int) -> ArtifactRecord:
@@ -191,6 +232,7 @@ async def create_artifact(
         category="artifact",
         user_id=current_user.id,
         artifact_type=body.type,
+        template_id=body.template_id,
         topic_preview=body.topic[:80],
         doc_count=len(body.doc_names or []),
         mode="sync",
@@ -209,6 +251,7 @@ async def create_artifact(
             body.topic,
             body.output,
             current_user.id,
+            body.template_id,
             doc_names,
             doc_ids,
         )
@@ -220,6 +263,7 @@ async def create_artifact(
             category="artifact",
             user_id=current_user.id,
             artifact_type=body.type,
+            template_id=body.template_id,
             mode="sync",
             error_type=exc.__class__.__name__,
             detail=str(exc),
@@ -234,16 +278,19 @@ async def create_artifact(
             category="artifact",
             user_id=current_user.id,
             artifact_type=body.type,
+            template_id=body.template_id,
             mode="sync",
             error_type=exc.__class__.__name__,
         )
         raise HTTPException(status_code=500, detail="Agent error")
 
+    template_label = str(result.get("template_label") or "").strip()
+    title_suffix = f" [{template_label}]" if template_label else ""
     artifact_record = create_artifact_record(
         db,
         user_id=current_user.id,
         artifact_type=body.type,
-        title=body.topic[:512],
+        title=f"{body.topic[:480]}{title_suffix}"[:512],
         filename=result["filename"],
         path=result["path"],
         source_doc_id=doc_ids[0] if len(doc_ids) >= 1 else None,
@@ -255,6 +302,7 @@ async def create_artifact(
         category="artifact",
         user_id=current_user.id,
         artifact_type=body.type,
+        template_id=result.get("template_id"),
         mode="sync",
         artifact_id=artifact_record.id,
         filename=result["filename"],
@@ -283,6 +331,7 @@ async def create_artifact_async(
         category="artifact",
         user_id=current_user.id,
         artifact_type=body.type,
+        template_id=body.template_id,
         topic_preview=body.topic[:80],
         doc_count=len(body.doc_names or []),
         mode="async",
@@ -300,6 +349,7 @@ async def create_artifact_async(
                     body.topic,
                     body.output,
                     current_user.id,
+                    body.template_id,
                     doc_names,
                     doc_ids,
                 ),
@@ -314,11 +364,13 @@ async def create_artifact_async(
             def _persist() -> None:
                 db_local = SessionLocal()
                 try:
+                    template_label = str(result.get("template_label") or "").strip()
+                    title_suffix = f" [{template_label}]" if template_label else ""
                     create_artifact_record(
                         db_local,
                         user_id=current_user.id,
                         artifact_type=body.type,
-                        title=body.topic[:512],
+                        title=f"{body.topic[:480]}{title_suffix}"[:512],
                         filename=result["filename"],
                         path=result["path"],
                         source_doc_id=doc_ids[0] if len(doc_ids) >= 1 else None,
@@ -335,6 +387,7 @@ async def create_artifact_async(
                 category="artifact",
                 user_id=current_user.id,
                 artifact_type=body.type,
+                template_id=result.get("template_id"),
                 mode="async",
                 job_id=job_id,
                 filename=result["filename"],
@@ -348,6 +401,7 @@ async def create_artifact_async(
                 category="artifact",
                 user_id=current_user.id,
                 artifact_type=body.type,
+                template_id=body.template_id,
                 mode="async",
                 job_id=job_id,
                 error_type=exc.__class__.__name__,

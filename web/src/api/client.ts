@@ -146,6 +146,9 @@ export interface ArtifactResponse {
   answer: string
   filename: string
   path: string
+  template_id?: string | null
+  template_label?: string | null
+  template_description?: string | null
   artifact_id?: number | null
 }
 
@@ -153,11 +156,27 @@ export interface SummarizeResponse {
   answer: string
   artifact_path: string | null
   artifact_filename?: string | null
+  template_id?: string | null
+  template_label?: string | null
+  template_description?: string | null
 }
 
 export interface CompareResponse {
   answer: string
   artifact_path: string | null
+}
+
+export interface ArtifactTemplate {
+  template_id: string
+  label: string
+  short_description: string
+  long_description: string
+  preview_title: string
+  preview_sections: string[]
+  artifact_types: string[]
+  summary_modes: string[]
+  default_for_summary_modes: string[]
+  default_for_artifact_types: string[]
 }
 
 export interface ReminderItem {
@@ -568,30 +587,48 @@ export const apiClient = {
     }).then(r => r.data)
   },
 
-  summarize: (doc: string, save = true, summary_mode: 'brief' | 'deep' = 'brief'): Promise<SummarizeResponse> =>
-    api.post('/api/summarize', { doc, save, summary_mode }).then(r => r.data),
+  summarize: (
+    doc: string,
+    save = true,
+    summary_mode: 'brief' | 'deep' = 'brief',
+    template_id?: string,
+  ): Promise<SummarizeResponse> =>
+    api.post('/api/summarize', { doc, save, summary_mode, template_id }).then(r => r.data),
 
-  summarizeAsync: (doc: string, save = true, summary_mode: 'brief' | 'deep' = 'brief'): Promise<JobCreateResponse> =>
-    api.post('/api/summarize/async', { doc, save, summary_mode }).then(r => r.data),
+  summarizeAsync: (
+    doc: string,
+    save = true,
+    summary_mode: 'brief' | 'deep' = 'brief',
+    template_id?: string,
+  ): Promise<JobCreateResponse> =>
+    api.post('/api/summarize/async', { doc, save, summary_mode, template_id }).then(r => r.data),
 
   compare: (doc1: string, doc2: string, save = false): Promise<CompareResponse> =>
     api.post('/api/compare', { doc1, doc2, save }).then(r => r.data),
+
+  listArtifactTemplates: (
+    summary_mode?: 'brief' | 'deep' | string,
+    artifact_type?: string,
+  ): Promise<ArtifactTemplate[]> =>
+    api.get('/api/artifact/templates', { params: { summary_mode, artifact_type } }).then(r => r.data),
 
   createArtifact: (
     type: string,
     topic: string,
     output?: string,
-    doc_names?: string[]
+    doc_names?: string[],
+    template_id?: string,
   ): Promise<ArtifactResponse> =>
-    api.post('/api/artifact', { type, topic, output, doc_names }).then(r => r.data),
+    api.post('/api/artifact', { type, topic, output, doc_names, template_id }).then(r => r.data),
 
   createArtifactAsync: (
     type: string,
     topic: string,
     output?: string,
-    doc_names?: string[]
+    doc_names?: string[],
+    template_id?: string,
   ): Promise<JobCreateResponse> =>
-    api.post('/api/artifact/async', { type, topic, output, doc_names }).then(r => r.data),
+    api.post('/api/artifact/async', { type, topic, output, doc_names, template_id }).then(r => r.data),
 
   listArtifacts: (): Promise<ArtifactItem[]> =>
     api.get('/api/artifacts').then(r => r.data),

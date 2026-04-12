@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Archive, BookOpen, Brain, CheckSquare, Download, Eye,
@@ -11,7 +11,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { PageHeader, PageShell } from '@/components/ui/page-shell'
-import { apiClient, type ArtifactItem, type DocItem } from '@/api/client'
+import { apiClient, type ArtifactItem, type ArtifactTemplate, type DocItem } from '@/api/client'
+import { useCapabilities } from '@/features/CapabilitiesProvider'
 import { formatBytes, formatDate } from '@/lib/utils'
 
 const ARTIFACT_TYPES = [
@@ -19,6 +20,25 @@ const ARTIFACT_TYPES = [
   { value: 'artifact', label: 'Artefato Livre' },
 ] as const
 const MARKDOWN_FILE_RE = /\.(md|markdown|txt)$/i
+
+function pickDefaultTemplate(
+  templates: ArtifactTemplate[],
+  options: { summaryMode?: 'brief' | 'deep'; artifactType?: string }
+): string {
+  if (!templates.length) return ''
+
+  if (options.summaryMode) {
+    const byMode = templates.find(item => item.default_for_summary_modes.includes(options.summaryMode!))
+    if (byMode) return byMode.template_id
+  }
+
+  if (options.artifactType) {
+    const byType = templates.find(item => item.default_for_artifact_types.includes(options.artifactType!))
+    if (byType) return byType.template_id
+  }
+
+  return templates[0]?.template_id ?? ''
+}
 
 function isMarkdownArtifact(filename: string): boolean {
   return MARKDOWN_FILE_RE.test(filename)
@@ -43,12 +63,20 @@ function downloadBlobFile(blob: Blob, filename: string) {
 
 // ── Resumir Documento Dialog ──────────────────────────────────────────────────
 
-function SummarizeDocDialog({ onClose }: { onClose: () => void }) {
+function SummarizeDocDialog({
+  onClose,
+  templatesEnabled,
+}: {
+  onClose: () => void
+  templatesEnabled: boolean
+}) {
   const qc = useQueryClient()
   const [selectedDoc, setSelectedDoc] = useState('')
   const [mode, setMode] = useState<'brief' | 'deep'>('brief')
+  const [selectedTemplateId, setSelectedTemplateId] = useState('')
   const [result, setResult] = useState('')
   const [artifactFilename, setArtifactFilename] = useState<string | null>(null)
+  const [resultTemplateLabel, setResultTemplateLabel] = useState<string | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
   const [downloading, setDownloading] = useState<'md' | 'pdf' | null>(null)
 
@@ -57,8 +85,37 @@ function SummarizeDocDialog({ onClose }: { onClose: () => void }) {
     queryFn: apiClient.listDocs,
   })
 
+  const { data: templates } = useQuery<ArtifactTemplate[]>({
+    queryKey: ['artifact-templates', 'summary', mode],
+    queryFn: () => apiClient.listArtifactTemplates(mode, 'summary'),
+    enabled: templatesEnabled,
+    staleTime: 60_000,
+    retry: 1,
+  })
+  const templateOptions = useMemo(() => templates ?? [], [templates])
+  const selectedTemplate = useMemo(
+    () => templateOptions.find(item => item.template_id === selectedTemplateId) ?? null,
+    [selectedTemplateId, templateOptions]
+  )
+
+  useEffect(() => {
+    if (!templatesEnabled) return
+    if (!templateOptions.length) {
+      setSelectedTemplateId('')
+      return
+    }
+    const hasActive = templateOptions.some(item => item.template_id === selectedTemplateId)
+    if (hasActive) return
+    setSelectedTemplateId(pickDefaultTemplate(templateOptions, { summaryMode: mode, artifactType: 'summary' }))
+  }, [mode, selectedTemplateId, templateOptions, templatesEnabled])
+
   const startJob = useMutation({
-    mutationFn: () => apiClient.summarizeAsync(selectedDoc, true, mode),
+    mutationFn: () => apiClient.summarizeAsync(
+      selectedDoc,
+      true,
+      mode,
+      templatesEnabled ? (selectedTemplateId || undefined) : undefined,
+    ),
     onSuccess: data => setJobId(data.job_id),
     onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao iniciar resumo'),
   })
@@ -78,6 +135,7 @@ function SummarizeDocDialog({ onClose }: { onClose: () => void }) {
       const payload = jobQuery.data.result ?? {}
       setResult(String(payload.answer ?? ''))
       setArtifactFilename(payload.artifact_filename ?? null)
+      setResultTemplateLabel(payload.template_label ? String(payload.template_label) : null)
       if (payload.artifact_filename) {
         toast.success(`Resumo salvo: ${payload.artifact_filename}`)
         qc.invalidateQueries({ queryKey: ['artifacts'] })
@@ -158,6 +216,40 @@ function SummarizeDocDialog({ onClose }: { onClose: () => void }) {
                   </button>
                 </div>
               </div>
+              {templatesEnabled && templateOptions.length > 0 && (
+                <div>
+                  <p className="mb-2 text-sm font-medium text-zinc-300">Template de saida:</p>
+                  <div className="grid gap-2 md:grid-cols-3">
+                    {templateOptions.map(template => (
+                      <button
+                        key={template.template_id}
+                        onClick={() => setSelectedTemplateId(template.template_id)}
+                        className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                          selectedTemplateId === template.template_id
+                            ? 'border-amber-500 bg-amber-500/10 text-amber-200'
+                            : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600'
+                        }`}
+                      >
+                        <p className="text-sm font-semibold">{template.label}</p>
+                        <p className="mt-0.5 text-xs opacity-80">{template.short_description}</p>
+                      </button>
+                    ))}
+                  </div>
+                  {selectedTemplate && (
+                    <div className="mt-2 rounded-lg border border-zinc-700 bg-zinc-800/70 p-3">
+                      <p className="text-xs font-medium text-zinc-200">{selectedTemplate.preview_title}</p>
+                      <p className="mt-1 text-xs text-zinc-400">{selectedTemplate.long_description}</p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {selectedTemplate.preview_sections.map(section => (
+                          <span key={section} className="rounded-full border border-zinc-600 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-300">
+                            {section}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               <Button
                 onClick={() => startJob.mutate()}
                 disabled={!selectedDoc || isProcessing}
@@ -189,9 +281,19 @@ function SummarizeDocDialog({ onClose }: { onClose: () => void }) {
             <>
               <div className="flex items-center justify-between">
                 <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${mode === 'brief' ? 'bg-blue-500/15 text-blue-300' : 'bg-violet-500/15 text-violet-300'}`}>
-                  {modeLabel} — {selectedDoc}
+                  {modeLabel} — {selectedDoc}{resultTemplateLabel ? ` — ${resultTemplateLabel}` : ''}
                 </span>
-                <Button variant="ghost" size="sm" className="text-xs text-zinc-500" onClick={() => { setResult(''); setArtifactFilename(null); startJob.reset() }}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs text-zinc-500"
+                  onClick={() => {
+                    setResult('')
+                    setArtifactFilename(null)
+                    setResultTemplateLabel(null)
+                    startJob.reset()
+                  }}
+                >
                   Gerar outro
                 </Button>
               </div>
@@ -385,11 +487,19 @@ function SmartDigestDialog({ onClose }: { onClose: () => void }) {
 
 // ── Create Artifact Dialog ────────────────────────────────────────────────────
 
-function CreateArtifactDialog({ onClose }: { onClose: () => void }) {
+function CreateArtifactDialog({
+  onClose,
+  templatesEnabled,
+}: {
+  onClose: () => void
+  templatesEnabled: boolean
+}) {
   const qc = useQueryClient()
   const [type, setType] = useState<string>('checklist')
+  const [selectedTemplateId, setSelectedTemplateId] = useState('')
   const [topic, setTopic] = useState('')
   const [result, setResult] = useState('')
+  const [resultTemplateLabel, setResultTemplateLabel] = useState<string | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
   const [selectedDoc, setSelectedDoc] = useState('')
   const [selectedDocs, setSelectedDocs] = useState<DocItem[]>([])
@@ -399,6 +509,29 @@ function CreateArtifactDialog({ onClose }: { onClose: () => void }) {
     queryFn: apiClient.listDocs,
     retry: 1,
   })
+  const { data: templates } = useQuery<ArtifactTemplate[]>({
+    queryKey: ['artifact-templates', type],
+    queryFn: () => apiClient.listArtifactTemplates(undefined, type),
+    enabled: templatesEnabled,
+    staleTime: 60_000,
+    retry: 1,
+  })
+  const templateOptions = useMemo(() => templates ?? [], [templates])
+  const selectedTemplate = useMemo(
+    () => templateOptions.find(item => item.template_id === selectedTemplateId) ?? null,
+    [selectedTemplateId, templateOptions]
+  )
+
+  useEffect(() => {
+    if (!templatesEnabled) return
+    if (!templateOptions.length) {
+      setSelectedTemplateId('')
+      return
+    }
+    const hasActive = templateOptions.some(item => item.template_id === selectedTemplateId)
+    if (hasActive) return
+    setSelectedTemplateId(pickDefaultTemplate(templateOptions, { artifactType: type }))
+  }, [selectedTemplateId, templateOptions, templatesEnabled, type])
 
   const startJob = useMutation({
     mutationFn: () =>
@@ -406,7 +539,8 @@ function CreateArtifactDialog({ onClose }: { onClose: () => void }) {
         type,
         topic,
         undefined,
-        selectedDocs.map(doc => doc.doc_id)
+        selectedDocs.map(doc => doc.doc_id),
+        templatesEnabled ? (selectedTemplateId || undefined) : undefined,
       ),
     onSuccess: data => { setJobId(data.job_id) },
     onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao iniciar artefato'),
@@ -425,6 +559,7 @@ function CreateArtifactDialog({ onClose }: { onClose: () => void }) {
     if (jobQuery.data.status === 'succeeded') {
       const payload = jobQuery.data.result ?? {}
       setResult(String(payload.answer ?? ''))
+      setResultTemplateLabel(payload.template_label ? String(payload.template_label) : null)
       if (payload.filename) toast.success(`Artefato salvo: ${payload.filename}`)
       qc.invalidateQueries({ queryKey: ['artifacts'] })
       setJobId(null)
@@ -499,6 +634,40 @@ function CreateArtifactDialog({ onClose }: { onClose: () => void }) {
                   </div>
                 )}
               </div>
+              {templatesEnabled && templateOptions.length > 0 && (
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium text-zinc-300">Template</label>
+                  <div className="grid gap-2 md:grid-cols-3">
+                    {templateOptions.map(template => (
+                      <button
+                        key={template.template_id}
+                        onClick={() => setSelectedTemplateId(template.template_id)}
+                        className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                          selectedTemplateId === template.template_id
+                            ? 'border-amber-500 bg-amber-500/10 text-amber-200'
+                            : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600'
+                        }`}
+                      >
+                        <p className="text-sm font-semibold">{template.label}</p>
+                        <p className="mt-0.5 text-xs opacity-80">{template.short_description}</p>
+                      </button>
+                    ))}
+                  </div>
+                  {selectedTemplate && (
+                    <div className="mt-2 rounded-lg border border-zinc-700 bg-zinc-800/70 p-3">
+                      <p className="text-xs font-medium text-zinc-200">{selectedTemplate.preview_title}</p>
+                      <p className="mt-1 text-xs text-zinc-400">{selectedTemplate.long_description}</p>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {selectedTemplate.preview_sections.map(section => (
+                          <span key={section} className="rounded-full border border-zinc-600 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-300">
+                            {section}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
               <Button onClick={() => startJob.mutate()} disabled={!topic.trim() || isProcessing} className="w-full">
                 {isProcessing ? (
                   <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{jobQuery.data?.stage ?? 'Gerando...'}</>
@@ -518,6 +687,11 @@ function CreateArtifactDialog({ onClose }: { onClose: () => void }) {
             </>
           ) : (
             <>
+              {resultTemplateLabel && (
+                <div className="rounded-md border border-amber-700/50 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+                  Template aplicado: {resultTemplateLabel}
+                </div>
+              )}
               <div className="prose prose-invert prose-sm max-w-none max-h-80 overflow-y-auto">
                 <ReactMarkdown>{result}</ReactMarkdown>
               </div>
@@ -593,6 +767,8 @@ function PreviewDialog({ artifact, onClose }: { artifact: { id: number; filename
 
 export function Artifacts() {
   const qc = useQueryClient()
+  const capabilities = useCapabilities()
+  const templatesEnabled = capabilities.isEnabled('premium_artifact_templates_enabled')
   const [showCreate, setShowCreate] = useState(false)
   const [showSummarize, setShowSummarize] = useState(false)
   const [showDigest, setShowDigest] = useState(false)
@@ -627,7 +803,11 @@ export function Artifacts() {
     <PageShell>
       <PageHeader
         title="Artefatos"
-        subtitle="Resumos, checklists e outros artefatos gerados pelo agente"
+        subtitle={
+          templatesEnabled
+            ? 'Resumos, checklists e outros artefatos gerados com templates premium'
+            : 'Resumos, checklists e outros artefatos gerados pelo agente'
+        }
         actions={(
         <div className="flex flex-wrap gap-2">
           <Button
@@ -759,9 +939,19 @@ export function Artifacts() {
         </div>
       )}
 
-      {showSummarize && <SummarizeDocDialog onClose={() => setShowSummarize(false)} />}
+      {showSummarize && (
+        <SummarizeDocDialog
+          onClose={() => setShowSummarize(false)}
+          templatesEnabled={templatesEnabled}
+        />
+      )}
       {showDigest && <SmartDigestDialog onClose={() => setShowDigest(false)} />}
-      {showCreate && <CreateArtifactDialog onClose={() => setShowCreate(false)} />}
+      {showCreate && (
+        <CreateArtifactDialog
+          onClose={() => setShowCreate(false)}
+          templatesEnabled={templatesEnabled}
+        />
+      )}
       {previewFile && <PreviewDialog artifact={previewFile} onClose={() => setPreviewFile(null)} />}
     </PageShell>
   )

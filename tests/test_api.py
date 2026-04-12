@@ -892,6 +892,53 @@ def test_artifact_not_found():
     _clear_auth_override()
 
 
+def test_artifact_template_catalog_returns_expected_blueprints():
+    auth_client, _ = _make_auth_client()
+    resp = auth_client.get("/api/artifact/templates")
+    assert resp.status_code == 200
+    data = resp.json()
+    template_ids = {item["template_id"] for item in data}
+    assert {"brief", "exam_pack", "deep_dossier"}.issubset(template_ids)
+
+    filtered = auth_client.get("/api/artifact/templates", params={"summary_mode": "deep"})
+    assert filtered.status_code == 200
+    for item in filtered.json():
+        assert "deep" in item["summary_modes"]
+    _clear_auth_override()
+
+
+def test_create_artifact_forwards_template_id_and_returns_template_metadata(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    captured: dict = {}
+
+    def _fake_run(*args, **kwargs):
+        if len(args) >= 5:
+            captured["template_id"] = args[4]
+        else:
+            captured["template_id"] = kwargs.get("template_id")
+        return {
+            "answer": "# Conteudo\n\nChecklist pronto.",
+            "filename": "checklist_template.md",
+            "path": "artifacts/checklist_template.md",
+            "template_id": "exam_pack",
+            "template_label": "Exam Prep Pack",
+            "template_description": "Pacote para prova",
+        }
+
+    monkeypatch.setattr("docops.api.routes.artifact._run_artifact", _fake_run)
+
+    resp = auth_client.post(
+        "/api/artifact",
+        json={"type": "checklist", "topic": "Revisao final", "template_id": "exam_pack"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["template_id"] == "exam_pack"
+    assert data["template_label"] == "Exam Prep Pack"
+    assert captured["template_id"] == "exam_pack"
+    _clear_auth_override()
+
+
 def test_artifact_duplicate_filename_requires_id_for_legacy_routes():
     from docops.db import crud
 
@@ -1000,6 +1047,46 @@ def test_summarize_debug_true_includes_diagnostics(monkeypatch):
     assert data["answer"] == "Resumo profundo."
     assert data["summary_diagnostics"] is not None
     assert data["summary_diagnostics"]["coverage"]["overall_coverage_score"] == 0.92
+    _clear_auth_override()
+
+
+def test_summarize_forwards_template_id_and_returns_template_metadata(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    fake_doc = MagicMock(file_name="manual.pdf", doc_id="doc-uuid-1")
+    monkeypatch.setattr("docops.api.routes.summarize.require_user_document", lambda *_a, **_k: fake_doc)
+    captured: dict = {}
+
+    def _fake_run(*args, **kwargs):
+        if len(args) >= 6:
+            captured["template_id"] = args[5]
+        else:
+            captured["template_id"] = kwargs.get("template_id")
+        return {
+            "answer": "Resumo com template.",
+            "artifact_path": None,
+            "artifact_filename": None,
+            "template_id": "deep_dossier",
+            "template_label": "Dossie Analitico",
+            "template_description": "Analise profunda",
+            "diagnostics": None,
+        }
+
+    monkeypatch.setattr("docops.api.routes.summarize._run_summarize", _fake_run)
+
+    resp = auth_client.post(
+        "/api/summarize",
+        json={
+            "doc": "manual.pdf",
+            "summary_mode": "deep",
+            "template_id": "deep_dossier",
+            "debug_summary": False,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert captured["template_id"] == "deep_dossier"
+    assert data["template_id"] == "deep_dossier"
+    assert data["template_label"] == "Dossie Analitico"
     _clear_auth_override()
 
 

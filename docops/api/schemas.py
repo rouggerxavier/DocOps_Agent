@@ -168,6 +168,10 @@ class SummarizeRequest(BaseModel):
         default="brief",
         description="'brief' for a short synthesis, 'deep' for a full detailed analysis",
     )
+    template_id: Optional[str] = Field(
+        default=None,
+        description="Artifact template id (brief | exam_pack | deep_dossier).",
+    )
     debug_summary: bool = Field(
         default=False,
         description="When true and summary_mode='deep', include summary diagnostics in response.",
@@ -186,6 +190,9 @@ class SummarizeResponse(BaseModel):
     answer: str
     artifact_path: Optional[str] = None
     artifact_filename: Optional[str] = None
+    template_id: Optional[str] = None
+    template_label: Optional[str] = None
+    template_description: Optional[str] = None
     summary_diagnostics: Optional[dict[str, Any]] = None
 
 
@@ -212,13 +219,33 @@ class ArtifactRequest(BaseModel):
         description="Optional list of document names/ids to constrain generation",
     )
     output: Optional[str] = None
+    template_id: Optional[str] = Field(
+        default=None,
+        description="Artifact template id (brief | exam_pack | deep_dossier).",
+    )
 
 
 class ArtifactResponse(BaseModel):
     answer: str
     filename: str
     path: str
+    template_id: Optional[str] = None
+    template_label: Optional[str] = None
+    template_description: Optional[str] = None
     artifact_id: Optional[int] = None
+
+
+class ArtifactTemplateItem(BaseModel):
+    template_id: str
+    label: str
+    short_description: str
+    long_description: str
+    preview_title: str
+    preview_sections: List[str] = Field(default_factory=list)
+    artifact_types: List[str] = Field(default_factory=list)
+    summary_modes: List[str] = Field(default_factory=list)
+    default_for_summary_modes: List[str] = Field(default_factory=list)
+    default_for_artifact_types: List[str] = Field(default_factory=list)
 
 
 # ── /api/artifacts ────────────────────────────────────────────────────────────
