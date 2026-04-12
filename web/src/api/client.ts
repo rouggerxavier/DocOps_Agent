@@ -52,6 +52,22 @@ export interface ChatResponse {
   active_context?: Record<string, any> | null
 }
 
+export interface CapabilityFlag {
+  key: string
+  enabled: boolean
+  env_var: string
+  default_enabled: boolean
+  description: string
+  owner: string
+}
+
+export interface CapabilitiesResponse {
+  flags: CapabilityFlag[]
+  map: Record<string, boolean>
+  disable_all: boolean
+  enable_all: boolean
+}
+
 export interface ChatStreamCallbacks {
   onStart?: () => void
   onDelta?: (delta: string) => void
@@ -328,6 +344,9 @@ export const apiClient = {
 
   listDocs: (): Promise<DocItem[]> =>
     api.get('/api/docs').then(r => r.data),
+
+  getCapabilities: (): Promise<CapabilitiesResponse> =>
+    api.get('/api/capabilities').then(r => r.data),
 
   deleteDoc: (docId: string): Promise<void> =>
     api.delete(`/api/docs/${encodeURIComponent(docId)}`).then(() => undefined),

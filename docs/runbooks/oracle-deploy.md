@@ -45,6 +45,31 @@ If service is unhealthy:
 sudo journalctl -u docops -n 200 --no-pager
 ```
 
+## Fast rollback via feature flags
+If deploy is healthy but a premium capability misbehaves, use environment flags
+to disable features without reverting code.
+
+Example (`/home/ubuntu/DocOps_Agent/.env`):
+```bash
+FEATURE_FLAGS_DISABLE_ALL=true
+```
+
+Or disable only streaming:
+```bash
+FEATURE_CHAT_STREAMING_ENABLED=false
+```
+
+Then restart:
+```bash
+sudo systemctl restart docops
+```
+
+Validate:
+```bash
+curl -s -H "Authorization: Bearer <TOKEN>" \
+  http://127.0.0.1:8000/api/capabilities | jq '.map'
+```
+
 If dependency install fails due Python version:
 - keep `requirements.txt` path for deploy on Python `3.10`
 - do not force lockfile install on server until host is upgraded to Python `3.11+`

@@ -58,6 +58,29 @@ curl -s -X POST "http://127.0.0.1:$PORT/api/chat" \
 
 Expected: non-empty `answer`.
 
+## 4.1 Capabilities (feature flag snapshot)
+```bash
+curl -s -X GET "http://127.0.0.1:$PORT/api/capabilities" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Expected:
+- JSON with `map` and `flags`
+- `chat_streaming_enabled` present in `map`
+
+## 4.2 Stream chat endpoint (when enabled)
+```bash
+curl -N -s -X POST "http://127.0.0.1:$PORT/api/chat/stream" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\":\"Resumo rapido de ${DOC_TITLE}\"}"
+```
+
+Expected:
+- `data: {"type":"start"...}`
+- multiple `data: {"type":"delta"...}`
+- one `data: {"type":"final"...}`
+
 ## 5. Summary and artifact creation
 ```bash
 curl -s -X POST "http://127.0.0.1:$PORT/api/summarize" \

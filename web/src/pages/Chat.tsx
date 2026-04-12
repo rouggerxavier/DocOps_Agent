@@ -21,6 +21,7 @@ import {
   type DocItem,
   type FlashcardDeck,
 } from '@/api/client'
+import { useCapabilities } from '@/features/CapabilitiesProvider'
 import { cn } from '@/lib/utils'
 
 interface Message {
@@ -744,6 +745,7 @@ function MessageBubble({
 
 export function Chat() {
   const qc = useQueryClient()
+  const capabilities = useCapabilities()
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     const loaded = loadSessions()
     return loaded.length > 0 ? loaded : [newSession()]
@@ -767,6 +769,8 @@ export function Chat() {
   const activeSession = sessions.find(s => s.id === activeSessionId) ?? sessions[0]
   const messages = activeSession?.messages ?? EMPTY_MESSAGES
   const activeContext = activeSession?.activeContext ?? emptyActiveContext()
+  const isStreamingEnabled = capabilities.isEnabled('chat_streaming_enabled')
+  const isStrictGroundingEnabled = capabilities.isEnabled('strict_grounding_enabled')
 
   useEffect(() => {
     saveSessions(sessions)
@@ -797,6 +801,12 @@ export function Chat() {
       return prevIds === nextIds ? prev : hydrated
     })
   }, [activeContext.active_doc_ids, activeContext.active_doc_names, docs])
+
+  useEffect(() => {
+    if (!isStrictGroundingEnabled && strictGrounding) {
+      setStrictGrounding(false)
+    }
+  }, [isStrictGroundingEnabled, strictGrounding])
 
   function appendAssistantMessage(message: Message) {
     setSessions(prev =>
@@ -1045,12 +1055,23 @@ export function Chat() {
       streamAbortRef.current = controller
 
       try {
+        if (!isStreamingEnabled) {
+          return await apiClient.chat(
+            payload.message,
+            payload.sessionId,
+            undefined,
+            payload.docIds,
+            payload.strictGrounding && isStrictGroundingEnabled,
+            payload.history,
+            payload.activeContext,
+          )
+        }
         return await apiClient.chatStream(
           payload.message,
           payload.sessionId,
           undefined,
           payload.docIds,
-          payload.strictGrounding,
+          payload.strictGrounding && isStrictGroundingEnabled,
           payload.history,
           payload.activeContext,
           {
@@ -1067,7 +1088,7 @@ export function Chat() {
           payload.sessionId,
           undefined,
           payload.docIds,
-          payload.strictGrounding,
+          payload.strictGrounding && isStrictGroundingEnabled,
           payload.history,
           payload.activeContext,
         )
@@ -1546,11 +1567,20 @@ export function Chat() {
                   type="checkbox"
                   checked={strictGrounding}
                   onChange={e => setStrictGrounding(e.target.checked)}
-                  disabled={isPending || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)}
+                  disabled={
+                    !isStrictGroundingEnabled
+                    || isPending
+                    || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)
+                  }
                   className="accent-blue-600"
                 />
                 Modo strict grounding (respostas só com evidência forte)
               </label>
+              {!isStrictGroundingEnabled && (
+                <p className="text-[11px] text-zinc-500">
+                  Strict grounding está desativado por configuração do workspace.
+                </p>
+              )}
             </div>
           )}
 

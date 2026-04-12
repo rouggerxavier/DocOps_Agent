@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from docops.api.routes import (
     artifact,
     briefing,
+    capabilities,
     calendar,
     chat,
     compare,
@@ -92,6 +93,7 @@ def create_app() -> FastAPI:
     # Rotas protegidas — exigem Bearer token
     app.include_router(docs.router, prefix=prefix, tags=["docs"], dependencies=_auth)
     app.include_router(ingest.router, prefix=prefix, tags=["ingest"], dependencies=_auth)
+    app.include_router(capabilities.router, prefix=prefix, tags=["capabilities"], dependencies=_auth)
     app.include_router(chat.router, prefix=prefix, tags=["chat"], dependencies=_auth)
     app.include_router(summarize.router, prefix=prefix, tags=["summarize"], dependencies=_auth)
     app.include_router(compare.router, prefix=prefix, tags=["compare"], dependencies=_auth)

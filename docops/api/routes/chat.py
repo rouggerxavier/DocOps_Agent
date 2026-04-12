@@ -17,6 +17,7 @@ from docops.db.database import get_db, session_scope
 from docops.db.models import User
 from docops.logging import get_logger
 from docops.rag.citations import _strip_embedding_header
+from docops.features.flags import is_feature_enabled, require_feature_enabled
 from docops.services.calendar_assistant import maybe_answer_calendar_query
 from docops.services.chat_context import (
     get_active_context,
@@ -183,7 +184,7 @@ def _run_chat(
         clean_doc_names = [str(name).strip() for name in doc_names if str(name).strip()]
         if clean_doc_names:
             extra["doc_names"] = clean_doc_names
-    if strict_grounding:
+    if strict_grounding and is_feature_enabled("strict_grounding_enabled"):
         extra["strict_grounding"] = True
 
     return dict(run(query=message, top_k=top_k, user_id=user_id, extra=extra or None))
@@ -450,6 +451,10 @@ async def chat_stream(
     db: Session = Depends(get_db),
 ) -> StreamingResponse:
     """Stream chat answer incrementally as SSE events."""
+    require_feature_enabled(
+        "chat_streaming_enabled",
+        detail="Chat streaming is disabled by feature flag.",
+    )
     logger.info("Chat stream request from user %s: '%s'", current_user.id, body.message[:80])
 
     async def event_generator():

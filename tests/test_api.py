@@ -199,6 +199,12 @@ def test_chat_sem_token():
     assert resp.status_code == 401
 
 
+def test_capabilities_sem_token():
+    _clear_auth_override()
+    resp = client.get("/api/capabilities")
+    assert resp.status_code == 401
+
+
 # ── Testes existentes com autenticação via override ───────────────────────────
 
 def test_docs_empty(monkeypatch):
@@ -324,6 +330,27 @@ def test_chat_stream_emits_error_event_on_environment_error(monkeypatch):
     error_event = next(event for event in events if event.get("type") == "error")
     assert error_event["status_code"] == 503
     assert "GEMINI_API_KEY" in error_event["detail"]
+    _clear_auth_override()
+
+
+def test_capabilities_returns_feature_flags():
+    auth_client, _ = _make_auth_client()
+    resp = auth_client.get("/api/capabilities")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert "map" in payload
+    assert payload["map"]["chat_streaming_enabled"] is True
+    assert payload["map"]["strict_grounding_enabled"] is True
+    assert "flags" in payload and len(payload["flags"]) >= 3
+    _clear_auth_override()
+
+
+def test_chat_stream_disabled_by_feature_flag(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_CHAT_STREAMING_ENABLED", "false")
+    resp = auth_client.post("/api/chat/stream", json={"message": "hello"})
+    assert resp.status_code == 503
+    assert "feature flag" in resp.json()["detail"].lower()
     _clear_auth_override()
 
 

@@ -137,6 +137,24 @@ class ChatResponse(BaseModel):
     quality_signal: Optional[ChatQualitySignal] = None
 
 
+# ── /api/capabilities ─────────────────────────────────────────────────────────
+
+class CapabilityFlag(BaseModel):
+    key: str
+    enabled: bool
+    env_var: str
+    default_enabled: bool
+    description: str
+    owner: str
+
+
+class CapabilitiesResponse(BaseModel):
+    flags: List[CapabilityFlag] = Field(default_factory=list)
+    map: dict[str, bool] = Field(default_factory=dict)
+    disable_all: bool = False
+    enable_all: bool = False
+
+
 # ── /api/summarize ────────────────────────────────────────────────────────────
 
 class SummarizeRequest(BaseModel):
