@@ -73,6 +73,10 @@ export interface ChatStreamCallbacks {
   onDelta?: (delta: string) => void
 }
 
+export interface ChatRequestOptions {
+  streamFallback?: boolean
+}
+
 export interface JobCreateResponse {
   job_id: string
   status: string
@@ -358,9 +362,17 @@ export const apiClient = {
     doc_names?: string[],
     strict_grounding?: boolean,
     history?: Array<{ role: 'user' | 'assistant'; content: string }>,
-    active_context?: Record<string, any> | null
+    active_context?: Record<string, any> | null,
+    options?: ChatRequestOptions,
   ): Promise<ChatResponse> =>
-    api.post('/api/chat', { message, session_id, top_k, doc_names, strict_grounding, history, active_context }, { timeout: 180000 }).then(r => r.data),
+    api.post(
+      '/api/chat',
+      { message, session_id, top_k, doc_names, strict_grounding, history, active_context },
+      {
+        timeout: 180000,
+        headers: options?.streamFallback ? { 'X-DocOps-Stream-Fallback': '1' } : undefined,
+      },
+    ).then(r => r.data),
 
   chatStream: async (
     message: string,

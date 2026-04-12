@@ -24,6 +24,7 @@ from docops.db.crud import (
 from docops.db.database import SessionLocal, get_db
 from docops.db.models import ArtifactRecord, User
 from docops.logging import get_logger
+from docops.observability import emit_event
 from docops.services.jobs import create_job, run_thread_with_progress, schedule_job, update_job
 from docops.services.ownership import require_user_document
 
@@ -184,6 +185,16 @@ async def create_artifact(
 ) -> ArtifactResponse:
     """Generate and save a structured artifact scoped to the current user."""
     logger.info(f"Artifact: type={body.type}, topic='{body.topic[:50]}' for user {current_user.id}")
+    emit_event(
+        logger,
+        "artifact.generation.started",
+        category="artifact",
+        user_id=current_user.id,
+        artifact_type=body.type,
+        topic_preview=body.topic[:80],
+        doc_count=len(body.doc_names or []),
+        mode="sync",
+    )
     selected_docs = []
     for doc_name in body.doc_names:
         selected_docs.append(require_user_document(db, current_user.id, doc_name))
@@ -202,9 +213,30 @@ async def create_artifact(
             doc_ids,
         )
     except EnvironmentError as exc:
+        emit_event(
+            logger,
+            "artifact.generation.failed",
+            level="error",
+            category="artifact",
+            user_id=current_user.id,
+            artifact_type=body.type,
+            mode="sync",
+            error_type=exc.__class__.__name__,
+            detail=str(exc),
+        )
         raise HTTPException(status_code=503, detail=str(exc))
     except Exception as exc:
         logger.error(f"Artifact error: {exc}")
+        emit_event(
+            logger,
+            "artifact.generation.failed",
+            level="error",
+            category="artifact",
+            user_id=current_user.id,
+            artifact_type=body.type,
+            mode="sync",
+            error_type=exc.__class__.__name__,
+        )
         raise HTTPException(status_code=500, detail="Agent error")
 
     artifact_record = create_artifact_record(
@@ -216,6 +248,16 @@ async def create_artifact(
         path=result["path"],
         source_doc_id=doc_ids[0] if len(doc_ids) >= 1 else None,
         source_doc_id_2=doc_ids[1] if len(doc_ids) >= 2 else None,
+    )
+    emit_event(
+        logger,
+        "artifact.generation.completed",
+        category="artifact",
+        user_id=current_user.id,
+        artifact_type=body.type,
+        mode="sync",
+        artifact_id=artifact_record.id,
+        filename=result["filename"],
     )
 
     return ArtifactResponse(**result, artifact_id=artifact_record.id)
@@ -235,47 +277,82 @@ async def create_artifact_async(
     doc_names = [doc.file_name for doc in selected_docs]
     doc_ids = [doc.doc_id for doc in selected_docs]
     job = create_job(user_id=current_user.id, job_type="artifact", stage="queued")
+    emit_event(
+        logger,
+        "artifact.generation.started",
+        category="artifact",
+        user_id=current_user.id,
+        artifact_type=body.type,
+        topic_preview=body.topic[:80],
+        doc_count=len(body.doc_names or []),
+        mode="async",
+        job_id=job["job_id"],
+    )
 
     async def _runner(job_id: str) -> dict:
-        update_job(job_id, progress=10, stage="collecting context")
-        result = await run_thread_with_progress(
-            job_id=job_id,
-            fn=_run_artifact,
-            args=(
-                body.type,
-                body.topic,
-                body.output,
-                current_user.id,
-                doc_names,
-                doc_ids,
-            ),
-            stage="generating artifact",
-            start_progress=28,
-            max_progress=82,
-            step=4,
-            interval_seconds=1.8,
-        )
-        update_job(job_id, progress=85, stage="saving artifact")
+        try:
+            update_job(job_id, progress=10, stage="collecting context")
+            result = await run_thread_with_progress(
+                job_id=job_id,
+                fn=_run_artifact,
+                args=(
+                    body.type,
+                    body.topic,
+                    body.output,
+                    current_user.id,
+                    doc_names,
+                    doc_ids,
+                ),
+                stage="generating artifact",
+                start_progress=28,
+                max_progress=82,
+                step=4,
+                interval_seconds=1.8,
+            )
+            update_job(job_id, progress=85, stage="saving artifact")
 
-        def _persist() -> None:
-            db_local = SessionLocal()
-            try:
-                create_artifact_record(
-                    db_local,
-                    user_id=current_user.id,
-                    artifact_type=body.type,
-                    title=body.topic[:512],
-                    filename=result["filename"],
-                    path=result["path"],
-                    source_doc_id=doc_ids[0] if len(doc_ids) >= 1 else None,
-                    source_doc_id_2=doc_ids[1] if len(doc_ids) >= 2 else None,
-                )
-            finally:
-                db_local.close()
+            def _persist() -> None:
+                db_local = SessionLocal()
+                try:
+                    create_artifact_record(
+                        db_local,
+                        user_id=current_user.id,
+                        artifact_type=body.type,
+                        title=body.topic[:512],
+                        filename=result["filename"],
+                        path=result["path"],
+                        source_doc_id=doc_ids[0] if len(doc_ids) >= 1 else None,
+                        source_doc_id_2=doc_ids[1] if len(doc_ids) >= 2 else None,
+                    )
+                finally:
+                    db_local.close()
 
-        await asyncio.to_thread(_persist)
-        update_job(job_id, progress=100, stage="completed")
-        return result
+            await asyncio.to_thread(_persist)
+            update_job(job_id, progress=100, stage="completed")
+            emit_event(
+                logger,
+                "artifact.generation.completed",
+                category="artifact",
+                user_id=current_user.id,
+                artifact_type=body.type,
+                mode="async",
+                job_id=job_id,
+                filename=result["filename"],
+            )
+            return result
+        except Exception as exc:
+            emit_event(
+                logger,
+                "artifact.generation.failed",
+                level="error",
+                category="artifact",
+                user_id=current_user.id,
+                artifact_type=body.type,
+                mode="async",
+                job_id=job_id,
+                error_type=exc.__class__.__name__,
+            )
+            raise
 
     schedule_job(job["job_id"], _runner)
     return JobCreateResponse(

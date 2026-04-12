@@ -7,7 +7,7 @@ import json
 import re
 from typing import Any, List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from docops.api.schemas import ChatQualitySignal, ChatRequest, ChatResponse, SourceItem
@@ -16,6 +16,11 @@ from docops.config import config
 from docops.db.database import get_db, session_scope
 from docops.db.models import User
 from docops.logging import get_logger
+from docops.observability import (
+    emit_event,
+    get_request_correlation_id,
+    is_stream_fallback_request,
+)
 from docops.rag.citations import _strip_embedding_header
 from docops.features.flags import is_feature_enabled, require_feature_enabled
 from docops.services.calendar_assistant import maybe_answer_calendar_query
@@ -434,19 +439,62 @@ def _sse_payload(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+def _stream_event_payload(
+    event_type: str,
+    request: Request | None,
+    **fields: Any,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "type": event_type,
+        "correlation_id": get_request_correlation_id(request),
+    }
+    for key, value in fields.items():
+        if value is not None:
+            payload[key] = value
+    return payload
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     body: ChatRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ChatResponse:
+    fallback_from_stream = is_stream_fallback_request(request)
     logger.info("Chat request from user %s: '%s'", current_user.id, body.message[:80])
-    return await _build_chat_response(body, current_user, db)
+    emit_event(
+        logger,
+        "chat.request.received",
+        category="chat",
+        route="/api/chat",
+        user_id=current_user.id,
+        session_id=body.session_id,
+        doc_count=len(body.doc_names or []),
+        strict_grounding_requested=bool(body.strict_grounding),
+        fallback_from_stream=fallback_from_stream,
+    )
+    response = await _build_chat_response(body, current_user, db)
+    emit_event(
+        logger,
+        "chat.request.completed",
+        category="chat",
+        route="/api/chat",
+        user_id=current_user.id,
+        session_id=response.session_id,
+        intent=response.intent,
+        source_count=len(response.sources or []),
+        quality_level=(response.quality_signal.level if response.quality_signal else None),
+        quality_score=(response.quality_signal.score if response.quality_signal else None),
+        fallback_from_stream=fallback_from_stream,
+    )
+    return response
 
 
 @router.post("/chat/stream")
 async def chat_stream(
     body: ChatRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StreamingResponse:
@@ -456,41 +504,130 @@ async def chat_stream(
         detail="Chat streaming is disabled by feature flag.",
     )
     logger.info("Chat stream request from user %s: '%s'", current_user.id, body.message[:80])
+    correlation_id = get_request_correlation_id(request)
+    emit_event(
+        logger,
+        "chat.stream.started",
+        category="chat_stream",
+        route="/api/chat/stream",
+        correlation_id=correlation_id,
+        user_id=current_user.id,
+        session_id=body.session_id,
+        doc_count=len(body.doc_names or []),
+        strict_grounding_requested=bool(body.strict_grounding),
+    )
 
     async def event_generator():
-        yield _sse_payload({"type": "start", "session_id": body.session_id})
+        yield _sse_payload(
+            _stream_event_payload(
+                "start",
+                request,
+                session_id=body.session_id,
+            )
+        )
+        yield _sse_payload(
+            _stream_event_payload(
+                "status",
+                request,
+                stage="processing",
+                detail="Building chat response",
+            )
+        )
 
         try:
             response = await _build_chat_response(body, current_user, db)
         except HTTPException as exc:
+            emit_event(
+                logger,
+                "chat.stream.failed",
+                level="error",
+                category="chat_stream",
+                route="/api/chat/stream",
+                correlation_id=correlation_id,
+                user_id=current_user.id,
+                session_id=body.session_id,
+                status_code=exc.status_code,
+                detail=str(exc.detail),
+            )
             yield _sse_payload(
-                {
-                    "type": "error",
-                    "status_code": exc.status_code,
-                    "detail": str(exc.detail),
-                }
+                _stream_event_payload(
+                    "error",
+                    request,
+                    status_code=exc.status_code,
+                    detail=str(exc.detail),
+                )
             )
             return
         except Exception as exc:  # pragma: no cover - defensive fallback
             logger.error("Chat stream error: %s", exc)
+            emit_event(
+                logger,
+                "chat.stream.failed",
+                level="error",
+                category="chat_stream",
+                route="/api/chat/stream",
+                correlation_id=correlation_id,
+                user_id=current_user.id,
+                session_id=body.session_id,
+                status_code=500,
+                detail="Agent error - check server logs",
+                error_type=exc.__class__.__name__,
+            )
             yield _sse_payload(
-                {
-                    "type": "error",
-                    "status_code": 500,
-                    "detail": "Agent error - check server logs",
-                }
+                _stream_event_payload(
+                    "error",
+                    request,
+                    status_code=500,
+                    detail="Agent error - check server logs",
+                )
             )
             return
 
         answer = response.answer or ""
+        streamed_chars = 0
         for idx in range(0, len(answer), _STREAM_CHARS_PER_CHUNK):
             chunk = answer[idx : idx + _STREAM_CHARS_PER_CHUNK]
             if chunk:
-                yield _sse_payload({"type": "delta", "delta": chunk})
+                streamed_chars += len(chunk)
+                yield _sse_payload(
+                    _stream_event_payload(
+                        "delta",
+                        request,
+                        delta=chunk,
+                    )
+                )
                 await asyncio.sleep(_STREAM_DELAY_SECONDS)
 
-        yield _sse_payload({"type": "final", "response": response.model_dump(mode="json")})
-        yield _sse_payload({"type": "done"})
+        emit_event(
+            logger,
+            "chat.stream.final",
+            category="chat_stream",
+            route="/api/chat/stream",
+            user_id=current_user.id,
+            session_id=response.session_id,
+            intent=response.intent,
+            source_count=len(response.sources or []),
+            delta_chars=streamed_chars,
+            correlation_id=correlation_id,
+        )
+        yield _sse_payload(
+            _stream_event_payload(
+                "final",
+                request,
+                response=response.model_dump(mode="json"),
+            )
+        )
+        yield _sse_payload(_stream_event_payload("done", request))
+        emit_event(
+            logger,
+            "chat.stream.completed",
+            category="chat_stream",
+            route="/api/chat/stream",
+            correlation_id=correlation_id,
+            user_id=current_user.id,
+            session_id=response.session_id,
+            delta_chars=streamed_chars,
+        )
 
     headers = {
         "Cache-Control": "no-cache",

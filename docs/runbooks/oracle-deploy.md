@@ -70,6 +70,23 @@ curl -s -H "Authorization: Bearer <TOKEN>" \
   http://127.0.0.1:8000/api/capabilities | jq '.map'
 ```
 
+## Observability checks after deploy
+Run at least one authenticated chat request and confirm correlation header:
+```bash
+curl -i -s -X POST "http://127.0.0.1:8000/api/chat" \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H "Content-Type: application/json" \
+  -H "X-Correlation-ID: deploy-check-12345678" \
+  -d '{"message":"health check"}' | grep -i "x-correlation-id"
+```
+
+Inspect server logs for standardized events:
+```bash
+sudo journalctl -u docops -n 300 --no-pager | grep "DOCOPS_EVENT"
+```
+
+Reference: `docs/runbooks/observability-correlation.md`
+
 If dependency install fails due Python version:
 - keep `requirements.txt` path for deploy on Python `3.10`
 - do not force lockfile install on server until host is upgraded to Python `3.11+`

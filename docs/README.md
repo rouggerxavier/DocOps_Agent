@@ -10,6 +10,7 @@ This folder stores operational documentation that must stay aligned with the cod
 ## Runbooks
 - [Oracle deploy runbook](runbooks/oracle-deploy.md)
 - [Manual smoke runbook](runbooks/manual-smoke.md)
+- [Observability and correlation runbook](runbooks/observability-correlation.md)
 
 ## Update rule
 When API contracts, deploy workflow, or migration behavior changes, update these runbooks in the same PR.

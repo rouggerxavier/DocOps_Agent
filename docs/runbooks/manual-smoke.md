@@ -58,7 +58,20 @@ curl -s -X POST "http://127.0.0.1:$PORT/api/chat" \
 
 Expected: non-empty `answer`.
 
-## 4.1 Capabilities (feature flag snapshot)
+## 4.1 Correlation id header
+```bash
+curl -i -s -X POST "http://127.0.0.1:$PORT/api/chat" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-Correlation-ID: smoke-correlation-12345678" \
+  -d "{\"message\":\"quick check\"}" | grep -i "x-correlation-id"
+```
+
+Expected:
+- response includes `X-Correlation-ID`
+- value matches input id when input is valid
+
+## 4.2 Capabilities (feature flag snapshot)
 ```bash
 curl -s -X GET "http://127.0.0.1:$PORT/api/capabilities" \
   -H "Authorization: Bearer $TOKEN"
@@ -68,7 +81,7 @@ Expected:
 - JSON with `map` and `flags`
 - `chat_streaming_enabled` present in `map`
 
-## 4.2 Stream chat endpoint (when enabled)
+## 4.3 Stream chat endpoint (when enabled)
 ```bash
 curl -N -s -X POST "http://127.0.0.1:$PORT/api/chat/stream" \
   -H "Authorization: Bearer $TOKEN" \
@@ -78,8 +91,10 @@ curl -N -s -X POST "http://127.0.0.1:$PORT/api/chat/stream" \
 
 Expected:
 - `data: {"type":"start"...}`
+- `data: {"type":"status"...}`
 - multiple `data: {"type":"delta"...}`
 - one `data: {"type":"final"...}`
+- every SSE payload includes `correlation_id`
 
 ## 5. Summary and artifact creation
 ```bash

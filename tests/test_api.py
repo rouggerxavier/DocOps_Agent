@@ -273,6 +273,51 @@ def test_chat_success(monkeypatch):
     _clear_auth_override()
 
 
+def test_chat_response_has_correlation_id_header(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: {
+            "answer": "ok",
+            "intent": "qa",
+            "retrieved_chunks": [],
+        },
+    )
+
+    resp = auth_client.post("/api/chat", json={"message": "hello"})
+    assert resp.status_code == 200
+    correlation_id = resp.headers.get("x-correlation-id")
+    assert correlation_id is not None
+    assert len(correlation_id) >= 8
+    _clear_auth_override()
+
+
+def test_chat_propagates_correlation_id_to_worker_thread(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    expected_cid = "tracecid-12345678"
+
+    def _fake_run(_msg, _top_k, user_id=0, doc_names=None, strict_grounding=False):
+        from docops.observability import get_correlation_id
+
+        return {
+            "answer": f"cid={get_correlation_id()}",
+            "intent": "qa",
+            "retrieved_chunks": [],
+        }
+
+    monkeypatch.setattr("docops.api.routes.chat._run_chat", _fake_run)
+
+    resp = auth_client.post(
+        "/api/chat",
+        json={"message": "hello"},
+        headers={"X-Correlation-ID": expected_cid},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["answer"] == f"cid={expected_cid}"
+    assert resp.headers.get("x-correlation-id") == expected_cid
+    _clear_auth_override()
+
+
 def test_chat_stream_success(monkeypatch):
     from langchain_core.documents import Document
 
@@ -309,6 +354,33 @@ def test_chat_stream_success(monkeypatch):
     assert deltas == "Test answer [Fonte 1]"
     assert final_event["response"]["answer"] == "Test answer [Fonte 1]"
     assert final_event["response"]["session_id"] == "s1"
+    _clear_auth_override()
+
+
+def test_chat_stream_events_include_correlation_id(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    expected_cid = "streamcid-12345678"
+    fake_state = {"answer": "ok", "intent": "qa", "retrieved_chunks": []}
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    resp = auth_client.post(
+        "/api/chat/stream",
+        json={"message": "hello", "session_id": "s1"},
+        headers={"X-Correlation-ID": expected_cid},
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("x-correlation-id") == expected_cid
+
+    events = [
+        json.loads(line[6:])
+        for line in resp.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert events
+    assert all(event.get("correlation_id") == expected_cid for event in events)
     _clear_auth_override()
 
 

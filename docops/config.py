@@ -107,7 +107,10 @@ class Config:
 
     @property
     def cors_allow_headers(self) -> list[str]:
-        return _csv_env("CORS_ALLOW_HEADERS", "Authorization,Content-Type,Accept,Origin")
+        return _csv_env(
+            "CORS_ALLOW_HEADERS",
+            "Authorization,Content-Type,Accept,Origin,X-Correlation-ID,X-DocOps-Stream-Fallback",
+        )
 
     @property
     def cors_allow_credentials(self) -> bool:

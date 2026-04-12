@@ -1091,6 +1091,7 @@ export function Chat() {
           payload.strictGrounding && isStrictGroundingEnabled,
           payload.history,
           payload.activeContext,
+          { streamFallback: true },
         )
       } finally {
         if (streamAbortRef.current === controller) {
