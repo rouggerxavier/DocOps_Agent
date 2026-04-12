@@ -102,39 +102,104 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _round2(value: float) -> float:
+    return round(_clamp01(value), 2)
+
+
+def _source_breadth_component(source_count: int) -> tuple[float, str, str]:
+    if source_count <= 0:
+        return 0.0, "source_breadth_none", "no_inline_sources"
+    if source_count == 1:
+        return 0.6, "source_breadth_single", "single_source"
+    return 1.0, "source_breadth_multi", "multi_source"
+
+
+def _retrieval_depth_component(retrieved_count: int) -> tuple[float, str, str]:
+    if retrieved_count <= 0:
+        return 0.0, "retrieval_depth_none", "no_retrieval"
+    if retrieved_count <= 2:
+        return 0.45 if retrieved_count == 1 else 0.7, "retrieval_depth_shallow", f"retrieval_chunks={retrieved_count}"
+    return 1.0, "retrieval_depth_sufficient", f"retrieval_chunks={retrieved_count}"
+
+
+def _unsupported_claims_component(unsupported_count: int) -> tuple[float, str, str]:
+    if unsupported_count <= 0:
+        return 1.0, "unsupported_claims_none", "unsupported_claims=0"
+    if unsupported_count == 1:
+        return 0.75, "unsupported_claims_present", "unsupported_claims=1"
+    if unsupported_count == 2:
+        return 0.5, "unsupported_claims_present", "unsupported_claims=2"
+    return 0.25, "unsupported_claims_present", f"unsupported_claims={unsupported_count}"
+
+
+def _support_component(support_rate: float | None) -> tuple[float, str, str]:
+    if support_rate is None:
+        return 0.55, "support_rate_missing", "support_rate_missing"
+    normalized = _clamp01(support_rate)
+    if normalized >= 0.8:
+        code = "support_rate_strong"
+    elif normalized >= 0.55:
+        code = "support_rate_moderate"
+    else:
+        code = "support_rate_weak"
+    return normalized, code, f"support_rate={normalized:.2f}"
+
+
 def _build_quality_signal(state: dict, sources: list[SourceItem]) -> ChatQualitySignal:
-    """Compute a lightweight confidence signal for chat UX."""
+    """Compute confidence signal V2 with decomposed components and taxonomy."""
     retrieved_chunks = state.get("retrieved_chunks") or []
     retrieved_count = len(retrieved_chunks)
     source_count = len(sources)
 
     grounding = state.get("grounding") or state.get("grounding_info") or {}
-    support_rate = _as_float(grounding.get("support_rate"))
+    raw_support_rate = _as_float(grounding.get("support_rate"))
+    support_rate = _clamp01(raw_support_rate) if raw_support_rate is not None else None
     unsupported_claims = grounding.get("unsupported_claims") or []
     unsupported_count = len(unsupported_claims) if isinstance(unsupported_claims, list) else 0
 
-    score = support_rate if support_rate is not None else 0.55
-    reasons: list[str] = []
+    support_component, support_code, support_reason = _support_component(support_rate)
+    source_component, source_code, source_reason = _source_breadth_component(source_count)
+    retrieval_component, retrieval_code, retrieval_reason = _retrieval_depth_component(retrieved_count)
+    unsupported_component, unsupported_code, unsupported_reason = _unsupported_claims_component(
+        unsupported_count
+    )
 
-    if support_rate is not None:
-        reasons.append(f"support_rate={support_rate:.2f}")
-    if source_count == 0:
-        reasons.append("no_inline_sources")
-        score -= 0.25
-    elif source_count == 1:
-        reasons.append("single_source")
-        score -= 0.08
-    else:
-        reasons.append("multi_source")
-        score += 0.08
-    if retrieved_count == 0:
-        reasons.append("no_retrieval")
-        score -= 0.35
-    if unsupported_count > 0:
-        reasons.append(f"unsupported_claims={unsupported_count}")
-        score -= min(0.3, unsupported_count * 0.05)
+    weights = {
+        "support_rate": 0.5,
+        "source_breadth": 0.2,
+        "unsupported_claims": 0.2,
+        "retrieval_depth": 0.1,
+    }
+    score = _round2(
+        (support_component * weights["support_rate"])
+        + (source_component * weights["source_breadth"])
+        + (unsupported_component * weights["unsupported_claims"])
+        + (retrieval_component * weights["retrieval_depth"])
+    )
 
-    score = max(0.0, min(1.0, round(score, 2)))
+    reason_codes = [
+        support_code,
+        source_code,
+        unsupported_code,
+        retrieval_code,
+    ]
+    reasons = [
+        support_reason,
+        source_reason,
+        unsupported_reason,
+        retrieval_reason,
+    ]
+
+    score_components = {
+        "support_rate": _round2(support_component),
+        "source_breadth": _round2(source_component),
+        "unsupported_claims": _round2(unsupported_component),
+        "retrieval_depth": _round2(retrieval_component),
+    }
 
     if score >= 0.8:
         level = "high"
@@ -158,6 +223,11 @@ def _build_quality_signal(state: dict, sources: list[SourceItem]) -> ChatQuality
                 "Tente pedir uma resposta com citacoes explicitas "
                 "(por exemplo: inclua [Fonte N] no texto)."
             )
+        elif unsupported_count > 0:
+            suggested_action = (
+                "A resposta tem afirmacoes com baixo suporte. "
+                "Ative strict grounding ou refine a pergunta para reduzir ambiguidade."
+            )
         else:
             suggested_action = (
                 "A resposta tem suporte parcial. Vale reformular a pergunta "
@@ -169,6 +239,10 @@ def _build_quality_signal(state: dict, sources: list[SourceItem]) -> ChatQuality
         score=score,
         label=label,
         reasons=reasons,
+        reason_codes=reason_codes,
+        score_components=score_components,
+        support_rate=_round2(support_rate) if support_rate is not None else None,
+        unsupported_claim_count=unsupported_count,
         suggested_action=suggested_action,
         source_count=source_count,
         retrieved_count=retrieved_count,
@@ -401,12 +475,31 @@ async def _build_chat_response(
     grounding_payload = state.get("grounding") or state.get("grounding_info")
     quality_signal = _build_quality_signal(state, sources)
     logger.info(
-        "Chat quality signal user=%s intent=%s level=%s score=%.2f reasons=%s",
+        "Chat quality signal user=%s intent=%s level=%s score=%.2f reason_codes=%s reasons=%s",
         current_user.id,
         state.get("intent", "qa"),
         quality_signal.level,
         quality_signal.score,
+        ",".join(quality_signal.reason_codes),
         ",".join(quality_signal.reasons),
+    )
+    emit_event(
+        logger,
+        "chat.quality_signal.computed",
+        category="chat_quality",
+        user_id=current_user.id,
+        intent=state.get("intent", "qa"),
+        quality_level=quality_signal.level,
+        quality_score=quality_signal.score,
+        quality_reason_codes=quality_signal.reason_codes,
+        quality_support_rate=quality_signal.support_rate,
+        quality_unsupported_claim_count=quality_signal.unsupported_claim_count,
+        quality_source_count=quality_signal.source_count,
+        quality_retrieved_count=quality_signal.retrieved_count,
+        quality_component_support_rate=quality_signal.score_components.get("support_rate"),
+        quality_component_source_breadth=quality_signal.score_components.get("source_breadth"),
+        quality_component_unsupported_claims=quality_signal.score_components.get("unsupported_claims"),
+        quality_component_retrieval_depth=quality_signal.score_components.get("retrieval_depth"),
     )
     next_context = remember_active_context(
         current_user.id,
@@ -552,6 +645,31 @@ async def chat(
         source_count=len(response.sources or []),
         quality_level=(response.quality_signal.level if response.quality_signal else None),
         quality_score=(response.quality_signal.score if response.quality_signal else None),
+        quality_reason_codes=(response.quality_signal.reason_codes if response.quality_signal else None),
+        quality_component_support_rate=(
+            response.quality_signal.score_components.get("support_rate")
+            if response.quality_signal
+            else None
+        ),
+        quality_component_source_breadth=(
+            response.quality_signal.score_components.get("source_breadth")
+            if response.quality_signal
+            else None
+        ),
+        quality_component_unsupported_claims=(
+            response.quality_signal.score_components.get("unsupported_claims")
+            if response.quality_signal
+            else None
+        ),
+        quality_component_retrieval_depth=(
+            response.quality_signal.score_components.get("retrieval_depth")
+            if response.quality_signal
+            else None
+        ),
+        quality_support_rate=(response.quality_signal.support_rate if response.quality_signal else None),
+        quality_unsupported_claim_count=(
+            response.quality_signal.unsupported_claim_count if response.quality_signal else None
+        ),
         fallback_from_stream=fallback_from_stream,
     )
     return response

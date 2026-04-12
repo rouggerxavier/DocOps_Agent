@@ -614,6 +614,118 @@ def test_chat_quality_signal_uses_support_rate_when_available(monkeypatch):
     assert signal["level"] == "high"
     assert signal["score"] >= 0.8
     assert "support_rate=0.91" in signal["reasons"]
+    assert "reason_codes" in signal
+    assert "score_components" in signal
+    _clear_auth_override()
+
+
+def test_chat_quality_signal_v2_reason_codes_and_components(monkeypatch):
+    from langchain_core.documents import Document
+
+    auth_client, _ = _make_auth_client()
+    fake_state = {
+        "answer": "Resposta com suporte [Fonte 1]",
+        "intent": "qa",
+        "retrieved_chunks": [
+            Document(
+                page_content="evidencia forte",
+                metadata={"file_name": "manual.pdf", "page": "1", "chunk_id": "abc"},
+            )
+        ],
+        "grounding_info": {"support_rate": 0.91, "unsupported_claims": []},
+    }
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    resp = auth_client.post("/api/chat", json={"message": "hello"})
+    assert resp.status_code == 200
+    signal = resp.json()["quality_signal"]
+
+    assert set(signal["reason_codes"]) == {
+        "support_rate_strong",
+        "source_breadth_single",
+        "unsupported_claims_none",
+        "retrieval_depth_shallow",
+    }
+    components = signal["score_components"]
+    assert set(components.keys()) == {
+        "support_rate",
+        "source_breadth",
+        "unsupported_claims",
+        "retrieval_depth",
+    }
+    assert all(0.0 <= float(value) <= 1.0 for value in components.values())
+    assert signal["support_rate"] == 0.91
+    assert signal["unsupported_claim_count"] == 0
+    _clear_auth_override()
+
+
+def test_chat_quality_signal_v2_is_deterministic_for_fixed_input(monkeypatch):
+    from langchain_core.documents import Document
+
+    auth_client, _ = _make_auth_client()
+    fake_state = {
+        "answer": "Resposta deterministica [Fonte 1]",
+        "intent": "qa",
+        "retrieved_chunks": [
+            Document(
+                page_content="evidencia deterministica",
+                metadata={"file_name": "manual.pdf", "page": "1", "chunk_id": "abc"},
+            )
+        ],
+        "grounding_info": {"support_rate": 0.73, "unsupported_claims": ["claim-1"]},
+    }
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    resp_a = auth_client.post("/api/chat", json={"message": "hello"})
+    resp_b = auth_client.post("/api/chat", json={"message": "hello"})
+    assert resp_a.status_code == 200
+    assert resp_b.status_code == 200
+
+    signal_a = resp_a.json()["quality_signal"]
+    signal_b = resp_b.json()["quality_signal"]
+    assert signal_a["score"] == signal_b["score"]
+    assert signal_a["level"] == signal_b["level"]
+    assert signal_a["reason_codes"] == signal_b["reason_codes"]
+    assert signal_a["score_components"] == signal_b["score_components"]
+    _clear_auth_override()
+
+
+def test_chat_completed_event_includes_quality_component_metrics(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    captured_events: list[dict] = []
+
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: {
+            "answer": "ok",
+            "intent": "qa",
+            "retrieved_chunks": [],
+            "grounding_info": {"support_rate": 0.4, "unsupported_claims": ["c1", "c2"]},
+        },
+    )
+
+    def _capture_emit_event(_logger, event, level="info", **fields):
+        captured_events.append({"event": event, "level": level, **fields})
+        return {"event": event, "level": level, **fields}
+
+    monkeypatch.setattr("docops.api.routes.chat.emit_event", _capture_emit_event)
+
+    resp = auth_client.post("/api/chat", json={"message": "hello"})
+    assert resp.status_code == 200
+
+    completed = next(evt for evt in captured_events if evt.get("event") == "chat.request.completed")
+    assert "quality_reason_codes" in completed
+    assert "quality_component_support_rate" in completed
+    assert "quality_component_source_breadth" in completed
+    assert "quality_component_unsupported_claims" in completed
+    assert "quality_component_retrieval_depth" in completed
+    assert "quality_unsupported_claim_count" in completed
     _clear_auth_override()
 
 

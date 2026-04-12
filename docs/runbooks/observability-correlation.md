@@ -26,6 +26,13 @@ Common optional fields:
 - `status_code`, `latency_ms`
 - `error_type`, `detail`
 - flow-specific fields such as `intent`, `source_count`, `gap_count`, `job_id`
+- confidence fields for chat quality:
+  - `quality_level`, `quality_score`
+  - `quality_reason_codes`
+  - `quality_component_support_rate`
+  - `quality_component_source_breadth`
+  - `quality_component_unsupported_claims`
+  - `quality_component_retrieval_depth`
 
 ## Ingestion Mapping
 Use log ingestion rule:
@@ -79,6 +86,18 @@ This enables pivoting by correlation id and building stable dashboards.
   - `recommendation.gap_analysis.started`
   - `recommendation.gap_analysis.completed`
   - `recommendation.gap_analysis.failed`
+
+### 6) Confidence Quality Distribution
+- Event source:
+  - `chat.quality_signal.computed`
+  - `chat.request.completed`
+- Metrics:
+  - distribution of `quality_score` by `quality_level`
+  - moving average per component (`quality_component_*`)
+  - reason taxonomy frequency from `quality_reason_codes`
+- Drift checks:
+  - abrupt drop in `quality_component_support_rate`
+  - sustained rise in `quality_component_unsupported_claims`
 
 ## Alert Thresholds (initial)
 - API 5xx rate > 2% for 10 minutes.

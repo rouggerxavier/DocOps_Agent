@@ -192,6 +192,11 @@ def test_chat_response_contract_snapshot(auth_client: TestClient, monkeypatch: p
         snapshot["quality_signal_field_types"],
         label="chat_response.quality_signal",
     )
+    _assert_object_types(
+        payload["quality_signal"]["score_components"],
+        snapshot["quality_score_component_field_types"],
+        label="chat_response.quality_signal.score_components",
+    )
 
     assert payload["active_context"] is not None
     _assert_object_types(

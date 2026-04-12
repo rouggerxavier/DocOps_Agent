@@ -33,6 +33,15 @@ export interface ChatQualitySignal {
   score: number
   label: string
   reasons: string[]
+  reason_codes?: string[]
+  score_components?: {
+    support_rate: number
+    source_breadth: number
+    unsupported_claims: number
+    retrieval_depth: number
+  }
+  support_rate?: number | null
+  unsupported_claim_count?: number
   suggested_action?: string | null
   source_count: number
   retrieved_count: number

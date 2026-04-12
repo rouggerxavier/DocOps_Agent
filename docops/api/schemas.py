@@ -117,6 +117,10 @@ class ChatQualitySignal(BaseModel):
     score: float = Field(ge=0.0, le=1.0)
     label: str
     reasons: List[str] = Field(default_factory=list)
+    reason_codes: List[str] = Field(default_factory=list)
+    score_components: dict[str, float] = Field(default_factory=dict)
+    support_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    unsupported_claim_count: int = 0
     suggested_action: Optional[str] = None
     source_count: int = 0
     retrieved_count: int = 0

@@ -1,6 +1,6 @@
 {
   "contract": "chat_response",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "top_level_field_types": {
     "answer": "string",
     "sources": "array",
@@ -52,12 +52,25 @@
     "score": "number",
     "label": "string",
     "reasons": "array",
+    "reason_codes": "array",
+    "score_components": "object",
+    "support_rate": [
+      "number",
+      "null"
+    ],
+    "unsupported_claim_count": "integer",
     "suggested_action": [
       "string",
       "null"
     ],
     "source_count": "integer",
     "retrieved_count": "integer"
+  },
+  "quality_score_component_field_types": {
+    "support_rate": "number",
+    "source_breadth": "number",
+    "unsupported_claims": "number",
+    "retrieval_depth": "number"
   },
   "active_context_field_types": {
     "active_doc_ids": "array",

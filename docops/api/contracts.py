@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-CHAT_RESPONSE_CONTRACT_VERSION = "1.0.0"
+CHAT_RESPONSE_CONTRACT_VERSION = "1.1.0"
 CHAT_STREAM_CONTRACT_VERSION = "1.0.0"
 
 CHAT_STREAM_EVENT_TYPES = {"start", "status", "delta", "final", "error", "done"}
