@@ -662,6 +662,70 @@ def test_chat_quality_signal_v2_reason_codes_and_components(monkeypatch):
     _clear_auth_override()
 
 
+def test_chat_low_confidence_guardrail_applies_constrained_answer(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    fake_state = {
+        "answer": (
+            "Resposta longa potencialmente especulativa sem evidencias claras. "
+            * 30
+        ),
+        "intent": "qa",
+        "retrieved_chunks": [],
+        "grounding_info": {"support_rate": 0.21, "unsupported_claims": ["c1", "c2"]},
+    }
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    resp = auth_client.post("/api/chat", json={"message": "hello"})
+    assert resp.status_code == 200
+    payload = resp.json()
+    signal = payload["quality_signal"]
+
+    assert signal["level"] == "low"
+    assert "low_confidence_guardrail_applied" in signal["reason_codes"]
+    assert "Confiabilidade baixa: resposta em modo conservador." in payload["answer"]
+    assert "Proximos passos recomendados:" in payload["answer"]
+    assert "Ative o modo strict grounding" in payload["answer"]
+    assert len(payload["answer"]) < len(fake_state["answer"])
+    assert "Especifique melhor a pergunta" in signal["suggested_action"]
+    assert "Adicione ou selecione documentos" in signal["suggested_action"]
+    assert "Ative o modo strict grounding" in signal["suggested_action"]
+    _clear_auth_override()
+
+
+def test_chat_low_confidence_guardrail_not_applied_for_high_confidence(monkeypatch):
+    from langchain_core.documents import Document
+
+    auth_client, _ = _make_auth_client()
+    fake_answer = "Resposta com suporte forte [Fonte 1]"
+    fake_state = {
+        "answer": fake_answer,
+        "intent": "qa",
+        "retrieved_chunks": [
+            Document(
+                page_content="evidencia forte",
+                metadata={"file_name": "manual.pdf", "page": "1", "chunk_id": "abc"},
+            )
+        ],
+        "grounding_info": {"support_rate": 0.91, "unsupported_claims": []},
+    }
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    resp = auth_client.post("/api/chat", json={"message": "hello"})
+    assert resp.status_code == 200
+    payload = resp.json()
+    signal = payload["quality_signal"]
+    assert signal["level"] == "high"
+    assert payload["answer"] == fake_answer
+    assert "low_confidence_guardrail_applied" not in signal["reason_codes"]
+    _clear_auth_override()
+
+
 def test_chat_quality_signal_v2_is_deterministic_for_fixed_input(monkeypatch):
     from langchain_core.documents import Document
 
@@ -693,6 +757,7 @@ def test_chat_quality_signal_v2_is_deterministic_for_fixed_input(monkeypatch):
     assert signal_a["level"] == signal_b["level"]
     assert signal_a["reason_codes"] == signal_b["reason_codes"]
     assert signal_a["score_components"] == signal_b["score_components"]
+    assert signal_a["suggested_action"] == signal_b["suggested_action"]
     _clear_auth_override()
 
 
@@ -726,6 +791,37 @@ def test_chat_completed_event_includes_quality_component_metrics(monkeypatch):
     assert "quality_component_unsupported_claims" in completed
     assert "quality_component_retrieval_depth" in completed
     assert "quality_unsupported_claim_count" in completed
+    _clear_auth_override()
+
+
+def test_chat_emits_guardrail_event_when_low_confidence(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    captured_events: list[dict] = []
+
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: {
+            "answer": "resposta fraca",
+            "intent": "qa",
+            "retrieved_chunks": [],
+            "grounding_info": {"support_rate": 0.1, "unsupported_claims": ["c1"]},
+        },
+    )
+
+    def _capture_emit_event(_logger, event, level="info", **fields):
+        captured_events.append({"event": event, "level": level, **fields})
+        return {"event": event, "level": level, **fields}
+
+    monkeypatch.setattr("docops.api.routes.chat.emit_event", _capture_emit_event)
+
+    resp = auth_client.post("/api/chat", json={"message": "hello", "session_id": "guardrail-s1"})
+    assert resp.status_code == 200
+
+    guardrail_event = next(evt for evt in captured_events if evt.get("event") == "chat.low_confidence_guardrail.applied")
+    assert guardrail_event["category"] == "chat_quality"
+    assert guardrail_event["session_id"] == "guardrail-s1"
+    assert guardrail_event["quality_score"] < 0.55
+    assert "low_confidence_guardrail_applied" in guardrail_event["quality_reason_codes"]
     _clear_auth_override()
 
 

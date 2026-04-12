@@ -149,6 +149,50 @@ def _support_component(support_rate: float | None) -> tuple[float, str, str]:
     return normalized, code, f"support_rate={normalized:.2f}"
 
 
+def _build_low_confidence_suggested_action(retrieved_count: int, source_count: int) -> str:
+    if retrieved_count <= 0:
+        intro = "Nao encontrei evidencias suficientes nos documentos atuais."
+    elif source_count <= 0:
+        intro = "A resposta foi gerada com pouca citacao explicita de fontes."
+    else:
+        intro = "A resposta tem suporte parcial e requer validacao adicional."
+
+    return (
+        f"{intro} "
+        "1) Especifique melhor a pergunta (escopo, periodo ou contexto). "
+        "2) Adicione ou selecione documentos mais relevantes para o tema. "
+        "3) Ative o modo strict grounding para exigir evidencia forte."
+    )
+
+
+def _constrain_low_confidence_answer(answer: str) -> str:
+    normalized = re.sub(r"\s+", " ", str(answer or "")).strip()
+    if not normalized:
+        normalized = "Nao encontrei evidencia suficiente para responder com seguranca."
+    if len(normalized) > 420:
+        normalized = f"{normalized[:420].rstrip()}..."
+    return normalized
+
+
+def _apply_low_confidence_guardrail(
+    answer: str,
+    quality_signal: ChatQualitySignal,
+) -> tuple[str, bool]:
+    if quality_signal.level != "low":
+        return answer, False
+
+    constrained = _constrain_low_confidence_answer(answer)
+    guarded_answer = (
+        "Confiabilidade baixa: resposta em modo conservador.\n\n"
+        f"{constrained}\n\n"
+        "Proximos passos recomendados:\n"
+        "1. Especifique melhor a pergunta (escopo, periodo ou contexto).\n"
+        "2. Adicione ou selecione documentos mais relevantes.\n"
+        "3. Ative o modo strict grounding para exigir evidencia forte."
+    )
+    return guarded_answer, True
+
+
 def _build_quality_signal(state: dict, sources: list[SourceItem]) -> ChatQualitySignal:
     """Compute confidence signal V2 with decomposed components and taxonomy."""
     retrieved_chunks = state.get("retrieved_chunks") or []
@@ -213,26 +257,7 @@ def _build_quality_signal(state: dict, sources: list[SourceItem]) -> ChatQuality
 
     suggested_action: str | None = None
     if level == "low":
-        if retrieved_count == 0:
-            suggested_action = (
-                "Nao encontrei evidencias nos documentos atuais. "
-                "Considere ingerir mais material sobre este tema."
-            )
-        elif source_count == 0:
-            suggested_action = (
-                "Tente pedir uma resposta com citacoes explicitas "
-                "(por exemplo: inclua [Fonte N] no texto)."
-            )
-        elif unsupported_count > 0:
-            suggested_action = (
-                "A resposta tem afirmacoes com baixo suporte. "
-                "Ative strict grounding ou refine a pergunta para reduzir ambiguidade."
-            )
-        else:
-            suggested_action = (
-                "A resposta tem suporte parcial. Vale reformular a pergunta "
-                "ou ampliar o conjunto de documentos."
-            )
+        suggested_action = _build_low_confidence_suggested_action(retrieved_count, source_count)
 
     return ChatQualitySignal(
         level=level,
@@ -474,6 +499,26 @@ async def _build_chat_response(
     include_grounding = body.debug_grounding or config.debug_grounding
     grounding_payload = state.get("grounding") or state.get("grounding_info")
     quality_signal = _build_quality_signal(state, sources)
+    guarded_answer, guardrail_applied = _apply_low_confidence_guardrail(
+        state.get("answer", ""),
+        quality_signal,
+    )
+    if guardrail_applied and "low_confidence_guardrail_applied" not in quality_signal.reason_codes:
+        quality_signal.reason_codes.append("low_confidence_guardrail_applied")
+    if guardrail_applied:
+        emit_event(
+            logger,
+            "chat.low_confidence_guardrail.applied",
+            category="chat_quality",
+            user_id=current_user.id,
+            session_id=body.session_id,
+            intent=state.get("intent", "qa"),
+            quality_score=quality_signal.score,
+            quality_reason_codes=quality_signal.reason_codes,
+            quality_source_count=quality_signal.source_count,
+            quality_retrieved_count=quality_signal.retrieved_count,
+        )
+
     logger.info(
         "Chat quality signal user=%s intent=%s level=%s score=%.2f reason_codes=%s reasons=%s",
         current_user.id,
@@ -514,7 +559,7 @@ async def _build_chat_response(
     )
 
     return ChatResponse(
-        answer=state.get("answer", ""),
+        answer=guarded_answer,
         sources=sources,
         intent=state.get("intent", "qa"),
         session_id=body.session_id,
