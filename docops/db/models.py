@@ -38,6 +38,11 @@ class User(Base):
     study_plans: Mapped[list["StudyPlanRecord"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     daily_questions: Mapped[list["DailyQuestionRecord"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     reading_status_records: Mapped[list["ReadingStatusRecord"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    preferences: Mapped["UserPreferenceRecord | None"] = relationship(
+        back_populates="owner",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
     def __repr__(self) -> str:
         return f"<User id={self.id} email={self.email!r}>"
@@ -68,6 +73,29 @@ class DocumentRecord(Base):
 
     def __repr__(self) -> str:
         return f"<DocumentRecord id={self.id} user={self.user_id} file={self.file_name!r}>"
+
+
+class UserPreferenceRecord(Base):
+    __tablename__ = "user_preferences"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    default_depth: Mapped[str] = mapped_column(String(16), nullable=False, default="brief")
+    tone: Mapped[str] = mapped_column(String(16), nullable=False, default="neutral")
+    strictness_preference: Mapped[str] = mapped_column(String(16), nullable=False, default="balanced")
+    schedule_preference: Mapped[str] = mapped_column(String(16), nullable=False, default="flexible")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    owner: Mapped[User] = relationship(back_populates="preferences")
+
+    __table_args__ = (
+        Index("ix_user_preferences_updated_at", "updated_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserPreferenceRecord id={self.id} user={self.user_id} schema={self.schema_version}>"
 
 
 class ArtifactRecord(Base):

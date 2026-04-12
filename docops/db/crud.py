@@ -9,7 +9,14 @@ import unicodedata
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from docops.db.models import ArtifactRecord, DocumentRecord, ReminderRecord, ScheduleRecord, User
+from docops.db.models import (
+    ArtifactRecord,
+    DocumentRecord,
+    ReminderRecord,
+    ScheduleRecord,
+    User,
+    UserPreferenceRecord,
+)
 
 
 # -- User --------------------------------------------------------------------
@@ -28,6 +35,174 @@ def create_user(db: Session, name: str, email: str, password_hash: str) -> User:
     db.commit()
     db.refresh(user)
     return user
+
+
+# -- UserPreferenceRecord -----------------------------------------------------
+
+PREFERENCE_SCHEMA_VERSION = 1
+_DEFAULT_PREFERENCE_DEFAULT_DEPTH = "brief"
+_DEFAULT_PREFERENCE_TONE = "neutral"
+_DEFAULT_PREFERENCE_STRICTNESS = "balanced"
+_DEFAULT_PREFERENCE_SCHEDULE = "flexible"
+
+_ALLOWED_DEFAULT_DEPTH_VALUES = {"brief", "balanced", "deep"}
+_ALLOWED_TONE_VALUES = {"neutral", "didactic", "objective", "encouraging"}
+_ALLOWED_STRICTNESS_VALUES = {"relaxed", "balanced", "strict"}
+_ALLOWED_SCHEDULE_VALUES = {"flexible", "fixed", "intensive"}
+
+
+def _normalize_preference_choice(raw: str | None, allowed: set[str], fallback: str) -> str:
+    value = str(raw or "").strip().lower()
+    if value in allowed:
+        return value
+    return fallback
+
+
+def default_user_preferences_payload() -> dict[str, str | int]:
+    return {
+        "schema_version": PREFERENCE_SCHEMA_VERSION,
+        "default_depth": _DEFAULT_PREFERENCE_DEFAULT_DEPTH,
+        "tone": _DEFAULT_PREFERENCE_TONE,
+        "strictness_preference": _DEFAULT_PREFERENCE_STRICTNESS,
+        "schedule_preference": _DEFAULT_PREFERENCE_SCHEDULE,
+    }
+
+
+def serialize_user_preferences(record: UserPreferenceRecord) -> dict[str, str | int]:
+    return {
+        "schema_version": max(PREFERENCE_SCHEMA_VERSION, int(record.schema_version or PREFERENCE_SCHEMA_VERSION)),
+        "default_depth": _normalize_preference_choice(
+            record.default_depth,
+            _ALLOWED_DEFAULT_DEPTH_VALUES,
+            _DEFAULT_PREFERENCE_DEFAULT_DEPTH,
+        ),
+        "tone": _normalize_preference_choice(
+            record.tone,
+            _ALLOWED_TONE_VALUES,
+            _DEFAULT_PREFERENCE_TONE,
+        ),
+        "strictness_preference": _normalize_preference_choice(
+            record.strictness_preference,
+            _ALLOWED_STRICTNESS_VALUES,
+            _DEFAULT_PREFERENCE_STRICTNESS,
+        ),
+        "schedule_preference": _normalize_preference_choice(
+            record.schedule_preference,
+            _ALLOWED_SCHEDULE_VALUES,
+            _DEFAULT_PREFERENCE_SCHEDULE,
+        ),
+    }
+
+
+def get_user_preference_record(db: Session, user_id: int) -> UserPreferenceRecord | None:
+    return (
+        db.query(UserPreferenceRecord)
+        .filter(UserPreferenceRecord.user_id == user_id)
+        .first()
+    )
+
+
+def _apply_preference_defaults(record: UserPreferenceRecord) -> None:
+    defaults = default_user_preferences_payload()
+    record.schema_version = int(defaults["schema_version"])
+    record.default_depth = str(defaults["default_depth"])
+    record.tone = str(defaults["tone"])
+    record.strictness_preference = str(defaults["strictness_preference"])
+    record.schedule_preference = str(defaults["schedule_preference"])
+
+
+def _migrate_user_preference_record(db: Session, record: UserPreferenceRecord) -> UserPreferenceRecord:
+    changed = False
+    current = serialize_user_preferences(record)
+
+    if int(record.schema_version or 0) != int(current["schema_version"]):
+        record.schema_version = int(current["schema_version"])
+        changed = True
+    if record.default_depth != current["default_depth"]:
+        record.default_depth = str(current["default_depth"])
+        changed = True
+    if record.tone != current["tone"]:
+        record.tone = str(current["tone"])
+        changed = True
+    if record.strictness_preference != current["strictness_preference"]:
+        record.strictness_preference = str(current["strictness_preference"])
+        changed = True
+    if record.schedule_preference != current["schedule_preference"]:
+        record.schedule_preference = str(current["schedule_preference"])
+        changed = True
+
+    if changed:
+        db.commit()
+        db.refresh(record)
+    return record
+
+
+def get_or_create_user_preference_record(db: Session, user_id: int) -> UserPreferenceRecord:
+    record = get_user_preference_record(db, user_id)
+    if record is not None:
+        return _migrate_user_preference_record(db, record)
+
+    record = UserPreferenceRecord(user_id=user_id)
+    _apply_preference_defaults(record)
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def get_effective_user_preferences(db: Session, user_id: int) -> dict[str, str | int]:
+    record = get_or_create_user_preference_record(db, user_id)
+    return serialize_user_preferences(record)
+
+
+def update_user_preference_record(
+    db: Session,
+    *,
+    user_id: int,
+    default_depth: str | None = None,
+    tone: str | None = None,
+    strictness_preference: str | None = None,
+    schedule_preference: str | None = None,
+) -> UserPreferenceRecord:
+    record = get_or_create_user_preference_record(db, user_id)
+
+    if default_depth is not None:
+        record.default_depth = _normalize_preference_choice(
+            default_depth,
+            _ALLOWED_DEFAULT_DEPTH_VALUES,
+            _DEFAULT_PREFERENCE_DEFAULT_DEPTH,
+        )
+    if tone is not None:
+        record.tone = _normalize_preference_choice(
+            tone,
+            _ALLOWED_TONE_VALUES,
+            _DEFAULT_PREFERENCE_TONE,
+        )
+    if strictness_preference is not None:
+        record.strictness_preference = _normalize_preference_choice(
+            strictness_preference,
+            _ALLOWED_STRICTNESS_VALUES,
+            _DEFAULT_PREFERENCE_STRICTNESS,
+        )
+    if schedule_preference is not None:
+        record.schedule_preference = _normalize_preference_choice(
+            schedule_preference,
+            _ALLOWED_SCHEDULE_VALUES,
+            _DEFAULT_PREFERENCE_SCHEDULE,
+        )
+
+    record.schema_version = PREFERENCE_SCHEMA_VERSION
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def reset_user_preference_record(db: Session, *, user_id: int) -> UserPreferenceRecord:
+    record = get_or_create_user_preference_record(db, user_id)
+    _apply_preference_defaults(record)
+    db.commit()
+    db.refresh(record)
+    return record
 
 
 # -- DocumentRecord -----------------------------------------------------------

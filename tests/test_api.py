@@ -26,7 +26,7 @@ from sqlalchemy.pool import StaticPool
 from docops.api.app import app
 from docops.auth.dependencies import get_current_user
 from docops.db.database import Base, get_db
-from docops.db.models import User
+from docops.db.models import User, UserPreferenceRecord
 
 
 # ── Banco de dados em memória para testes ─────────────────────────────────────
@@ -526,6 +526,136 @@ def test_capabilities_returns_feature_flags():
     assert payload["map"]["chat_streaming_enabled"] is True
     assert payload["map"]["strict_grounding_enabled"] is True
     assert "flags" in payload and len(payload["flags"]) >= 3
+    _clear_auth_override()
+
+
+def test_preferences_endpoint_requires_feature_flag(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.delenv("FEATURE_PERSONALIZATION_ENABLED", raising=False)
+
+    resp = auth_client.get("/api/preferences")
+    assert resp.status_code == 503
+    assert "disabled" in str(resp.json().get("detail", "")).lower()
+    _clear_auth_override()
+
+
+def test_preferences_get_returns_defaults_and_persists(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PERSONALIZATION_ENABLED", "true")
+    Base.metadata.create_all(bind=_test_engine)
+
+    db = _TestSession()
+    try:
+        db.query(UserPreferenceRecord).filter(UserPreferenceRecord.user_id == 1).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    response = auth_client.get("/api/preferences")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == 1
+    assert payload["default_depth"] == "brief"
+    assert payload["tone"] == "neutral"
+    assert payload["strictness_preference"] == "balanced"
+    assert payload["schedule_preference"] == "flexible"
+
+    db = _TestSession()
+    try:
+        record = db.query(UserPreferenceRecord).filter(UserPreferenceRecord.user_id == 1).first()
+        assert record is not None
+        assert record.default_depth == "brief"
+        assert record.tone == "neutral"
+        assert record.strictness_preference == "balanced"
+        assert record.schedule_preference == "flexible"
+    finally:
+        db.close()
+    _clear_auth_override()
+
+
+def test_preferences_update_and_reset_flow(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PERSONALIZATION_ENABLED", "true")
+    Base.metadata.create_all(bind=_test_engine)
+
+    update_response = auth_client.put(
+        "/api/preferences",
+        json={
+            "default_depth": "deep",
+            "tone": "didactic",
+            "strictness_preference": "strict",
+            "schedule_preference": "intensive",
+        },
+    )
+    assert update_response.status_code == 200
+    update_payload = update_response.json()
+    assert update_payload["default_depth"] == "deep"
+    assert update_payload["tone"] == "didactic"
+    assert update_payload["strictness_preference"] == "strict"
+    assert update_payload["schedule_preference"] == "intensive"
+
+    get_response = auth_client.get("/api/preferences")
+    assert get_response.status_code == 200
+    get_payload = get_response.json()
+    assert get_payload["default_depth"] == "deep"
+    assert get_payload["tone"] == "didactic"
+    assert get_payload["strictness_preference"] == "strict"
+    assert get_payload["schedule_preference"] == "intensive"
+
+    reset_response = auth_client.post("/api/preferences/reset")
+    assert reset_response.status_code == 200
+    reset_payload = reset_response.json()
+    assert reset_payload["schema_version"] == 1
+    assert reset_payload["default_depth"] == "brief"
+    assert reset_payload["tone"] == "neutral"
+    assert reset_payload["strictness_preference"] == "balanced"
+    assert reset_payload["schedule_preference"] == "flexible"
+    _clear_auth_override()
+
+
+def test_preferences_get_migrates_legacy_schema_values(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PERSONALIZATION_ENABLED", "true")
+    Base.metadata.create_all(bind=_test_engine)
+
+    db = _TestSession()
+    try:
+        db.query(UserPreferenceRecord).filter(UserPreferenceRecord.user_id == 1).delete()
+        db.commit()
+        db.add(
+            UserPreferenceRecord(
+                user_id=1,
+                schema_version=0,
+                default_depth="invalid",
+                tone="unknown",
+                strictness_preference="x",
+                schedule_preference="y",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = auth_client.get("/api/preferences")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == 1
+    assert payload["default_depth"] == "brief"
+    assert payload["tone"] == "neutral"
+    assert payload["strictness_preference"] == "balanced"
+    assert payload["schedule_preference"] == "flexible"
+
+    db = _TestSession()
+    try:
+        migrated = db.query(UserPreferenceRecord).filter(UserPreferenceRecord.user_id == 1).first()
+        assert migrated is not None
+        assert migrated.schema_version == 1
+        assert migrated.default_depth == "brief"
+        assert migrated.tone == "neutral"
+        assert migrated.strictness_preference == "balanced"
+        assert migrated.schedule_preference == "flexible"
+    finally:
+        db.close()
     _clear_auth_override()
 
 

@@ -23,6 +23,7 @@ from docops.api.routes import (
     jobs,
     notes,
     pipeline,
+    preferences,
     studyplan,
     summarize,
     tasks,
@@ -130,6 +131,7 @@ def create_app() -> FastAPI:
     app.include_router(jobs.router, prefix=prefix, tags=["jobs"], dependencies=_auth)
     app.include_router(notes.router, prefix=prefix, tags=["notes"], dependencies=_auth)
     app.include_router(tasks.router, prefix=prefix, tags=["tasks"], dependencies=_auth)
+    app.include_router(preferences.router, prefix=prefix, tags=["preferences"], dependencies=_auth)
     app.include_router(briefing.router, prefix=prefix, tags=["briefing"], dependencies=_auth)
     app.include_router(flashcards.router, prefix=prefix, tags=["flashcards"], dependencies=_auth)
     app.include_router(studyplan.router, prefix=prefix, tags=["studyplan"], dependencies=_auth)

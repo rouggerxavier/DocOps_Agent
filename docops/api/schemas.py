@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -157,6 +157,29 @@ class CapabilitiesResponse(BaseModel):
     map: dict[str, bool] = Field(default_factory=dict)
     disable_all: bool = False
     enable_all: bool = False
+
+
+# -- /api/preferences ---------------------------------------------------------
+
+PreferenceDefaultDepth = Literal["brief", "balanced", "deep"]
+PreferenceTone = Literal["neutral", "didactic", "objective", "encouraging"]
+PreferenceStrictness = Literal["relaxed", "balanced", "strict"]
+PreferenceSchedule = Literal["flexible", "fixed", "intensive"]
+
+
+class UserPreferencesResponse(BaseModel):
+    schema_version: int = Field(ge=1)
+    default_depth: PreferenceDefaultDepth
+    tone: PreferenceTone
+    strictness_preference: PreferenceStrictness
+    schedule_preference: PreferenceSchedule
+
+
+class UserPreferencesUpdateRequest(BaseModel):
+    default_depth: Optional[PreferenceDefaultDepth] = None
+    tone: Optional[PreferenceTone] = None
+    strictness_preference: Optional[PreferenceStrictness] = None
+    schedule_preference: Optional[PreferenceSchedule] = None
 
 
 # ── /api/summarize ────────────────────────────────────────────────────────────
