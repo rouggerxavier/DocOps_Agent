@@ -58,6 +58,12 @@ curl -s -X POST "http://127.0.0.1:$PORT/api/chat" \
 
 Expected: non-empty `answer`.
 
+Expected quality payload (when available):
+- `quality_signal.level`
+- `quality_signal.score`
+- `quality_signal.reason_codes`
+- `quality_signal.score_components`
+
 ## 4.1 Correlation id header
 ```bash
 curl -i -s -X POST "http://127.0.0.1:$PORT/api/chat" \
@@ -109,6 +115,15 @@ Open chat UI and validate fallback behavior during streaming:
   - app performs at most one automatic fallback to `/api/chat`
   - no duplicate assistant bubble is created for the same user message
   - composer remains usable after failure (no locked state)
+
+## 4.5 Evidence explainability panel (chat UI)
+- Open `/chat` in the browser.
+- Send a question that returns `quality_signal`.
+- Expected:
+  - confidence card visible below assistant answer
+  - card shows confidence level, score, source spread and unsupported-claims count
+  - click "Como esta resposta foi construida" opens component breakdown details
+  - panel remains readable on desktop and mobile widths
 
 ## 5. Summary and artifact creation
 ```bash

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useId } from 'react'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
@@ -635,26 +635,247 @@ const INTENT_LABELS: Record<string, string> = {
 // ── Message bubble ────────────────────────────────────────────────────────
 
 const QUALITY_TONE_CLASS: Record<'high' | 'medium' | 'low', string> = {
-  high: 'border-emerald-700/40 bg-emerald-600/10 text-emerald-200',
+  high: 'border-emerald-700/40 bg-emerald-600/10 text-emerald-100',
   medium: 'border-amber-700/40 bg-amber-600/10 text-amber-100',
   low: 'border-red-700/40 bg-red-600/10 text-red-100',
 }
 
+const QUALITY_BADGE_CLASS: Record<'high' | 'medium' | 'low', string> = {
+  high: 'border-emerald-500/40 bg-emerald-400/10 text-emerald-200',
+  medium: 'border-amber-500/40 bg-amber-400/10 text-amber-200',
+  low: 'border-red-500/40 bg-red-400/10 text-red-200',
+}
+
+type QualityComponentKey = 'support_rate' | 'source_breadth' | 'unsupported_claims' | 'retrieval_depth'
+
+const QUALITY_COMPONENT_LABELS: Record<QualityComponentKey, string> = {
+  support_rate: 'Suporte factual',
+  source_breadth: 'Variedade de fontes',
+  unsupported_claims: 'Afirmacoes suportadas',
+  retrieval_depth: 'Profundidade da busca',
+}
+
+const QUALITY_REASON_CODE_LABELS: Record<string, string> = {
+  support_rate_strong: 'Alta taxa de suporte nas evidencias.',
+  support_rate_moderate: 'Taxa de suporte moderada.',
+  support_rate_weak: 'Taxa de suporte baixa.',
+  support_rate_missing: 'Taxa de suporte indisponivel para esta resposta.',
+  source_breadth_none: 'Nenhuma fonte citada no texto.',
+  source_breadth_single: 'A resposta depende de uma unica fonte.',
+  source_breadth_multi: 'A resposta usa multiplas fontes.',
+  unsupported_claims_none: 'Nao foram detectadas afirmacoes sem suporte.',
+  unsupported_claims_present: 'Foram detectadas afirmacoes com suporte parcial.',
+  retrieval_depth_none: 'Nenhum trecho foi recuperado no contexto.',
+  retrieval_depth_shallow: 'Poucos trechos foram recuperados para sustentar a resposta.',
+  retrieval_depth_sufficient: 'Quantidade suficiente de trechos recuperados.',
+}
+
+function clamp01(value: number) {
+  return Math.max(0, Math.min(1, value))
+}
+
+function toPercent(value: number | null | undefined): number {
+  if (value == null || !Number.isFinite(value)) return 0
+  return Math.round(clamp01(value) * 100)
+}
+
+function parseLegacyReason(reason: string): string {
+  const raw = String(reason || '').trim()
+  if (!raw) return 'Sinal de confianca nao detalhado.'
+  if (QUALITY_REASON_CODE_LABELS[raw]) return QUALITY_REASON_CODE_LABELS[raw]
+  if (raw === 'no_inline_sources') return 'Nenhuma fonte citada no texto.'
+  if (raw === 'single_source') return 'A resposta depende de uma unica fonte.'
+  if (raw === 'multi_source') return 'A resposta usa multiplas fontes.'
+  if (raw === 'no_retrieval') return 'Nenhum trecho foi recuperado no contexto.'
+
+  if (raw.startsWith('support_rate=')) {
+    const parsed = Number(raw.split('=')[1])
+    if (Number.isFinite(parsed)) return `Taxa de suporte: ${toPercent(parsed)}%.`
+  }
+  if (raw.startsWith('unsupported_claims=')) {
+    const count = Number(raw.split('=')[1])
+    if (Number.isFinite(count)) {
+      return count <= 0
+        ? 'Nao foram detectadas afirmacoes sem suporte.'
+        : `${Math.round(count)} afirmacao(oes) com suporte parcial.`
+    }
+  }
+  if (raw.startsWith('retrieval_chunks=')) {
+    const count = Number(raw.split('=')[1])
+    if (Number.isFinite(count)) {
+      return `${Math.round(count)} trecho(s) recuperado(s) na busca.`
+    }
+  }
+
+  return raw.replace(/_/g, ' ')
+}
+
+function deriveReasonLabels(signal: ChatQualitySignal): string[] {
+  const fromCodes = (signal.reason_codes ?? [])
+    .map(code => QUALITY_REASON_CODE_LABELS[String(code)] ?? parseLegacyReason(String(code)))
+    .filter(Boolean)
+  if (fromCodes.length > 0) return Array.from(new Set(fromCodes))
+
+  const fromReasons = (signal.reasons ?? [])
+    .map(reason => parseLegacyReason(String(reason)))
+    .filter(Boolean)
+  if (fromReasons.length > 0) return Array.from(new Set(fromReasons))
+
+  return ['Sem diagnostico detalhado para esta resposta.']
+}
+
+function deriveScoreComponents(signal: ChatQualitySignal): Array<{ key: QualityComponentKey; label: string; value: number }> {
+  const unsupportedCount = Number(signal.unsupported_claim_count ?? 0)
+  const fallbackUnsupported = unsupportedCount <= 0
+    ? 1
+    : unsupportedCount === 1
+      ? 0.75
+      : unsupportedCount === 2
+        ? 0.5
+        : 0.25
+  const retrievedCount = Number(signal.retrieved_count ?? 0)
+  const fallbackRetrieval = retrievedCount <= 0
+    ? 0
+    : retrievedCount <= 2
+      ? (retrievedCount === 1 ? 0.45 : 0.7)
+      : 1
+  const sourceCount = Number(signal.source_count ?? 0)
+  const fallbackSourceBreadth = sourceCount <= 0 ? 0 : (sourceCount === 1 ? 0.6 : 1)
+
+  const raw: Partial<Record<QualityComponentKey, number>> = signal.score_components ?? {}
+  const values: Record<QualityComponentKey, number> = {
+    support_rate: clamp01(Number(raw.support_rate ?? signal.support_rate ?? signal.score ?? 0)),
+    source_breadth: clamp01(Number(raw.source_breadth ?? fallbackSourceBreadth)),
+    unsupported_claims: clamp01(Number(raw.unsupported_claims ?? fallbackUnsupported)),
+    retrieval_depth: clamp01(Number(raw.retrieval_depth ?? fallbackRetrieval)),
+  }
+
+  return (Object.keys(QUALITY_COMPONENT_LABELS) as QualityComponentKey[]).map(key => ({
+    key,
+    label: QUALITY_COMPONENT_LABELS[key],
+    value: values[key],
+  }))
+}
+
 function QualitySignalCard({ signal }: { signal: ChatQualitySignal }) {
-  const scorePct = Math.round(Math.max(0, Math.min(1, signal.score)) * 100)
+  const scorePct = toPercent(signal.score)
+  const reasonLabels = deriveReasonLabels(signal)
+  const components = deriveScoreComponents(signal)
+  const explainId = useId()
+  const [expanded, setExpanded] = useState(false)
+
+  const sourceCount = Math.max(0, Number(signal.source_count ?? 0))
+  const retrievedCount = Math.max(0, Number(signal.retrieved_count ?? 0))
+  const unsupportedCount = Math.max(0, Number(signal.unsupported_claim_count ?? 0))
+  const sourceSpreadPct = retrievedCount > 0
+    ? Math.round(Math.min(1, sourceCount / retrievedCount) * 100)
+    : (sourceCount > 0 ? 100 : 0)
+
   return (
     <div
       data-testid="chat-quality-signal"
       className={cn(
-        'rounded-xl border px-3 py-2 text-[11px] leading-5',
+        'rounded-xl border px-3 py-3 text-[11px] leading-5',
         QUALITY_TONE_CLASS[signal.level],
       )}
     >
-      <p className="font-semibold">
-        Confiabilidade: {signal.label} ({scorePct}%)
-      </p>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-semibold">
+            Confiabilidade: {signal.label} ({scorePct}%)
+          </p>
+          <p className="text-[11px] opacity-90">
+            Score normalizado com sinais de suporte, fontes e recuperacao.
+          </p>
+        </div>
+        <span className={cn(
+          'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+          QUALITY_BADGE_CLASS[signal.level],
+        )}
+        >
+          {signal.level}
+        </span>
+      </div>
+
+      <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]">
+        <div className="rounded-md border border-white/10 bg-black/15 px-2 py-1.5">
+          <p className="text-zinc-300/90">Fontes citadas</p>
+          <p className="font-semibold">{sourceCount}</p>
+        </div>
+        <div className="rounded-md border border-white/10 bg-black/15 px-2 py-1.5">
+          <p className="text-zinc-300/90">Trechos recuperados</p>
+          <p className="font-semibold">{retrievedCount}</p>
+        </div>
+        <div className="rounded-md border border-white/10 bg-black/15 px-2 py-1.5">
+          <p className="text-zinc-300/90">Espalhamento de fontes</p>
+          <p className="font-semibold">{sourceSpreadPct}%</p>
+        </div>
+        <div className="rounded-md border border-white/10 bg-black/15 px-2 py-1.5">
+          <p className="text-zinc-300/90">Claims sem suporte</p>
+          <p className="font-semibold">{unsupportedCount}</p>
+        </div>
+      </div>
+
       {signal.suggested_action && (
-        <p className="mt-1 text-[11px] opacity-95">{signal.suggested_action}</p>
+        <p className="mt-2 rounded-md border border-white/10 bg-black/20 px-2 py-1.5 text-[11px]">
+          {signal.suggested_action}
+        </p>
+      )}
+
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {reasonLabels.slice(0, 3).map(label => (
+          <span
+            key={label}
+            className="rounded-full border border-white/15 bg-black/20 px-2 py-0.5 text-[10px]"
+          >
+            {label}
+          </span>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-blue-200 transition-colors hover:text-blue-100"
+        aria-expanded={expanded}
+        aria-controls={explainId}
+        onClick={() => setExpanded(prev => !prev)}
+      >
+        Como esta resposta foi construida
+        <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} />
+      </button>
+
+      {expanded && (
+        <div id={explainId} className="mt-2 space-y-2 rounded-lg border border-white/10 bg-black/20 p-2.5">
+          <p className="text-[10px] text-zinc-300/90">
+            Diagnostico resumido do pipeline de evidencia desta resposta.
+          </p>
+
+          <div className="space-y-1.5">
+            {components.map(item => {
+              const pct = toPercent(item.value)
+              return (
+                <div key={item.key}>
+                  <div className="mb-0.5 flex items-center justify-between gap-2">
+                    <span className="text-[10px] text-zinc-200">{item.label}</span>
+                    <span className="text-[10px] font-semibold text-zinc-100">{pct}%</span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-900/70">
+                    <div
+                      className="h-full rounded-full bg-blue-400/70"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="space-y-1 text-[10px] text-zinc-200/90">
+            <p>1. Recuperamos {retrievedCount} trecho(s) relevantes para a pergunta.</p>
+            <p>2. A resposta citou {sourceCount} fonte(s) no texto final.</p>
+            <p>3. Detectamos {unsupportedCount} claim(s) com suporte parcial.</p>
+          </div>
+        </div>
       )}
     </div>
   )
