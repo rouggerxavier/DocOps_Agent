@@ -357,6 +357,40 @@ def test_chat_stream_success(monkeypatch):
     _clear_auth_override()
 
 
+def test_chat_stream_has_single_final_and_single_terminal_in_repeated_runs(monkeypatch):
+    from docops.api.contracts import validate_chat_stream_sequence
+
+    auth_client, _ = _make_auth_client()
+    fake_state = {"answer": "ok", "intent": "qa", "retrieved_chunks": []}
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    for idx in range(10):
+        resp = auth_client.post(
+            "/api/chat/stream",
+            json={"message": f"hello {idx}", "session_id": f"s-{idx}"},
+        )
+        assert resp.status_code == 200
+
+        events = [
+            json.loads(line[6:])
+            for line in resp.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        errors = validate_chat_stream_sequence(events)
+        assert not errors, f"invalid stream sequence on run {idx}: {errors}"
+
+        final_count = sum(1 for event in events if event.get("type") == "final")
+        terminal_count = sum(1 for event in events if event.get("type") in {"done", "error"})
+        assert final_count == 1
+        assert terminal_count == 1
+        assert events[-1]["type"] == "done"
+
+    _clear_auth_override()
+
+
 def test_chat_stream_status_progression(monkeypatch):
     auth_client, _ = _make_auth_client()
     fake_state = {"answer": "ok", "intent": "qa", "retrieved_chunks": []}

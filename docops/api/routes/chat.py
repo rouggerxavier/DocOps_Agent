@@ -454,6 +454,47 @@ def _stream_event_payload(
     return payload
 
 
+class _StreamLifecycleEmitter:
+    """Emit SSE payloads while enforcing a single final/terminal lifecycle."""
+
+    def __init__(self, request: Request | None):
+        self._request = request
+        self._final_emitted = False
+        self._terminal_emitted = False
+
+    def emit(self, event_type: str, **fields: Any) -> str | None:
+        if self._terminal_emitted:
+            logger.warning(
+                "chat.stream.event.suppressed_after_terminal",
+                extra={"event_type": event_type},
+            )
+            return None
+
+        if event_type == "final":
+            if self._final_emitted:
+                logger.warning("chat.stream.event.suppressed_duplicate_final")
+                return None
+            self._final_emitted = True
+        elif event_type == "done":
+            if not self._final_emitted:
+                logger.warning("chat.stream.event.suppressed_done_without_final")
+                return None
+            self._terminal_emitted = True
+        elif event_type == "error":
+            if self._final_emitted:
+                logger.warning("chat.stream.event.suppressed_error_after_final")
+                return None
+            self._terminal_emitted = True
+        elif self._final_emitted and event_type in {"status", "delta"}:
+            logger.warning(
+                "chat.stream.event.suppressed_after_final",
+                extra={"event_type": event_type},
+            )
+            return None
+
+        return _sse_payload(_stream_event_payload(event_type, self._request, **fields))
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     body: ChatRequest,
@@ -518,29 +559,30 @@ async def chat_stream(
     )
 
     async def event_generator():
-        yield _sse_payload(
-            _stream_event_payload(
-                "start",
-                request,
-                session_id=body.session_id,
-            )
+        emitter = _StreamLifecycleEmitter(request)
+
+        start_event = emitter.emit(
+            "start",
+            session_id=body.session_id,
         )
-        yield _sse_payload(
-            _stream_event_payload(
-                "status",
-                request,
-                stage="analyzing",
-                detail="Analyzing question and intent",
-            )
+        if start_event is not None:
+            yield start_event
+
+        analyzing_event = emitter.emit(
+            "status",
+            stage="analyzing",
+            detail="Analyzing question and intent",
         )
-        yield _sse_payload(
-            _stream_event_payload(
-                "status",
-                request,
-                stage="retrieving",
-                detail="Retrieving evidence from indexed documents",
-            )
+        if analyzing_event is not None:
+            yield analyzing_event
+
+        retrieving_event = emitter.emit(
+            "status",
+            stage="retrieving",
+            detail="Retrieving evidence from indexed documents",
         )
+        if retrieving_event is not None:
+            yield retrieving_event
 
         try:
             response = await _build_chat_response(body, current_user, db)
@@ -557,14 +599,13 @@ async def chat_stream(
                 status_code=exc.status_code,
                 detail=str(exc.detail),
             )
-            yield _sse_payload(
-                _stream_event_payload(
-                    "error",
-                    request,
-                    status_code=exc.status_code,
-                    detail=str(exc.detail),
-                )
+            error_event = emitter.emit(
+                "error",
+                status_code=exc.status_code,
+                detail=str(exc.detail),
             )
+            if error_event is not None:
+                yield error_event
             return
         except Exception as exc:  # pragma: no cover - defensive fallback
             logger.error("Chat stream error: %s", exc)
@@ -581,46 +622,43 @@ async def chat_stream(
                 detail="Agent error - check server logs",
                 error_type=exc.__class__.__name__,
             )
-            yield _sse_payload(
-                _stream_event_payload(
-                    "error",
-                    request,
-                    status_code=500,
-                    detail="Agent error - check server logs",
-                )
+            error_event = emitter.emit(
+                "error",
+                status_code=500,
+                detail="Agent error - check server logs",
             )
+            if error_event is not None:
+                yield error_event
             return
 
         answer = response.answer or ""
-        yield _sse_payload(
-            _stream_event_payload(
-                "status",
-                request,
-                stage="drafting",
-                detail="Drafting answer",
-            )
+        drafting_event = emitter.emit(
+            "status",
+            stage="drafting",
+            detail="Drafting answer",
         )
+        if drafting_event is not None:
+            yield drafting_event
+
         streamed_chars = 0
         for idx in range(0, len(answer), _STREAM_CHARS_PER_CHUNK):
             chunk = answer[idx : idx + _STREAM_CHARS_PER_CHUNK]
             if chunk:
                 streamed_chars += len(chunk)
-                yield _sse_payload(
-                    _stream_event_payload(
-                        "delta",
-                        request,
-                        delta=chunk,
-                    )
+                delta_event = emitter.emit(
+                    "delta",
+                    delta=chunk,
                 )
+                if delta_event is not None:
+                    yield delta_event
                 await asyncio.sleep(_STREAM_DELAY_SECONDS)
-        yield _sse_payload(
-            _stream_event_payload(
-                "status",
-                request,
-                stage="finalizing",
-                detail="Finalizing answer",
-            )
+        finalizing_event = emitter.emit(
+            "status",
+            stage="finalizing",
+            detail="Finalizing answer",
         )
+        if finalizing_event is not None:
+            yield finalizing_event
 
         emit_event(
             logger,
@@ -634,14 +672,17 @@ async def chat_stream(
             delta_chars=streamed_chars,
             correlation_id=correlation_id,
         )
-        yield _sse_payload(
-            _stream_event_payload(
-                "final",
-                request,
-                response=response.model_dump(mode="json"),
-            )
+        final_event = emitter.emit(
+            "final",
+            response=response.model_dump(mode="json"),
         )
-        yield _sse_payload(_stream_event_payload("done", request))
+        if final_event is not None:
+            yield final_event
+
+        done_event = emitter.emit("done")
+        if done_event is not None:
+            yield done_event
+
         emit_event(
             logger,
             "chat.stream.completed",

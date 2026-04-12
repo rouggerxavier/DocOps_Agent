@@ -4,6 +4,8 @@
 Keep `/api/chat` and `/api/chat/stream` contracts stable, detectable, and safe for frontend/backward compatibility.
 
 ## Source Of Truth
+- Stream lifecycle reference:
+  - `docs/runbooks/chat-stream-contract.md`
 - Contract snapshots:
   - `tests/contracts/snapshots/chat_response.contract.json`
   - `tests/contracts/snapshots/chat_stream.contract.json`
