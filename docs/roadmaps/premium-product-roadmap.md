@@ -7,6 +7,9 @@ Transform DocOps into a premium study copilot that feels:
 - Useful every day, not only when asked.
 - Valuable enough to justify paid tiers.
 
+Companion operational backlog:
+- [Premium operational backlog](premium-operational-backlog.md)
+
 This plan intentionally avoids calendar dates. It is phase-based and can be executed in sequence.
 
 ## Product Principles
