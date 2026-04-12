@@ -1,0 +1,110 @@
+{
+  "contract": "chat_response",
+  "version": "1.0.0",
+  "top_level_field_types": {
+    "answer": "string",
+    "sources": "array",
+    "intent": "string",
+    "session_id": [
+      "string",
+      "null"
+    ],
+    "grounding": [
+      "object",
+      "null"
+    ],
+    "calendar_action": [
+      "object",
+      "null"
+    ],
+    "action_metadata": [
+      "object",
+      "null"
+    ],
+    "needs_confirmation": "boolean",
+    "confirmation_text": [
+      "string",
+      "null"
+    ],
+    "suggested_reply": [
+      "string",
+      "null"
+    ],
+    "active_context": [
+      "object",
+      "null"
+    ],
+    "quality_signal": [
+      "object",
+      "null"
+    ]
+  },
+  "source_item_field_types": {
+    "fonte_n": "integer",
+    "file_name": "string",
+    "page": "string",
+    "section_path": "string",
+    "snippet": "string",
+    "chunk_id": "string"
+  },
+  "quality_signal_field_types": {
+    "level": "string",
+    "score": "number",
+    "label": "string",
+    "reasons": "array",
+    "suggested_action": [
+      "string",
+      "null"
+    ],
+    "source_count": "integer",
+    "retrieved_count": "integer"
+  },
+  "active_context_field_types": {
+    "active_doc_ids": "array",
+    "active_doc_names": "array",
+    "active_deck_id": [
+      "integer",
+      "null"
+    ],
+    "active_deck_title": [
+      "string",
+      "null"
+    ],
+    "active_task_id": [
+      "integer",
+      "null"
+    ],
+    "active_task_title": [
+      "string",
+      "null"
+    ],
+    "active_note_id": [
+      "integer",
+      "null"
+    ],
+    "active_note_title": [
+      "string",
+      "null"
+    ],
+    "active_intent": [
+      "string",
+      "null"
+    ],
+    "last_action": [
+      "string",
+      "null"
+    ],
+    "last_user_command": [
+      "string",
+      "null"
+    ],
+    "last_card_count": [
+      "integer",
+      "null"
+    ],
+    "last_difficulty_mix": [
+      "object",
+      "null"
+    ]
+  }
+}
