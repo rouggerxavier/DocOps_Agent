@@ -70,7 +70,9 @@ export interface CapabilitiesResponse {
 
 export interface ChatStreamCallbacks {
   onStart?: () => void
+  onStatus?: (status: { stage: string; detail?: string | null }) => void
   onDelta?: (delta: string) => void
+  onError?: (detail: string) => void
 }
 
 export interface ChatRequestOptions {
@@ -442,6 +444,13 @@ export const apiClient = {
         callbacks?.onStart?.()
         return
       }
+      if (type === 'status') {
+        callbacks?.onStatus?.({
+          stage: String(payload?.stage ?? ''),
+          detail: payload?.detail != null ? String(payload.detail) : null,
+        })
+        return
+      }
       if (type === 'delta') {
         callbacks?.onDelta?.(String(payload?.delta ?? ''))
         return
@@ -452,6 +461,7 @@ export const apiClient = {
       }
       if (type === 'error') {
         const detail = String(payload?.detail ?? 'Erro no streaming de chat.')
+        callbacks?.onError?.(detail)
         throw new Error(detail)
       }
     }

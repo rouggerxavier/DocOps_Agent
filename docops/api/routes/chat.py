@@ -529,8 +529,16 @@ async def chat_stream(
             _stream_event_payload(
                 "status",
                 request,
-                stage="processing",
-                detail="Building chat response",
+                stage="analyzing",
+                detail="Analyzing question and intent",
+            )
+        )
+        yield _sse_payload(
+            _stream_event_payload(
+                "status",
+                request,
+                stage="retrieving",
+                detail="Retrieving evidence from indexed documents",
             )
         )
 
@@ -584,6 +592,14 @@ async def chat_stream(
             return
 
         answer = response.answer or ""
+        yield _sse_payload(
+            _stream_event_payload(
+                "status",
+                request,
+                stage="drafting",
+                detail="Drafting answer",
+            )
+        )
         streamed_chars = 0
         for idx in range(0, len(answer), _STREAM_CHARS_PER_CHUNK):
             chunk = answer[idx : idx + _STREAM_CHARS_PER_CHUNK]
@@ -597,6 +613,14 @@ async def chat_stream(
                     )
                 )
                 await asyncio.sleep(_STREAM_DELAY_SECONDS)
+        yield _sse_payload(
+            _stream_event_payload(
+                "status",
+                request,
+                stage="finalizing",
+                detail="Finalizing answer",
+            )
+        )
 
         emit_event(
             logger,

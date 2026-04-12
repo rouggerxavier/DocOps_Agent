@@ -36,7 +36,12 @@ interface Message {
   confirmation_text?: string | null
   suggested_reply?: string | null
   streaming?: boolean
+  stream_stage?: StreamStage | null
+  stream_status_text?: string | null
+  stream_interrupted?: boolean
 }
+
+type StreamStage = 'analyzing' | 'retrieving' | 'drafting' | 'finalizing'
 
 interface ChatActiveContext {
   active_doc_ids: string[]
@@ -386,6 +391,38 @@ function parseFlashcardCommandPlan(prompt: string, docs: DocItem[], selectedDocs
   }
 }
 
+const STREAM_STAGE_LABELS: Record<StreamStage, string> = {
+  analyzing: 'Analisando',
+  retrieving: 'Buscando evidencias',
+  drafting: 'Redigindo resposta',
+  finalizing: 'Finalizando',
+}
+
+const STREAM_STAGE_DETAIL_DEFAULT: Record<StreamStage, string> = {
+  analyzing: 'Entendendo sua solicitacao.',
+  retrieving: 'Consultando os documentos ativos.',
+  drafting: 'Montando a resposta em tempo real.',
+  finalizing: 'Consolidando a versao final.',
+}
+
+const STREAM_STAGE_ORDER: Record<StreamStage, number> = {
+  analyzing: 1,
+  retrieving: 2,
+  drafting: 3,
+  finalizing: 4,
+}
+
+function normalizeStreamStage(raw: string | null | undefined): StreamStage | null {
+  const value = (raw ?? '').trim().toLowerCase()
+  if (value === 'analyzing' || value === 'retrieving' || value === 'drafting' || value === 'finalizing') {
+    return value
+  }
+  if (value === 'processing') {
+    return 'retrieving'
+  }
+  return null
+}
+
 // ── Typing indicator ──────────────────────────────────────────────────────
 
 function TypingIndicator() {
@@ -622,6 +659,36 @@ function QualitySignalCard({ signal }: { signal: ChatQualitySignal }) {
   )
 }
 
+function StreamStatusCard({
+  stage,
+  detail,
+  interrupted,
+}: {
+  stage: StreamStage | null | undefined
+  detail?: string | null
+  interrupted?: boolean
+}) {
+  if (!stage && !interrupted && !detail) return null
+  const label = stage ? STREAM_STAGE_LABELS[stage] : 'Transmissao interrompida'
+  const safeDetail = detail?.trim() || (stage ? STREAM_STAGE_DETAIL_DEFAULT[stage] : 'Tente reenviar para continuar.')
+  return (
+    <div
+      className={cn(
+        'rounded-xl border px-3 py-2 text-[11px] leading-5',
+        interrupted
+          ? 'border-amber-700/40 bg-amber-700/10 text-amber-100'
+          : 'border-blue-700/40 bg-blue-600/10 text-blue-100',
+      )}
+    >
+      <div className="flex items-center gap-2">
+        {!interrupted && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+        <span className="font-semibold">{label}</span>
+      </div>
+      <p className="mt-1 opacity-95">{safeDetail}</p>
+    </div>
+  )
+}
+
 function MessageBubble({
   message, onSourceClick, onCitationClick,
 }: {
@@ -675,11 +742,19 @@ function MessageBubble({
             <div className="prose prose-invert prose-sm max-w-none select-text selection:bg-amber-200 selection:text-zinc-950" style={{ userSelect: 'text', WebkitUserSelect: 'text' }}>
               <ReactMarkdown>{message.content}</ReactMarkdown>
               {message.streaming && (
-                <span className="inline-block h-4 w-0.5 animate-pulse bg-zinc-400 ml-0.5 align-text-bottom" />
+                <span className="ml-1 inline-flex h-[1.05em] w-[2px] animate-pulse rounded-full bg-blue-300/80 align-[-0.15em] shadow-[0_0_10px_rgba(96,165,250,0.55)]" />
               )}
             </div>
           )}
         </div>
+
+        {!isUser && (message.streaming || message.stream_interrupted || message.stream_status_text) && (
+          <StreamStatusCard
+            stage={message.stream_stage}
+            detail={message.stream_status_text}
+            interrupted={message.stream_interrupted}
+          />
+        )}
 
         {!isUser && message.calendar_action && (
           <CalendarActionBadge action={message.calendar_action} />
@@ -844,6 +919,9 @@ export function Chat() {
                 role: 'assistant',
                 content: '',
                 streaming: true,
+                stream_stage: 'analyzing',
+                stream_status_text: STREAM_STAGE_DETAIL_DEFAULT.analyzing,
+                stream_interrupted: false,
                 sources: [],
                 intent: 'qa',
                 quality_signal: null,
@@ -854,6 +932,61 @@ export function Chat() {
           }
           : s
       )
+    )
+  }
+
+  function updateStreamingStage(
+    sessionId: string,
+    rawStage: string | null | undefined,
+    detail?: string | null,
+  ) {
+    const stage = normalizeStreamStage(rawStage)
+    setSessions(prev =>
+      prev.map(s => {
+        if (s.id !== sessionId || s.messages.length === 0) return s
+        const msgs = [...s.messages]
+        const last = msgs[msgs.length - 1]
+        if (!last || last.role !== 'assistant' || !last.streaming) return s
+
+        const previousStage = normalizeStreamStage(last.stream_stage ?? null)
+        let nextStage = stage ?? previousStage
+        if (!nextStage) {
+          nextStage = 'analyzing'
+        }
+
+        if (
+          previousStage
+          && STREAM_STAGE_ORDER[nextStage] < STREAM_STAGE_ORDER[previousStage]
+        ) {
+          nextStage = previousStage
+        }
+
+        msgs[msgs.length - 1] = {
+          ...last,
+          stream_stage: nextStage,
+          stream_status_text: detail?.trim() || STREAM_STAGE_DETAIL_DEFAULT[nextStage],
+          stream_interrupted: false,
+        }
+        return { ...s, messages: msgs }
+      }),
+    )
+  }
+
+  function markStreamingInterruption(sessionId: string, guidance: string) {
+    setSessions(prev =>
+      prev.map(s => {
+        if (s.id !== sessionId || s.messages.length === 0) return s
+        const msgs = [...s.messages]
+        const last = msgs[msgs.length - 1]
+        if (!last || last.role !== 'assistant') return s
+        msgs[msgs.length - 1] = {
+          ...last,
+          stream_interrupted: true,
+          stream_status_text: guidance,
+          stream_stage: last.stream_stage ?? 'finalizing',
+        }
+        return { ...s, messages: msgs }
+      }),
     )
   }
 
@@ -868,6 +1001,9 @@ export function Chat() {
         msgs[msgs.length - 1] = {
           ...last,
           content: `${last.content}${delta}`,
+          stream_stage: 'drafting',
+          stream_status_text: STREAM_STAGE_DETAIL_DEFAULT.drafting,
+          stream_interrupted: false,
         }
         return { ...s, messages: msgs }
       })
@@ -885,6 +1021,9 @@ export function Chat() {
           ...last,
           content: data.answer ?? last.content ?? '',
           streaming: false,
+          stream_stage: null,
+          stream_status_text: null,
+          stream_interrupted: false,
           sources: data.sources ?? [],
           intent: data.intent,
           calendar_action: data.calendar_action ?? null,
@@ -906,16 +1045,32 @@ export function Chat() {
         const msgs = [...s.messages]
         const last = msgs[msgs.length - 1]
         if (last && last.role === 'assistant' && last.streaming) {
+          const hasPartialContent = Boolean(last.content?.trim())
+          const nextContent = hasPartialContent
+            ? `${last.content}\n\n${message}`
+            : message
           msgs[msgs.length - 1] = {
             ...last,
-            content: message,
+            content: nextContent,
             streaming: false,
+            stream_interrupted: true,
+            stream_status_text: 'Conexao interrompida. Reenvie para tentar novamente.',
+            stream_stage: 'finalizing',
           }
           return { ...s, messages: msgs }
         }
         return {
           ...s,
-          messages: [...msgs, { role: 'assistant', content: message }],
+          messages: [
+            ...msgs,
+            {
+              role: 'assistant',
+              content: message,
+              stream_interrupted: true,
+              stream_status_text: 'Conexao interrompida. Reenvie para tentar novamente.',
+              stream_stage: 'finalizing',
+            },
+          ],
         }
       })
     )
@@ -1056,6 +1211,11 @@ export function Chat() {
 
       try {
         if (!isStreamingEnabled) {
+          updateStreamingStage(
+            payload.sessionId,
+            'retrieving',
+            'Streaming indisponivel. Gerando resposta completa.',
+          )
           return await apiClient.chat(
             payload.message,
             payload.sessionId,
@@ -1075,7 +1235,15 @@ export function Chat() {
           payload.history,
           payload.activeContext,
           {
+            onStart: () => updateStreamingStage(payload.sessionId, 'analyzing'),
+            onStatus: status => updateStreamingStage(payload.sessionId, status.stage, status.detail),
             onDelta: delta => appendDeltaToStreamingMessage(payload.sessionId, delta),
+            onError: detail => {
+              markStreamingInterruption(
+                payload.sessionId,
+                `${detail}. Alternando para modo de recuperacao.`,
+              )
+            },
           },
           controller.signal,
         )
@@ -1083,16 +1251,33 @@ export function Chat() {
         if (controller.signal.aborted || streamError?.name === 'AbortError') {
           throw streamError
         }
-        return apiClient.chat(
-          payload.message,
+        markStreamingInterruption(
           payload.sessionId,
-          undefined,
-          payload.docIds,
-          payload.strictGrounding && isStrictGroundingEnabled,
-          payload.history,
-          payload.activeContext,
-          { streamFallback: true },
+          'Conexao instavel no streaming. Continuando em modo padrao.',
         )
+        updateStreamingStage(
+          payload.sessionId,
+          'finalizing',
+          'Recuperando resposta final sem streaming.',
+        )
+        try {
+          return await apiClient.chat(
+            payload.message,
+            payload.sessionId,
+            undefined,
+            payload.docIds,
+            payload.strictGrounding && isStrictGroundingEnabled,
+            payload.history,
+            payload.activeContext,
+            { streamFallback: true },
+          )
+        } catch (fallbackError: any) {
+          markStreamingInterruption(
+            payload.sessionId,
+            'Nao consegui recuperar automaticamente. Reenvie a pergunta para tentar de novo.',
+          )
+          throw fallbackError
+        }
       } finally {
         if (streamAbortRef.current === controller) {
           streamAbortRef.current = null
@@ -1116,7 +1301,10 @@ export function Chat() {
     onError: (err: any, variables) => {
       const errorText = err?.response?.data?.detail ?? err?.message ?? 'Erro ao consultar o agente'
       toast.error(errorText)
-      failStreamingAssistantMessage(variables.sessionId, 'Ocorreu um erro ao processar sua mensagem.')
+      failStreamingAssistantMessage(
+        variables.sessionId,
+        'Nao consegui concluir esta resposta agora. Verifique sua conexao e clique em enviar novamente.',
+      )
     },
   })
 

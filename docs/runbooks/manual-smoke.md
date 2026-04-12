@@ -91,7 +91,10 @@ curl -N -s -X POST "http://127.0.0.1:$PORT/api/chat/stream" \
 
 Expected:
 - `data: {"type":"start"...}`
-- `data: {"type":"status"...}`
+- `data: {"type":"status","stage":"analyzing"...}`
+- `data: {"type":"status","stage":"retrieving"...}`
+- `data: {"type":"status","stage":"drafting"...}`
+- `data: {"type":"status","stage":"finalizing"...}`
 - multiple `data: {"type":"delta"...}`
 - one `data: {"type":"final"...}`
 - every SSE payload includes `correlation_id`

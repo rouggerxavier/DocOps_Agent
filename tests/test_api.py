@@ -357,6 +357,32 @@ def test_chat_stream_success(monkeypatch):
     _clear_auth_override()
 
 
+def test_chat_stream_status_progression(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    fake_state = {"answer": "ok", "intent": "qa", "retrieved_chunks": []}
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    resp = auth_client.post("/api/chat/stream", json={"message": "hello", "session_id": "s1"})
+    assert resp.status_code == 200
+
+    events = [
+        json.loads(line[6:])
+        for line in resp.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    status_events = [event for event in events if event.get("type") == "status"]
+    stages = [str(event.get("stage", "")) for event in status_events]
+    assert stages, "expected status events in stream"
+
+    required = ["analyzing", "retrieving", "drafting", "finalizing"]
+    positions = [stages.index(stage) for stage in required]
+    assert positions == sorted(positions)
+    _clear_auth_override()
+
+
 def test_chat_stream_events_include_correlation_id(monkeypatch):
     auth_client, _ = _make_auth_client()
     expected_cid = "streamcid-12345678"
