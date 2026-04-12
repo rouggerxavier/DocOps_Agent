@@ -81,6 +81,13 @@ _FLAG_DEFS: tuple[FeatureFlagDefinition, ...] = (
         owner="artifacts",
     ),
     FeatureFlagDefinition(
+        key="premium_chat_to_artifact_enabled",
+        env_var="FEATURE_PREMIUM_CHAT_TO_ARTIFACT_ENABLED",
+        default_enabled=False,
+        description="Enable one-click save from deep chat responses to artifacts.",
+        owner="artifacts",
+    ),
+    FeatureFlagDefinition(
         key="personalization_enabled",
         env_var="FEATURE_PERSONALIZATION_ENABLED",
         default_enabled=False,

@@ -28,6 +28,7 @@ import { cn } from '@/lib/utils'
 interface Message {
   role: 'user' | 'assistant'
   content: string
+  prompt_hint?: string | null
   sources?: SourceItem[]
   intent?: string
   calendar_action?: Record<string, any> | null
@@ -40,6 +41,7 @@ interface Message {
   stream_stage?: StreamStage | null
   stream_status_text?: string | null
   stream_interrupted?: boolean
+  active_context_snapshot?: ChatActiveContext | null
 }
 
 type StreamStage = 'analyzing' | 'retrieving' | 'drafting' | 'finalizing'
@@ -267,6 +269,29 @@ function normalizeForMatch(value: string) {
     .toLowerCase()
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function shouldOfferChatArtifactCTA(message: Message): boolean {
+  if (message.role !== 'assistant' || message.streaming || message.needs_confirmation) return false
+  if (message.action_metadata || message.calendar_action) return false
+
+  const content = normalizeForMatch(message.content || '')
+  const prompt = normalizeForMatch(message.prompt_hint || '')
+  const intent = normalizeForMatch(message.intent || '')
+
+  const promptLooksDeepSummary = (
+    /\b(resumo|resumir|sumario|sintese)\b/.test(prompt)
+    && /\b(aprofundad|detalhad|profund|complet|secc?ao por secc?ao)\b/.test(prompt)
+  )
+  const contentLooksDeepSummary = (
+    /\b(resumo aprofundado|analise detalhada|analise completa|secao por secao)\b/.test(content)
+    || (message.content.includes('##') && content.length >= 420)
+  )
+
+  if (intent === 'summary') {
+    return promptLooksDeepSummary || contentLooksDeepSummary || content.length >= 500
+  }
+  return promptLooksDeepSummary && content.length >= 420
 }
 
 function formatDifficultyMix(mix: FlashcardDifficultyMix) {
@@ -912,11 +937,14 @@ function StreamStatusCard({
 }
 
 function MessageBubble({
-  message, onSourceClick, onCitationClick,
+  message, onSourceClick, onCitationClick, canSaveAsArtifact, savingAsArtifact, onSaveAsArtifact,
 }: {
   message: Message
   onSourceClick?: (sources: SourceItem[]) => void
   onCitationClick?: (source: SourceItem, allSources: SourceItem[]) => void
+  canSaveAsArtifact?: boolean
+  savingAsArtifact?: boolean
+  onSaveAsArtifact?: () => void
 }) {
   const isUser = message.role === 'user'
 
@@ -1004,6 +1032,19 @@ function MessageBubble({
           <QualitySignalCard signal={message.quality_signal} />
         )}
 
+        {!isUser && canSaveAsArtifact && (
+          <div>
+            <button
+              type="button"
+              onClick={onSaveAsArtifact}
+              disabled={Boolean(savingAsArtifact)}
+              className="rounded-full border border-emerald-700/60 bg-emerald-700/10 px-3 py-1.5 text-[11px] font-medium text-emerald-200 transition-colors hover:bg-emerald-700/20 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {savingAsArtifact ? 'Salvando artefato...' : 'Salvar como artefato'}
+            </button>
+          </div>
+        )}
+
         {!isUser && message.sources && message.sources.length > 0 && (
           <div className="space-y-2">
             <button
@@ -1060,6 +1101,7 @@ export function Chat() {
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [pendingFlashcardCommand, setPendingFlashcardCommand] = useState<FlashcardCommandPlan | null>(null)
+  const [savingArtifactTurnRef, setSavingArtifactTurnRef] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const streamAbortRef = useRef<AbortController | null>(null)
 
@@ -1068,6 +1110,7 @@ export function Chat() {
   const activeContext = activeSession?.activeContext ?? emptyActiveContext()
   const isStreamingEnabled = capabilities.isEnabled('chat_streaming_enabled')
   const isStrictGroundingEnabled = capabilities.isEnabled('strict_grounding_enabled')
+  const isChatToArtifactEnabled = capabilities.isEnabled('premium_chat_to_artifact_enabled')
 
   useEffect(() => {
     saveSessions(sessions)
@@ -1075,6 +1118,7 @@ export function Chat() {
 
   useEffect(() => {
     setPendingFlashcardCommand(null)
+    setSavingArtifactTurnRef(null)
   }, [activeSessionId])
 
   const { data: docs } = useQuery<DocItem[]>({
@@ -1129,7 +1173,11 @@ export function Chat() {
     updateSessionActiveContext(activeSessionId, nextContext)
   }
 
-  function appendStreamingAssistantPlaceholder(sessionId: string) {
+  function appendStreamingAssistantPlaceholder(
+    sessionId: string,
+    userPrompt: string,
+    contextSnapshot: ChatActiveContext,
+  ) {
     setSessions(prev =>
       prev.map(s =>
         s.id === sessionId
@@ -1140,10 +1188,12 @@ export function Chat() {
               {
                 role: 'assistant',
                 content: '',
+                prompt_hint: userPrompt,
                 streaming: true,
                 stream_stage: 'analyzing',
                 stream_status_text: STREAM_STAGE_DETAIL_DEFAULT.analyzing,
                 stream_interrupted: false,
+                active_context_snapshot: normalizeActiveContext(contextSnapshot),
                 sources: [],
                 intent: 'qa',
                 quality_signal: null,
@@ -1232,7 +1282,7 @@ export function Chat() {
     )
   }
 
-  function finalizeStreamingAssistantMessage(sessionId: string, data: ChatResponse) {
+  function finalizeStreamingAssistantMessage(sessionId: string, data: ChatResponse, userPrompt: string) {
     setSessions(prev =>
       prev.map(s => {
         if (s.id !== sessionId || s.messages.length === 0) return s
@@ -1247,6 +1297,8 @@ export function Chat() {
           stream_stage: null,
           stream_status_text: null,
           stream_interrupted: false,
+          prompt_hint: userPrompt,
+          active_context_snapshot: normalizeActiveContext(data.active_context ?? last.active_context_snapshot),
           sources: data.sources ?? [],
           intent: data.intent,
           calendar_action: data.calendar_action ?? null,
@@ -1468,7 +1520,7 @@ export function Chat() {
 
   const mutation = useMutation<ChatResponse, Error, ChatRunPayload>({
     mutationFn: async (payload) => {
-      appendStreamingAssistantPlaceholder(payload.sessionId)
+      appendStreamingAssistantPlaceholder(payload.sessionId, payload.message, payload.activeContext)
 
       if (streamAbortRef.current) {
         streamAbortRef.current.abort()
@@ -1560,7 +1612,7 @@ export function Chat() {
       }
     },
     onSuccess: (data, variables) => {
-      finalizeStreamingAssistantMessage(variables.sessionId, data)
+      finalizeStreamingAssistantMessage(variables.sessionId, data, variables.message)
       updateSessionActiveContext(variables.sessionId, normalizeActiveContext(data.active_context))
 
       if (data.sources.length > 0) {
@@ -1581,6 +1633,56 @@ export function Chat() {
         variables.sessionId,
         'Nao consegui concluir esta resposta agora. Verifique sua conexao e clique em enviar novamente.',
       )
+    },
+  })
+
+  const saveChatArtifactMut = useMutation({
+    mutationFn: async (payload: {
+      turnRef: string
+      message: Message
+      userPrompt: string
+      sessionId: string
+    }) => {
+      const contextSnapshot = normalizeActiveContext(
+        payload.message.active_context_snapshot ?? activeContext,
+      )
+      const mergedDocIds = Array.from(
+        new Set([
+          ...selectedDocs.map(doc => doc.doc_id),
+          ...contextSnapshot.active_doc_ids,
+        ].map(value => String(value || '').trim()).filter(Boolean)),
+      )
+      const mergedDocNames = Array.from(
+        new Set([
+          ...selectedDocs.map(doc => doc.file_name),
+          ...contextSnapshot.active_doc_names,
+        ].map(value => String(value || '').trim()).filter(Boolean)),
+      )
+
+      return apiClient.createArtifactFromChat({
+        answer: payload.message.content,
+        title: payload.userPrompt || 'Resumo aprofundado do chat',
+        user_prompt: payload.userPrompt,
+        session_id: payload.sessionId,
+        turn_ref: payload.turnRef,
+        doc_ids: mergedDocIds,
+        doc_names: mergedDocNames,
+        artifact_type: 'summary',
+        generation_profile: 'chat:deep_summary:one_click',
+        confidence_level: payload.message.quality_signal?.level ?? undefined,
+        confidence_score: payload.message.quality_signal?.score ?? undefined,
+      })
+    },
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['artifacts'] })
+      qc.invalidateQueries({ queryKey: ['artifact-filter-options'] })
+      toast.success(`Artefato salvo: ${result.filename}`)
+      setSavingArtifactTurnRef(null)
+    },
+    onError: (error: any) => {
+      const detail = error?.response?.data?.detail ?? error?.message ?? 'Falha ao salvar artefato.'
+      toast.error(String(detail))
+      setSavingArtifactTurnRef(null)
     },
   })
 
@@ -1861,20 +1963,44 @@ export function Chat() {
             </div>
           )}
 
-          {messages.map((msg, i) => (
-            <MessageBubble
-              key={i}
-              message={msg}
-              onSourceClick={sources => {
-                setActiveSources(sources)
-                setSelectedSource(null)
-              }}
-              onCitationClick={(source, sources) => {
-                setActiveSources(sources)
-                setSelectedSource(source)
-              }}
-            />
-          ))}
+          {messages.map((msg, i) => {
+            const previousUserPrompt = [...messages.slice(0, i)]
+              .reverse()
+              .find(item => item.role === 'user')
+              ?.content ?? msg.prompt_hint ?? ''
+            const turnRef = `${activeSessionId}:${i}`
+            const canSaveAsArtifact = isChatToArtifactEnabled && shouldOfferChatArtifactCTA({
+              ...msg,
+              prompt_hint: previousUserPrompt,
+            })
+
+            return (
+              <MessageBubble
+                key={i}
+                message={{ ...msg, prompt_hint: previousUserPrompt }}
+                canSaveAsArtifact={canSaveAsArtifact}
+                savingAsArtifact={savingArtifactTurnRef === turnRef}
+                onSaveAsArtifact={() => {
+                  if (!canSaveAsArtifact || saveChatArtifactMut.isPending) return
+                  setSavingArtifactTurnRef(turnRef)
+                  saveChatArtifactMut.mutate({
+                    turnRef,
+                    message: { ...msg, prompt_hint: previousUserPrompt },
+                    userPrompt: previousUserPrompt,
+                    sessionId: activeSessionId,
+                  })
+                }}
+                onSourceClick={sources => {
+                  setActiveSources(sources)
+                  setSelectedSource(null)
+                }}
+                onCitationClick={(source, sources) => {
+                  setActiveSources(sources)
+                  setSelectedSource(source)
+                }}
+              />
+            )
+          })}
 
           {pendingFlashcardCommand && (
             <div className="flex gap-3">

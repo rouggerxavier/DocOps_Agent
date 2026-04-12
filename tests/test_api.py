@@ -1162,6 +1162,96 @@ def test_artifact_filter_options_endpoint_returns_metadata_dimensions():
     app.dependency_overrides[get_db] = _override_get_db
 
 
+def test_chat_to_artifact_endpoint_requires_feature_flag(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.delenv("FEATURE_PREMIUM_CHAT_TO_ARTIFACT_ENABLED", raising=False)
+
+    resp = auth_client.post(
+        "/api/artifact/from-chat",
+        json={"answer": "Resumo de teste", "session_id": "session-flag-off", "turn_ref": "turn-1"},
+    )
+    assert resp.status_code == 503
+    assert "disabled" in str(resp.json().get("detail", "")).lower()
+    _clear_auth_override()
+
+
+def test_chat_to_artifact_one_click_creates_linked_artifact(monkeypatch):
+    from docops.db import crud
+
+    app.dependency_overrides[get_db] = _override_get_db
+    Base.metadata.create_all(bind=_test_engine)
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PREMIUM_CHAT_TO_ARTIFACT_ENABLED", "true")
+
+    scope = uuid.uuid4().hex[:10]
+    session_ref = f"session-{scope}"
+    turn_ref = f"{session_ref}:7"
+    doc_id = f"{scope}-doc-id"
+    doc_name = f"{scope}-manual.md"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir)
+
+        def _fake_writer(filename: str, content: str, user_id: int) -> Path:
+            out = base_dir / filename
+            out.write_text(content, encoding="utf-8")
+            return out
+
+        monkeypatch.setattr("docops.tools.doc_tools.tool_write_artifact", _fake_writer)
+
+        db = _TestSession()
+        try:
+            crud.create_document_record(
+                db,
+                user_id=1,
+                doc_id=doc_id,
+                file_name=doc_name,
+                source_path=str(base_dir / "source.txt"),
+                storage_path=str(base_dir / "stored.txt"),
+                file_type="md",
+                chunk_count=10,
+            )
+        finally:
+            db.close()
+
+        response = auth_client.post(
+            "/api/artifact/from-chat",
+            json={
+                "answer": "## Resumo Aprofundado\n\nConteudo detalhado do chat.",
+                "title": f"{scope} resumo aprofundado",
+                "user_prompt": "faca um resumo aprofundado deste documento",
+                "session_id": session_ref,
+                "turn_ref": turn_ref,
+                "doc_ids": [doc_id],
+                "doc_names": [doc_name],
+                "confidence_level": "high",
+                "confidence_score": 0.93,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["artifact_id"] is not None
+        assert payload["filename"].endswith(".md")
+        assert payload["conversation_session_id"] == session_ref
+        assert payload["conversation_turn_ref"] == turn_ref
+
+        listed = auth_client.get(
+            "/api/artifacts",
+            params={"conversation_session_id": session_ref},
+        )
+        assert listed.status_code == 200
+        items = listed.json()
+        assert any(item["id"] == payload["artifact_id"] for item in items)
+
+        created = next(item for item in items if item["id"] == payload["artifact_id"])
+        assert created["conversation_session_id"] == session_ref
+        assert created["conversation_turn_ref"] == turn_ref
+        assert doc_id in created["source_doc_ids"]
+
+    _clear_auth_override()
+    app.dependency_overrides[get_db] = _override_get_db
+
+
 def test_alembic_upgrade_creates_supported_schema(tmp_path):
     from docops.db.database import run_db_migrations
 

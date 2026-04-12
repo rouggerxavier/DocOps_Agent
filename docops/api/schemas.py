@@ -235,6 +235,29 @@ class ArtifactResponse(BaseModel):
     artifact_id: Optional[int] = None
 
 
+class ChatArtifactCreateRequest(BaseModel):
+    answer: str = Field(min_length=1, max_length=200_000)
+    title: Optional[str] = Field(default=None, max_length=512)
+    user_prompt: Optional[str] = Field(default=None, max_length=4096)
+    session_id: Optional[str] = Field(default=None, max_length=128)
+    turn_ref: Optional[str] = Field(default=None, max_length=64)
+    doc_ids: List[str] = Field(default_factory=list)
+    doc_names: List[str] = Field(default_factory=list)
+    template_id: Optional[str] = Field(
+        default=None,
+        description="Artifact template id (brief | exam_pack | deep_dossier).",
+    )
+    artifact_type: str = Field(default="summary", max_length=64)
+    generation_profile: Optional[str] = Field(default=None, max_length=128)
+    confidence_level: Optional[str] = Field(default=None, max_length=16)
+    confidence_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+
+class ChatArtifactCreateResponse(ArtifactResponse):
+    conversation_session_id: Optional[str] = None
+    conversation_turn_ref: Optional[str] = None
+
+
 class ArtifactTemplateItem(BaseModel):
     template_id: str
     label: str
@@ -264,6 +287,8 @@ class ArtifactItem(BaseModel):
     metadata_version: int = 1
     source_doc_ids: List[str] = Field(default_factory=list)
     source_doc_count: int = 0
+    conversation_session_id: Optional[str] = None
+    conversation_turn_ref: Optional[str] = None
 
 
 class ArtifactFilterOptionsResponse(BaseModel):

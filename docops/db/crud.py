@@ -155,6 +155,8 @@ def create_artifact_record(
     source_doc_id: str | None = None,
     source_doc_id_2: str | None = None,
     source_doc_ids: list[str] | None = None,
+    conversation_session_id: str | None = None,
+    conversation_turn_ref: str | None = None,
 ) -> ArtifactRecord:
     source_doc_ids_blob = _normalize_source_doc_ids(source_doc_ids)
     artifact = ArtifactRecord(
@@ -171,6 +173,8 @@ def create_artifact_record(
         source_doc_id=source_doc_id,
         source_doc_id_2=source_doc_id_2,
         source_doc_ids=source_doc_ids_blob,
+        conversation_session_id=str(conversation_session_id or "").strip() or None,
+        conversation_turn_ref=str(conversation_turn_ref or "").strip() or None,
     )
     db.add(artifact)
     db.commit()
@@ -184,6 +188,7 @@ def list_artifacts_for_user(
     *,
     artifact_type: str | None = None,
     source_doc_id: str | None = None,
+    conversation_session_id: str | None = None,
     template_id: str | None = None,
     generation_profile: str | None = None,
     search: str | None = None,
@@ -196,6 +201,8 @@ def list_artifacts_for_user(
         query = query.filter(ArtifactRecord.artifact_type == artifact_type)
     if template_id:
         query = query.filter(ArtifactRecord.template_id == template_id)
+    if conversation_session_id:
+        query = query.filter(ArtifactRecord.conversation_session_id == conversation_session_id)
     if generation_profile:
         query = query.filter(ArtifactRecord.generation_profile == generation_profile)
     if source_doc_id:

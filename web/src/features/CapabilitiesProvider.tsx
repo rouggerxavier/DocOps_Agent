@@ -9,6 +9,7 @@ export type FeatureFlagKey =
   | 'strict_grounding_enabled'
   | 'premium_trust_layer_enabled'
   | 'premium_artifact_templates_enabled'
+  | 'premium_chat_to_artifact_enabled'
   | 'personalization_enabled'
   | 'proactive_copilot_enabled'
   | 'premium_entitlements_enabled'
@@ -18,6 +19,7 @@ const DEFAULT_FLAG_MAP: Record<FeatureFlagKey, boolean> = {
   strict_grounding_enabled: true,
   premium_trust_layer_enabled: false,
   premium_artifact_templates_enabled: false,
+  premium_chat_to_artifact_enabled: false,
   personalization_enabled: false,
   proactive_copilot_enabled: false,
   premium_entitlements_enabled: false,

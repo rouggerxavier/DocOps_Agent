@@ -23,6 +23,7 @@ _FLAG_ENV_KEYS = [
     "FEATURE_STRICT_GROUNDING_ENABLED",
     "FEATURE_PREMIUM_TRUST_LAYER_ENABLED",
     "FEATURE_PREMIUM_ARTIFACT_TEMPLATES_ENABLED",
+    "FEATURE_PREMIUM_CHAT_TO_ARTIFACT_ENABLED",
     "FEATURE_PERSONALIZATION_ENABLED",
     "FEATURE_PROACTIVE_COPILOT_ENABLED",
     "FEATURE_PREMIUM_ENTITLEMENTS_ENABLED",
@@ -52,6 +53,7 @@ def test_default_flags_have_expected_baseline():
     assert flags["chat_streaming_enabled"] is True
     assert flags["strict_grounding_enabled"] is True
     assert flags["premium_trust_layer_enabled"] is False
+    assert flags["premium_chat_to_artifact_enabled"] is False
 
 
 def test_single_env_override(monkeypatch: pytest.MonkeyPatch):

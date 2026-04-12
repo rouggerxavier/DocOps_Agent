@@ -87,6 +87,8 @@ class ArtifactRecord(Base):
     source_doc_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_doc_id_2: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_doc_ids: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    conversation_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    conversation_turn_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
 
@@ -98,6 +100,7 @@ class ArtifactRecord(Base):
         Index("ix_artifact_user_template", "user_id", "template_id"),
         Index("ix_artifact_user_created", "user_id", "created_at"),
         Index("ix_artifact_user_confidence", "user_id", "confidence_score"),
+        Index("ix_artifact_user_conversation", "user_id", "conversation_session_id"),
     )
 
     def __repr__(self) -> str:

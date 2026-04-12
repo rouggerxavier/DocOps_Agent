@@ -147,6 +147,8 @@ export interface ArtifactItem {
   metadata_version?: number
   source_doc_ids?: string[]
   source_doc_count?: number
+  conversation_session_id?: string | null
+  conversation_turn_ref?: string | null
 }
 
 export interface ArtifactResponse {
@@ -157,6 +159,26 @@ export interface ArtifactResponse {
   template_label?: string | null
   template_description?: string | null
   artifact_id?: number | null
+}
+
+export interface ChatArtifactCreatePayload {
+  answer: string
+  title?: string
+  user_prompt?: string
+  session_id?: string
+  turn_ref?: string
+  doc_ids?: string[]
+  doc_names?: string[]
+  template_id?: string
+  artifact_type?: string
+  generation_profile?: string
+  confidence_level?: string
+  confidence_score?: number
+}
+
+export interface ChatArtifactResponse extends ArtifactResponse {
+  conversation_session_id?: string | null
+  conversation_turn_ref?: string | null
 }
 
 export interface SummarizeResponse {
@@ -197,6 +219,7 @@ export interface ArtifactFilterOptions {
 export interface ArtifactListQuery {
   artifact_type?: string
   source_doc_id?: string
+  conversation_session_id?: string
   template_id?: string
   generation_profile?: string
   search?: string
@@ -657,6 +680,9 @@ export const apiClient = {
     template_id?: string,
   ): Promise<JobCreateResponse> =>
     api.post('/api/artifact/async', { type, topic, output, doc_names, template_id }).then(r => r.data),
+
+  createArtifactFromChat: (payload: ChatArtifactCreatePayload): Promise<ChatArtifactResponse> =>
+    api.post('/api/artifact/from-chat', payload).then(r => r.data),
 
   listArtifacts: (query?: ArtifactListQuery): Promise<ArtifactItem[]> =>
     api.get('/api/artifacts', { params: query }).then(r => r.data),

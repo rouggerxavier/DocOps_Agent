@@ -18,6 +18,8 @@ from docops.api.schemas import (
     ArtifactRequest,
     ArtifactResponse,
     ArtifactTemplateItem,
+    ChatArtifactCreateRequest,
+    ChatArtifactCreateResponse,
     JobCreateResponse,
 )
 from docops.auth.dependencies import get_current_user
@@ -28,6 +30,7 @@ from docops.db.crud import (
     list_artifact_filter_options_for_user,
     list_artifacts_by_user_and_filename,
     list_artifacts_for_user,
+    list_documents_for_user,
     parse_source_doc_ids_blob,
 )
 from docops.db.database import SessionLocal, get_db
@@ -74,6 +77,54 @@ def _extract_confidence_snapshot(state: dict) -> tuple[str | None, float | None]
             level = str(quality.get("level") or _confidence_level_from_score(score) or "").strip() or None
             return level, score
     return None, None
+
+
+def _dedupe_str_values(values: list[str] | None, *, limit: int = 32) -> list[str]:
+    if not values:
+        return []
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        value = str(raw or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+        if len(deduped) >= limit:
+            break
+    return deduped
+
+
+def _resolve_chat_doc_context(
+    db: Session,
+    user_id: int,
+    doc_ids: list[str] | None,
+    doc_names: list[str] | None,
+) -> tuple[list[str], list[str]]:
+    clean_doc_ids = _dedupe_str_values(doc_ids)
+    clean_doc_names = _dedupe_str_values(doc_names, limit=24)
+    docs = list_documents_for_user(db, user_id)
+    by_id = {str(doc.doc_id): doc for doc in docs if str(getattr(doc, "doc_id", "")).strip()}
+    by_name = {str(doc.file_name).casefold(): doc for doc in docs if str(getattr(doc, "file_name", "")).strip()}
+
+    resolved_ids: list[str] = []
+    resolved_names: list[str] = []
+
+    for doc_id in clean_doc_ids:
+        matched = by_id.get(doc_id)
+        if matched is not None:
+            resolved_ids.append(str(matched.doc_id))
+            resolved_names.append(str(matched.file_name))
+
+    for doc_name in clean_doc_names:
+        matched = by_name.get(doc_name.casefold())
+        if matched is not None:
+            resolved_ids.append(str(matched.doc_id))
+            resolved_names.append(str(matched.file_name))
+
+    final_doc_ids = _dedupe_str_values(clean_doc_ids + resolved_ids, limit=32)
+    final_doc_names = _dedupe_str_values(clean_doc_names + resolved_names, limit=24)
+    return final_doc_ids, final_doc_names
 
 
 def _run_artifact(
@@ -352,6 +403,111 @@ async def create_artifact(
     return ArtifactResponse(**result, artifact_id=artifact_record.id)
 
 
+@router.post("/artifact/from-chat", response_model=ChatArtifactCreateResponse)
+async def create_artifact_from_chat(
+    body: ChatArtifactCreateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ChatArtifactCreateResponse:
+    """Persist a chat answer as an artifact with conversation linkage metadata."""
+    from docops.features.flags import require_feature_enabled
+    from docops.tools.doc_tools import tool_write_artifact
+
+    require_feature_enabled(
+        "premium_chat_to_artifact_enabled",
+        detail="Chat-to-artifact flow is disabled by feature flag.",
+    )
+
+    raw_answer = str(body.answer or "").strip()
+    if not raw_answer:
+        raise HTTPException(status_code=422, detail="Conteudo do chat vazio para gerar artefato.")
+
+    normalized_doc_ids, normalized_doc_names = _resolve_chat_doc_context(
+        db,
+        current_user.id,
+        body.doc_ids,
+        body.doc_names,
+    )
+    selected_template = resolve_template(
+        template_id=body.template_id,
+        summary_mode="deep",
+        artifact_type="summary",
+    )
+    base_title = str(body.title or body.user_prompt or "Resumo aprofundado do chat").strip()[:180]
+    context_parts = []
+    if normalized_doc_names:
+        context_parts.append(f"Documentos ativos: {', '.join(normalized_doc_names[:4])}")
+    if body.session_id:
+        context_parts.append(f"Sessao: {body.session_id}")
+    context_line = " | ".join(context_parts) if context_parts else "Origem: conversa em chat"
+    final_answer = apply_template_layout(
+        raw_answer,
+        template=selected_template,
+        heading=base_title,
+        context_line=context_line,
+    )
+
+    turn_suffix = _safe_stem(body.turn_ref or body.session_id or "", limit=20)
+    filename = f"chat_summary_{_safe_stem(base_title, limit=40)}{f'_{turn_suffix}' if turn_suffix else ''}.md"
+    path = await asyncio.to_thread(
+        tool_write_artifact,
+        filename,
+        final_answer,
+        current_user.id,
+    )
+
+    confidence_score = body.confidence_score
+    if confidence_score is not None:
+        confidence_score = max(0.0, min(1.0, float(confidence_score)))
+    confidence_level = str(body.confidence_level or "").strip() or _confidence_level_from_score(confidence_score)
+    generation_profile = (
+        str(body.generation_profile or "").strip()
+        or f"chat:deep_summary:{selected_template.template_id}"
+    )
+
+    artifact_record = create_artifact_record(
+        db,
+        user_id=current_user.id,
+        artifact_type=str(body.artifact_type or "summary").strip() or "summary",
+        title=base_title[:512],
+        filename=path.name,
+        path=str(path),
+        template_id=selected_template.template_id,
+        generation_profile=generation_profile,
+        confidence_level=confidence_level,
+        confidence_score=confidence_score,
+        source_doc_id=normalized_doc_ids[0] if len(normalized_doc_ids) >= 1 else None,
+        source_doc_id_2=normalized_doc_ids[1] if len(normalized_doc_ids) >= 2 else None,
+        source_doc_ids=normalized_doc_ids,
+        conversation_session_id=body.session_id,
+        conversation_turn_ref=body.turn_ref,
+    )
+
+    emit_event(
+        logger,
+        "artifact.chat_link.created",
+        category="artifact",
+        user_id=current_user.id,
+        artifact_id=artifact_record.id,
+        template_id=selected_template.template_id,
+        conversation_session_id=body.session_id,
+        conversation_turn_ref=body.turn_ref,
+        source_doc_count=len(normalized_doc_ids),
+    )
+
+    return ChatArtifactCreateResponse(
+        answer=final_answer,
+        filename=path.name,
+        path=str(path),
+        template_id=selected_template.template_id,
+        template_label=selected_template.label,
+        template_description=selected_template.short_description,
+        artifact_id=artifact_record.id,
+        conversation_session_id=artifact_record.conversation_session_id,
+        conversation_turn_ref=artifact_record.conversation_turn_ref,
+    )
+
+
 @router.post("/artifact/async", response_model=JobCreateResponse)
 async def create_artifact_async(
     body: ArtifactRequest,
@@ -467,6 +623,7 @@ async def create_artifact_async(
 async def list_artifacts(
     artifact_type: str | None = Query(default=None),
     source_doc_id: str | None = Query(default=None),
+    conversation_session_id: str | None = Query(default=None),
     template_id: str | None = Query(default=None),
     generation_profile: str | None = Query(default=None),
     search: str | None = Query(default=None),
@@ -481,6 +638,7 @@ async def list_artifacts(
         current_user.id,
         artifact_type=artifact_type,
         source_doc_id=source_doc_id,
+        conversation_session_id=conversation_session_id,
         template_id=template_id,
         generation_profile=generation_profile,
         search=search,
@@ -511,6 +669,8 @@ async def list_artifacts(
                 metadata_version=int(r.metadata_version or 1),
                 source_doc_ids=source_doc_ids,
                 source_doc_count=len(source_doc_ids),
+                conversation_session_id=r.conversation_session_id,
+                conversation_turn_ref=r.conversation_turn_ref,
             )
         )
     return items
