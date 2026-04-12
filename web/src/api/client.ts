@@ -140,6 +140,13 @@ export interface ArtifactItem {
   created_at: string
   artifact_type: string
   title: string | null
+  template_id?: string | null
+  generation_profile?: string | null
+  confidence_level?: 'high' | 'medium' | 'low' | string | null
+  confidence_score?: number | null
+  metadata_version?: number
+  source_doc_ids?: string[]
+  source_doc_count?: number
 }
 
 export interface ArtifactResponse {
@@ -177,6 +184,24 @@ export interface ArtifactTemplate {
   summary_modes: string[]
   default_for_summary_modes: string[]
   default_for_artifact_types: string[]
+}
+
+export interface ArtifactFilterOptions {
+  artifact_types: string[]
+  template_ids: string[]
+  generation_profiles: string[]
+  source_doc_ids: string[]
+  confidence_levels: string[]
+}
+
+export interface ArtifactListQuery {
+  artifact_type?: string
+  source_doc_id?: string
+  template_id?: string
+  generation_profile?: string
+  search?: string
+  sort_by?: 'created_at' | 'updated_at' | 'title' | 'artifact_type' | 'confidence_score' | 'filename' | string
+  sort_order?: 'asc' | 'desc'
 }
 
 export interface ReminderItem {
@@ -612,6 +637,9 @@ export const apiClient = {
   ): Promise<ArtifactTemplate[]> =>
     api.get('/api/artifact/templates', { params: { summary_mode, artifact_type } }).then(r => r.data),
 
+  listArtifactFilterOptions: (): Promise<ArtifactFilterOptions> =>
+    api.get('/api/artifacts/filters').then(r => r.data),
+
   createArtifact: (
     type: string,
     topic: string,
@@ -630,8 +658,8 @@ export const apiClient = {
   ): Promise<JobCreateResponse> =>
     api.post('/api/artifact/async', { type, topic, output, doc_names, template_id }).then(r => r.data),
 
-  listArtifacts: (): Promise<ArtifactItem[]> =>
-    api.get('/api/artifacts').then(r => r.data),
+  listArtifacts: (query?: ArtifactListQuery): Promise<ArtifactItem[]> =>
+    api.get('/api/artifacts', { params: query }).then(r => r.data),
 
   getArtifactTextById: (artifactId: number): Promise<string> =>
     api

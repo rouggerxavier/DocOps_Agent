@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+﻿import { useEffect, useMemo, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Archive, BookOpen, Brain, CheckSquare, Download, Eye,
@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { PageHeader, PageShell } from '@/components/ui/page-shell'
-import { apiClient, type ArtifactItem, type ArtifactTemplate, type DocItem } from '@/api/client'
+import { apiClient, type ArtifactFilterOptions, type ArtifactItem, type ArtifactTemplate, type DocItem } from '@/api/client'
 import { useCapabilities } from '@/features/CapabilitiesProvider'
 import { formatBytes, formatDate } from '@/lib/utils'
 
@@ -20,6 +20,20 @@ const ARTIFACT_TYPES = [
   { value: 'artifact', label: 'Artefato Livre' },
 ] as const
 const MARKDOWN_FILE_RE = /\.(md|markdown|txt)$/i
+const ARTIFACT_SORT_OPTIONS = [
+  { value: 'created_at', label: 'Mais recentes' },
+  { value: 'title', label: 'Titulo (A-Z)' },
+  { value: 'artifact_type', label: 'Tipo' },
+  { value: 'confidence_score', label: 'Confianca' },
+] as const
+
+function confidenceBadgeClass(level: string | null | undefined): string {
+  const normalized = String(level ?? '').toLowerCase()
+  if (normalized === 'high') return 'border-emerald-700 bg-emerald-950/40 text-emerald-300'
+  if (normalized === 'medium') return 'border-amber-700 bg-amber-950/40 text-amber-300'
+  if (normalized === 'low') return 'border-rose-700 bg-rose-950/40 text-rose-300'
+  return 'border-zinc-700 bg-zinc-900 text-zinc-400'
+}
 
 function pickDefaultTemplate(
   templates: ArtifactTemplate[],
@@ -61,7 +75,7 @@ function downloadBlobFile(blob: Blob, filename: string) {
   URL.revokeObjectURL(objectUrl)
 }
 
-// ── Resumir Documento Dialog ──────────────────────────────────────────────────
+// â”€â”€ Resumir Documento Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function SummarizeDocDialog({
   onClose,
@@ -139,6 +153,7 @@ function SummarizeDocDialog({
       if (payload.artifact_filename) {
         toast.success(`Resumo salvo: ${payload.artifact_filename}`)
         qc.invalidateQueries({ queryKey: ['artifacts'] })
+        qc.invalidateQueries({ queryKey: ['artifact-filter-options'] })
       }
       setJobId(null)
     } else if (jobQuery.data.status === 'failed') {
@@ -182,7 +197,7 @@ function SummarizeDocDialog({
           {!result && !isProcessing && (
             <>
               <p className="text-sm text-zinc-400">
-                Gera um resumo analítico do documento com IA e salva nos artefatos para download.
+                Gera um resumo analÃ­tico do documento com IA e salva nos artefatos para download.
               </p>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-zinc-300">Documento</label>
@@ -205,14 +220,14 @@ function SummarizeDocDialog({
                     className={`rounded-lg border px-4 py-3 text-left transition-colors ${mode === 'brief' ? 'border-blue-500 bg-blue-500/10 text-blue-300' : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600'}`}
                   >
                     <p className="text-sm font-semibold">Resumo Breve</p>
-                    <p className="mt-0.5 text-xs opacity-70">Síntese concisa — até 300 palavras com os pontos essenciais</p>
+                    <p className="mt-0.5 text-xs opacity-70">SÃ­ntese concisa â€” atÃ© 300 palavras com os pontos essenciais</p>
                   </button>
                   <button
                     onClick={() => setMode('deep')}
                     className={`rounded-lg border px-4 py-3 text-left transition-colors ${mode === 'deep' ? 'border-violet-500 bg-violet-500/10 text-violet-300' : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600'}`}
                   >
                     <p className="text-sm font-semibold">Resumo Aprofundado</p>
-                    <p className="mt-0.5 text-xs opacity-70">Análise completa seção por seção com detalhes técnicos</p>
+                    <p className="mt-0.5 text-xs opacity-70">AnÃ¡lise completa seÃ§Ã£o por seÃ§Ã£o com detalhes tÃ©cnicos</p>
                   </button>
                 </div>
               </div>
@@ -281,7 +296,7 @@ function SummarizeDocDialog({
             <>
               <div className="flex items-center justify-between">
                 <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${mode === 'brief' ? 'bg-blue-500/15 text-blue-300' : 'bg-violet-500/15 text-violet-300'}`}>
-                  {modeLabel} — {selectedDoc}{resultTemplateLabel ? ` — ${resultTemplateLabel}` : ''}
+                  {modeLabel} â€” {selectedDoc}{resultTemplateLabel ? ` â€” ${resultTemplateLabel}` : ''}
                 </span>
                 <Button
                   variant="ghost"
@@ -318,7 +333,7 @@ function SummarizeDocDialog({
   )
 }
 
-// ── Smart Digest Dialog ───────────────────────────────────────────────────────
+// â”€â”€ Smart Digest Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function SmartDigestDialog({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
@@ -344,7 +359,7 @@ function SmartDigestDialog({ onClose }: { onClose: () => void }) {
       setDigestResult(data)
       if (data.deck_id) qc.invalidateQueries({ queryKey: ['flashcard-decks'] })
       if (data.tasks_created > 0) qc.invalidateQueries({ queryKey: ['tasks'] })
-      toast.success('Smart Digest concluído!')
+      toast.success('Smart Digest concluÃ­do!')
     },
     onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro no Smart Digest'),
   })
@@ -363,7 +378,7 @@ function SmartDigestDialog({ onClose }: { onClose: () => void }) {
           {!digestResult && !digestMutation.isPending && (
             <>
               <p className="text-sm text-zinc-400">
-                Analisa o documento com IA e gera em uma operação: <strong>resumo analítico</strong>, <strong>flashcards</strong> para revisão espaçada e <strong>tarefas</strong> extraídas automaticamente.
+                Analisa o documento com IA e gera em uma operaÃ§Ã£o: <strong>resumo analÃ­tico</strong>, <strong>flashcards</strong> para revisÃ£o espaÃ§ada e <strong>tarefas</strong> extraÃ­das automaticamente.
               </p>
               <div>
                 <label className="mb-1.5 block text-sm font-medium text-zinc-300">Documento</label>
@@ -383,7 +398,7 @@ function SmartDigestDialog({ onClose }: { onClose: () => void }) {
                   <input type="checkbox" checked={genFlashcards} onChange={e => setGenFlashcards(e.target.checked)} className="h-4 w-4 accent-blue-500" />
                   <div>
                     <p className="text-sm font-medium text-zinc-200">Gerar Flashcards</p>
-                    <p className="text-xs text-zinc-500">Cria um deck de flashcards para revisão espaçada</p>
+                    <p className="text-xs text-zinc-500">Cria um deck de flashcards para revisÃ£o espaÃ§ada</p>
                   </div>
                 </label>
                 {genFlashcards && (
@@ -397,15 +412,15 @@ function SmartDigestDialog({ onClose }: { onClose: () => void }) {
                   <input type="checkbox" checked={extractTasks} onChange={e => setExtractTasks(e.target.checked)} className="h-4 w-4 accent-emerald-500" />
                   <div>
                     <p className="text-sm font-medium text-zinc-200">Extrair Tarefas</p>
-                    <p className="text-xs text-zinc-500">Identifica ações, exercícios e entregas no documento</p>
+                    <p className="text-xs text-zinc-500">Identifica aÃ§Ãµes, exercÃ­cios e entregas no documento</p>
                   </div>
                 </label>
                 {genFlashcards && (
                   <label className="flex items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 cursor-pointer hover:border-zinc-600 transition-colors">
                     <input type="checkbox" checked={scheduleReviews} onChange={e => setScheduleReviews(e.target.checked)} className="h-4 w-4 accent-purple-500" />
                     <div>
-                      <p className="text-sm font-medium text-zinc-200">Agendar Revisões SRS</p>
-                      <p className="text-xs text-zinc-500">Cria lembretes de revisão espaçada no calendário (+1d, +3d, +7d)</p>
+                      <p className="text-sm font-medium text-zinc-200">Agendar RevisÃµes SRS</p>
+                      <p className="text-xs text-zinc-500">Cria lembretes de revisÃ£o espaÃ§ada no calendÃ¡rio (+1d, +3d, +7d)</p>
                     </div>
                   </label>
                 )}
@@ -434,21 +449,21 @@ function SmartDigestDialog({ onClose }: { onClose: () => void }) {
                   <div className="rounded-lg border border-blue-800 bg-blue-950/30 p-3">
                     <p className="text-xs text-blue-400 font-medium mb-1">Flashcards criados</p>
                     <p className="text-lg font-bold text-blue-300">{numCards} cards</p>
-                    <a href="/flashcards" className="text-xs text-blue-500 hover:underline">Ver em Flashcards →</a>
+                    <a href="/flashcards" className="text-xs text-blue-500 hover:underline">Ver em Flashcards â†’</a>
                   </div>
                 )}
                 {digestResult.tasks_created > 0 && (
                   <div className="rounded-lg border border-emerald-800 bg-emerald-950/30 p-3">
-                    <p className="text-xs text-emerald-400 font-medium mb-1">Tarefas extraídas</p>
+                    <p className="text-xs text-emerald-400 font-medium mb-1">Tarefas extraÃ­das</p>
                     <p className="text-lg font-bold text-emerald-300">{digestResult.tasks_created} tarefas</p>
-                    <a href="/tasks" className="text-xs text-emerald-500 hover:underline">Ver em Tarefas →</a>
+                    <a href="/tasks" className="text-xs text-emerald-500 hover:underline">Ver em Tarefas â†’</a>
                   </div>
                 )}
                 {digestResult.reviews_scheduled > 0 && (
                   <div className="rounded-lg border border-purple-800 bg-purple-950/30 p-3">
-                    <p className="text-xs text-purple-400 font-medium mb-1">Revisões SRS agendadas</p>
+                    <p className="text-xs text-purple-400 font-medium mb-1">RevisÃµes SRS agendadas</p>
                     <p className="text-lg font-bold text-purple-300">{digestResult.reviews_scheduled} lembretes</p>
-                    <a href="/schedule" className="text-xs text-purple-500 hover:underline">Ver Calendário →</a>
+                    <a href="/schedule" className="text-xs text-purple-500 hover:underline">Ver CalendÃ¡rio â†’</a>
                   </div>
                 )}
               </div>
@@ -460,7 +475,7 @@ function SmartDigestDialog({ onClose }: { onClose: () => void }) {
                   <ul className="space-y-1">
                     {digestResult.task_titles.map((t, i) => (
                       <li key={i} className="text-xs text-zinc-300 flex items-start gap-2">
-                        <span className="text-emerald-500 mt-0.5">✓</span>{t}
+                        <span className="text-emerald-500 mt-0.5">âœ“</span>{t}
                       </li>
                     ))}
                   </ul>
@@ -485,7 +500,7 @@ function SmartDigestDialog({ onClose }: { onClose: () => void }) {
   )
 }
 
-// ── Create Artifact Dialog ────────────────────────────────────────────────────
+// â”€â”€ Create Artifact Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function CreateArtifactDialog({
   onClose,
@@ -562,6 +577,7 @@ function CreateArtifactDialog({
       setResultTemplateLabel(payload.template_label ? String(payload.template_label) : null)
       if (payload.filename) toast.success(`Artefato salvo: ${payload.filename}`)
       qc.invalidateQueries({ queryKey: ['artifacts'] })
+      qc.invalidateQueries({ queryKey: ['artifact-filter-options'] })
       setJobId(null)
     } else if (jobQuery.data.status === 'failed') {
       toast.error(jobQuery.data.error ?? 'Erro ao gerar artefato')
@@ -594,7 +610,7 @@ function CreateArtifactDialog({
                 </select>
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-zinc-300">Tópico</label>
+                <label className="mb-1.5 block text-sm font-medium text-zinc-300">TÃ³pico</label>
                 <Input placeholder="Ex: Python para iniciantes" value={topic} onChange={e => setTopic(e.target.value)} />
               </div>
               <div className="space-y-2">
@@ -704,7 +720,7 @@ function CreateArtifactDialog({
   )
 }
 
-// ── Preview Dialog ────────────────────────────────────────────────────────────
+// â”€â”€ Preview Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 function PreviewDialog({ artifact, onClose }: { artifact: { id: number; filename: string }; onClose: () => void }) {
   const { id: artifactId, filename } = artifact
@@ -763,7 +779,7 @@ function PreviewDialog({ artifact, onClose }: { artifact: { id: number; filename
   )
 }
 
-// ── Main Artifacts Page ───────────────────────────────────────────────────────
+// â”€â”€ Main Artifacts Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 export function Artifacts() {
   const qc = useQueryClient()
@@ -774,16 +790,43 @@ export function Artifacts() {
   const [showDigest, setShowDigest] = useState(false)
   const [previewFile, setPreviewFile] = useState<{ id: number; filename: string } | null>(null)
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null)
+  const [artifactTypeFilter, setArtifactTypeFilter] = useState('all')
+  const [templateFilter, setTemplateFilter] = useState('all')
+  const [sourceDocFilter, setSourceDocFilter] = useState('all')
+  const [generationProfileFilter, setGenerationProfileFilter] = useState('all')
+  const [sortBy, setSortBy] = useState<(typeof ARTIFACT_SORT_OPTIONS)[number]['value']>('created_at')
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
+  const [search, setSearch] = useState('')
+
+  const queryParams = useMemo(() => ({
+    artifact_type: artifactTypeFilter !== 'all' ? artifactTypeFilter : undefined,
+    template_id: templateFilter !== 'all' ? templateFilter : undefined,
+    source_doc_id: sourceDocFilter !== 'all' ? sourceDocFilter : undefined,
+    generation_profile: generationProfileFilter !== 'all' ? generationProfileFilter : undefined,
+    search: search.trim() ? search.trim() : undefined,
+    sort_by: sortBy,
+    sort_order: sortOrder,
+  }), [artifactTypeFilter, generationProfileFilter, search, sortBy, sortOrder, sourceDocFilter, templateFilter])
+
+  const { data: filterOptions } = useQuery<ArtifactFilterOptions>({
+    queryKey: ['artifact-filter-options'],
+    queryFn: apiClient.listArtifactFilterOptions,
+    retry: 1,
+  })
 
   const { data: artifacts, isLoading, error } = useQuery<ArtifactItem[]>({
-    queryKey: ['artifacts'],
-    queryFn: apiClient.listArtifacts,
+    queryKey: ['artifacts', queryParams],
+    queryFn: () => apiClient.listArtifacts(queryParams),
     retry: 1,
   })
 
   const deleteMut = useMutation({
     mutationFn: (artifactId: number) => apiClient.deleteArtifactById(artifactId),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['artifacts'] }); toast.success('Artefato removido.') },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['artifacts'] })
+      qc.invalidateQueries({ queryKey: ['artifact-filter-options'] })
+      toast.success('Artefato removido.')
+    },
     onError: () => toast.error('Erro ao remover artefato.'),
   })
 
@@ -823,7 +866,7 @@ export function Artifacts() {
             variant="outline"
             onClick={() => setShowDigest(true)}
             className="border-amber-700 text-amber-400 hover:bg-amber-900/20"
-            title="Gera resumo + flashcards + extrai tarefas em uma operação"
+            title="Gera resumo + flashcards + extrai tarefas em uma operaÃ§Ã£o"
           >
             <Zap className="mr-2 h-4 w-4" />
             Smart Digest
@@ -832,7 +875,7 @@ export function Artifacts() {
             variant="outline"
             onClick={() => window.location.href = '/studyplan'}
             className="border-emerald-700 text-emerald-400 hover:bg-emerald-900/20"
-            title="Cria plano de estudos completo: sessões, tarefas, flashcards"
+            title="Cria plano de estudos completo: sessÃµes, tarefas, flashcards"
           >
             <GraduationCap className="mr-2 h-4 w-4" />
             Plano de Estudos
@@ -845,21 +888,106 @@ export function Artifacts() {
         )}
       />
 
-      {/* Descrições das ações principais */}
+      {/* DescriÃ§Ãµes das aÃ§Ãµes principais */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div className="rounded-lg border border-blue-900/40 bg-blue-950/10 px-4 py-3">
           <p className="text-xs font-semibold text-blue-400 mb-0.5">Resumir Documento</p>
-          <p className="text-xs text-zinc-500">Resumo breve (≤300 palavras) ou aprofundado (seção por seção) com download em .md e PDF.</p>
+          <p className="text-xs text-zinc-500">Resumo breve (â‰¤300 palavras) ou aprofundado (seÃ§Ã£o por seÃ§Ã£o) com download em .md e PDF.</p>
         </div>
         <div className="rounded-lg border border-amber-900/40 bg-amber-950/10 px-4 py-3">
           <p className="text-xs font-semibold text-amber-400 mb-0.5">Smart Digest</p>
-          <p className="text-xs text-zinc-500">Resumo analítico + flashcards para revisão espaçada + extração automática de tarefas, tudo de uma vez.</p>
+          <p className="text-xs text-zinc-500">Resumo analÃ­tico + flashcards para revisÃ£o espaÃ§ada + extraÃ§Ã£o automÃ¡tica de tarefas, tudo de uma vez.</p>
         </div>
         <div className="rounded-lg border border-emerald-900/40 bg-emerald-950/10 px-4 py-3">
           <p className="text-xs font-semibold text-emerald-400 mb-0.5">Plano de Estudos</p>
-          <p className="text-xs text-zinc-500">Plano completo com sessões diárias no calendário, tarefas por tópico, flashcards SRS e resumo inicial.</p>
+          <p className="text-xs text-zinc-500">Plano completo com sessÃµes diÃ¡rias no calendÃ¡rio, tarefas por tÃ³pico, flashcards SRS e resumo inicial.</p>
         </div>
       </div>
+
+      <Card>
+        <CardContent className="space-y-3 py-4">
+          <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-4">
+            <Input
+              placeholder="Buscar por titulo ou arquivo..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+            <select
+              value={artifactTypeFilter}
+              onChange={e => setArtifactTypeFilter(e.target.value)}
+              className="h-10 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100"
+            >
+              <option value="all">Todos os tipos</option>
+              {(filterOptions?.artifact_types ?? []).map(type => (
+                <option key={type} value={type}>{type}</option>
+              ))}
+            </select>
+            <select
+              value={templateFilter}
+              onChange={e => setTemplateFilter(e.target.value)}
+              className="h-10 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100"
+            >
+              <option value="all">Todos os templates</option>
+              {(filterOptions?.template_ids ?? []).map(templateId => (
+                <option key={templateId} value={templateId}>{templateId}</option>
+              ))}
+            </select>
+            <select
+              value={sourceDocFilter}
+              onChange={e => setSourceDocFilter(e.target.value)}
+              className="h-10 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100"
+            >
+              <option value="all">Todos os documentos</option>
+              {(filterOptions?.source_doc_ids ?? []).map(sourceDocId => (
+                <option key={sourceDocId} value={sourceDocId}>{sourceDocId}</option>
+              ))}
+            </select>
+          </div>
+          <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-4">
+            <select
+              value={generationProfileFilter}
+              onChange={e => setGenerationProfileFilter(e.target.value)}
+              className="h-10 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100"
+            >
+              <option value="all">Todos os perfis</option>
+              {(filterOptions?.generation_profiles ?? []).map(profile => (
+                <option key={profile} value={profile}>{profile}</option>
+              ))}
+            </select>
+            <select
+              value={sortBy}
+              onChange={e => setSortBy(e.target.value as (typeof ARTIFACT_SORT_OPTIONS)[number]['value'])}
+              className="h-10 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100"
+            >
+              {ARTIFACT_SORT_OPTIONS.map(option => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <select
+              value={sortOrder}
+              onChange={e => setSortOrder(e.target.value as 'asc' | 'desc')}
+              className="h-10 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100"
+            >
+              <option value="desc">Descendente</option>
+              <option value="asc">Ascendente</option>
+            </select>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setSearch('')
+                setArtifactTypeFilter('all')
+                setTemplateFilter('all')
+                setSourceDocFilter('all')
+                setGenerationProfileFilter('all')
+                setSortBy('created_at')
+                setSortOrder('desc')
+              }}
+            >
+              Limpar filtros
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {error && (
         <div className="rounded-lg border border-red-800 bg-red-950/30 px-4 py-3 text-sm text-red-400">Erro ao carregar artefatos.</div>
@@ -903,8 +1031,31 @@ export function Artifacts() {
                         {artifact.title?.trim() ? artifact.title : artifact.filename}
                       </p>
                       <p className="text-xs text-zinc-500">
-                        {typeLabel ? `${typeLabel} · ` : ''}{formatBytes(artifact.size)} · {formatDate(artifact.created_at)}
+                        {typeLabel ? `${typeLabel} Â· ` : ''}{formatBytes(artifact.size)} Â· {formatDate(artifact.created_at)}
                       </p>
+                      <div className="mt-1 flex flex-wrap gap-1.5">
+                        {artifact.template_id && (
+                          <span className="rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-300">
+                            Template: {artifact.template_id}
+                          </span>
+                        )}
+                        {artifact.generation_profile && (
+                          <span className="rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-300">
+                            Perfil: {artifact.generation_profile}
+                          </span>
+                        )}
+                        {(artifact.source_doc_count ?? 0) > 0 && (
+                          <span className="rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-300">
+                            Fontes: {artifact.source_doc_count}
+                          </span>
+                        )}
+                        {(artifact.confidence_level || typeof artifact.confidence_score === 'number') && (
+                          <span className={`rounded-full border px-2 py-0.5 text-[11px] ${confidenceBadgeClass(artifact.confidence_level)}`}>
+                            Confianca: {artifact.confidence_level ?? 'n/a'}
+                            {typeof artifact.confidence_score === 'number' ? ` (${Math.round(artifact.confidence_score * 100)}%)` : ''}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 shrink-0 ml-4">
@@ -956,3 +1107,5 @@ export function Artifacts() {
     </PageShell>
   )
 }
+
+

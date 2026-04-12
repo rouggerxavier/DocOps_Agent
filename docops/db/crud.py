@@ -6,6 +6,7 @@ from datetime import datetime
 import re
 import unicodedata
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from docops.db.models import ArtifactRecord, DocumentRecord, ReminderRecord, ScheduleRecord, User
@@ -112,6 +113,32 @@ def delete_document_record(db: Session, user_id: int, doc_id: str) -> bool:
 
 # -- ArtifactRecord -----------------------------------------------------------
 
+def _normalize_source_doc_ids(source_doc_ids: list[str] | None) -> str | None:
+    if not source_doc_ids:
+        return None
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in source_doc_ids:
+        value = str(raw or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    if not normalized:
+        return None
+    # Pipe-delimited with leading/trailing marker allows exact-ish LIKE match.
+    return f"|{'|'.join(normalized)}|"
+
+
+def parse_source_doc_ids_blob(blob: str | None) -> list[str]:
+    value = str(blob or "").strip()
+    if not value:
+        return []
+    if value.startswith("|") and value.endswith("|"):
+        return [item for item in value.strip("|").split("|") if item]
+    return [item for item in value.split(",") if item]
+
+
 def create_artifact_record(
     db: Session,
     *,
@@ -120,17 +147,30 @@ def create_artifact_record(
     filename: str,
     path: str,
     title: str | None = None,
+    template_id: str | None = None,
+    generation_profile: str | None = None,
+    confidence_level: str | None = None,
+    confidence_score: float | None = None,
+    metadata_version: int = 1,
     source_doc_id: str | None = None,
     source_doc_id_2: str | None = None,
+    source_doc_ids: list[str] | None = None,
 ) -> ArtifactRecord:
+    source_doc_ids_blob = _normalize_source_doc_ids(source_doc_ids)
     artifact = ArtifactRecord(
         user_id=user_id,
         artifact_type=artifact_type,
         title=title,
         filename=filename,
         path=path,
+        template_id=template_id,
+        generation_profile=generation_profile,
+        confidence_level=confidence_level,
+        confidence_score=confidence_score,
+        metadata_version=max(1, int(metadata_version or 1)),
         source_doc_id=source_doc_id,
         source_doc_id_2=source_doc_id_2,
+        source_doc_ids=source_doc_ids_blob,
     )
     db.add(artifact)
     db.commit()
@@ -138,13 +178,100 @@ def create_artifact_record(
     return artifact
 
 
-def list_artifacts_for_user(db: Session, user_id: int) -> list[ArtifactRecord]:
-    return (
+def list_artifacts_for_user(
+    db: Session,
+    user_id: int,
+    *,
+    artifact_type: str | None = None,
+    source_doc_id: str | None = None,
+    template_id: str | None = None,
+    generation_profile: str | None = None,
+    search: str | None = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+) -> list[ArtifactRecord]:
+    query = db.query(ArtifactRecord).filter(ArtifactRecord.user_id == user_id)
+
+    if artifact_type:
+        query = query.filter(ArtifactRecord.artifact_type == artifact_type)
+    if template_id:
+        query = query.filter(ArtifactRecord.template_id == template_id)
+    if generation_profile:
+        query = query.filter(ArtifactRecord.generation_profile == generation_profile)
+    if source_doc_id:
+        source_doc_id = str(source_doc_id).strip()
+        if source_doc_id:
+            query = query.filter(
+                or_(
+                    ArtifactRecord.source_doc_id == source_doc_id,
+                    ArtifactRecord.source_doc_id_2 == source_doc_id,
+                    ArtifactRecord.source_doc_ids.like(f"%|{source_doc_id}|%"),
+                )
+            )
+    if search:
+        term = f"%{str(search).strip()}%"
+        query = query.filter(
+            or_(
+                ArtifactRecord.title.ilike(term),
+                ArtifactRecord.filename.ilike(term),
+            )
+        )
+
+    sort_key = str(sort_by or "created_at").strip().lower()
+    sort_dir = str(sort_order or "desc").strip().lower()
+    sort_map = {
+        "created_at": ArtifactRecord.created_at,
+        "updated_at": ArtifactRecord.updated_at,
+        "title": ArtifactRecord.title,
+        "artifact_type": ArtifactRecord.artifact_type,
+        "confidence_score": ArtifactRecord.confidence_score,
+        "filename": ArtifactRecord.filename,
+    }
+    sort_column = sort_map.get(sort_key, ArtifactRecord.created_at)
+    if sort_dir == "asc":
+        query = query.order_by(sort_column.asc(), ArtifactRecord.id.asc())
+    else:
+        query = query.order_by(sort_column.desc(), ArtifactRecord.id.desc())
+
+    return query.all()
+
+
+def list_artifact_filter_options_for_user(db: Session, user_id: int) -> dict[str, list[str]]:
+    records = (
         db.query(ArtifactRecord)
         .filter(ArtifactRecord.user_id == user_id)
-        .order_by(ArtifactRecord.created_at.desc())
         .all()
     )
+
+    artifact_types: set[str] = set()
+    template_ids: set[str] = set()
+    generation_profiles: set[str] = set()
+    source_doc_ids: set[str] = set()
+    confidence_levels: set[str] = set()
+
+    for record in records:
+        if record.artifact_type:
+            artifact_types.add(str(record.artifact_type))
+        if record.template_id:
+            template_ids.add(str(record.template_id))
+        if record.generation_profile:
+            generation_profiles.add(str(record.generation_profile))
+        if record.confidence_level:
+            confidence_levels.add(str(record.confidence_level))
+
+        raw_source_ids = [record.source_doc_id, record.source_doc_id_2] + parse_source_doc_ids_blob(record.source_doc_ids)
+        for source_id in raw_source_ids:
+            value = str(source_id or "").strip()
+            if value:
+                source_doc_ids.add(value)
+
+    return {
+        "artifact_types": sorted(artifact_types),
+        "template_ids": sorted(template_ids),
+        "generation_profiles": sorted(generation_profiles),
+        "source_doc_ids": sorted(source_doc_ids),
+        "confidence_levels": sorted(confidence_levels),
+    }
 
 
 def get_artifact_by_user_and_filename(db: Session, user_id: int, filename: str) -> ArtifactRecord | None:

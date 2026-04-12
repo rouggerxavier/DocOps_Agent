@@ -24,6 +24,30 @@ logger = get_logger("docops.api.summarize")
 router = APIRouter()
 
 
+def _confidence_level_from_score(score: float | None) -> str | None:
+    if score is None:
+        return None
+    if score >= 0.8:
+        return "high"
+    if score >= 0.55:
+        return "medium"
+    return "low"
+
+
+def _extract_summary_confidence(diagnostics: dict | None) -> tuple[str | None, float | None]:
+    if not isinstance(diagnostics, dict):
+        return None, None
+
+    score: float | None = None
+    coverage = diagnostics.get("coverage", {})
+    if isinstance(coverage, dict):
+        raw = coverage.get("overall_coverage_score")
+        if isinstance(raw, (int, float)):
+            score = max(0.0, min(1.0, float(raw)))
+
+    return _confidence_level_from_score(score), score
+
+
 def _run_summarize(
     file_name: str,
     doc_id: str,
@@ -83,6 +107,8 @@ def _run_summarize(
         heading=f"{mode_label} - {Path(file_name).stem}",
         context_line=f"Documento-base: {file_name}",
     )
+    confidence_level, confidence_score = _extract_summary_confidence(diagnostics)
+    generation_profile = f"summary:{summary_mode}:{template.template_id}"
 
     artifact_path = None
     artifact_filename = None
@@ -101,6 +127,9 @@ def _run_summarize(
         "template_id": template.template_id,
         "template_label": template.label,
         "template_description": template.short_description,
+        "generation_profile": generation_profile,
+        "confidence_level": confidence_level,
+        "confidence_score": confidence_score,
         "diagnostics": diagnostics,
     }
 
@@ -174,7 +203,12 @@ async def summarize(
             title=f"Summary ({mode_suffix}){title_suffix} - {document.file_name}",
             filename=str(result["artifact_filename"]),
             path=str(result["artifact_path"]),
+            template_id=result.get("template_id"),
+            generation_profile=result.get("generation_profile"),
+            confidence_level=result.get("confidence_level"),
+            confidence_score=result.get("confidence_score"),
             source_doc_id=document.doc_id,
+            source_doc_ids=[document.doc_id],
         )
 
     return SummarizeResponse(
@@ -238,7 +272,12 @@ async def summarize_async(
                         title=f"Summary ({mode_suffix}){title_suffix} - {document.file_name}",
                         filename=str(result["artifact_filename"]),
                         path=str(result["artifact_path"]),
+                        template_id=result.get("template_id"),
+                        generation_profile=result.get("generation_profile"),
+                        confidence_level=result.get("confidence_level"),
+                        confidence_score=result.get("confidence_score"),
                         source_doc_id=document.doc_id,
+                        source_doc_ids=[document.doc_id],
                     )
                 finally:
                     db_local.close()

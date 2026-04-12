@@ -115,8 +115,10 @@ async def compare(
             title=f"Comparison - {doc1.file_name} vs {doc2.file_name}",
             filename=str(result["artifact_filename"]),
             path=str(result["artifact_path"]),
+            generation_profile="comparison:standard",
             source_doc_id=doc1.doc_id,
             source_doc_id_2=doc2.doc_id,
+            source_doc_ids=[doc1.doc_id, doc2.doc_id],
         )
 
     return CompareResponse(

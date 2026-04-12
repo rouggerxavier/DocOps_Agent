@@ -257,6 +257,21 @@ class ArtifactItem(BaseModel):
     created_at: str
     artifact_type: str = ""
     title: Optional[str] = None
+    template_id: Optional[str] = None
+    generation_profile: Optional[str] = None
+    confidence_level: Optional[str] = None
+    confidence_score: Optional[float] = None
+    metadata_version: int = 1
+    source_doc_ids: List[str] = Field(default_factory=list)
+    source_doc_count: int = 0
+
+
+class ArtifactFilterOptionsResponse(BaseModel):
+    artifact_types: List[str] = Field(default_factory=list)
+    template_ids: List[str] = Field(default_factory=list)
+    generation_profiles: List[str] = Field(default_factory=list)
+    source_doc_ids: List[str] = Field(default_factory=list)
+    confidence_levels: List[str] = Field(default_factory=list)
 
 
 # ── /api/health ───────────────────────────────────────────────────────────────

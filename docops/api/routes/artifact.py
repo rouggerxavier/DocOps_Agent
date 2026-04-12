@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from docops.api.schemas import (
+    ArtifactFilterOptionsResponse,
     ArtifactItem,
     ArtifactRequest,
     ArtifactResponse,
@@ -24,8 +25,10 @@ from docops.config import config  # kept for backward-compatible test patching
 from docops.db.crud import (
     create_artifact_record,
     get_artifact_by_user_and_id,
+    list_artifact_filter_options_for_user,
     list_artifacts_by_user_and_filename,
     list_artifacts_for_user,
+    parse_source_doc_ids_blob,
 )
 from docops.db.database import SessionLocal, get_db
 from docops.db.models import ArtifactRecord, User
@@ -43,6 +46,34 @@ def _safe_stem(text: str, limit: int = 48) -> str:
     stem = re.sub(r"[^A-Za-z0-9._-]+", "_", text.strip())
     stem = stem.strip("._-") or "artifact"
     return stem[:limit]
+
+
+def _confidence_level_from_score(score: float | None) -> str | None:
+    if score is None:
+        return None
+    if score >= 0.8:
+        return "high"
+    if score >= 0.55:
+        return "medium"
+    return "low"
+
+
+def _extract_confidence_snapshot(state: dict) -> tuple[str | None, float | None]:
+    grounding = state.get("grounding_info") or state.get("grounding") or {}
+    if isinstance(grounding, dict):
+        raw = grounding.get("support_rate")
+        if isinstance(raw, (int, float)):
+            score = max(0.0, min(1.0, float(raw)))
+            return _confidence_level_from_score(score), score
+
+    quality = state.get("quality_signal")
+    if isinstance(quality, dict):
+        raw = quality.get("score")
+        if isinstance(raw, (int, float)):
+            score = max(0.0, min(1.0, float(raw)))
+            level = str(quality.get("level") or _confidence_level_from_score(score) or "").strip() or None
+            return level, score
+    return None, None
 
 
 def _run_artifact(
@@ -83,6 +114,8 @@ def _run_artifact(
             user_id=user_id,
         )
     )
+    confidence_level, confidence_score = _extract_confidence_snapshot(state)
+    generation_profile = f"artifact:{type_}:{template.template_id}"
     answer = apply_template_layout(
         state.get("answer", ""),
         template=template,
@@ -102,6 +135,9 @@ def _run_artifact(
         "template_id": template.template_id,
         "template_label": template.label,
         "template_description": template.short_description,
+        "generation_profile": generation_profile,
+        "confidence_level": confidence_level,
+        "confidence_score": confidence_score,
     }
 
 
@@ -293,8 +329,13 @@ async def create_artifact(
         title=f"{body.topic[:480]}{title_suffix}"[:512],
         filename=result["filename"],
         path=result["path"],
+        template_id=result.get("template_id"),
+        generation_profile=result.get("generation_profile"),
+        confidence_level=result.get("confidence_level"),
+        confidence_score=result.get("confidence_score"),
         source_doc_id=doc_ids[0] if len(doc_ids) >= 1 else None,
         source_doc_id_2=doc_ids[1] if len(doc_ids) >= 2 else None,
+        source_doc_ids=doc_ids,
     )
     emit_event(
         logger,
@@ -373,8 +414,13 @@ async def create_artifact_async(
                         title=f"{body.topic[:480]}{title_suffix}"[:512],
                         filename=result["filename"],
                         path=result["path"],
+                        template_id=result.get("template_id"),
+                        generation_profile=result.get("generation_profile"),
+                        confidence_level=result.get("confidence_level"),
+                        confidence_score=result.get("confidence_score"),
                         source_doc_id=doc_ids[0] if len(doc_ids) >= 1 else None,
                         source_doc_id_2=doc_ids[1] if len(doc_ids) >= 2 else None,
+                        source_doc_ids=doc_ids,
                     )
                 finally:
                     db_local.close()
@@ -419,15 +465,37 @@ async def create_artifact_async(
 
 @router.get("/artifacts", response_model=List[ArtifactItem])
 async def list_artifacts(
+    artifact_type: str | None = Query(default=None),
+    source_doc_id: str | None = Query(default=None),
+    template_id: str | None = Query(default=None),
+    generation_profile: str | None = Query(default=None),
+    search: str | None = Query(default=None),
+    sort_by: str = Query(default="created_at"),
+    sort_order: str = Query(default="desc"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> List[ArtifactItem]:
     """List all saved artifacts for the current user (source: SQL)."""
-    records = list_artifacts_for_user(db, current_user.id)
+    records = list_artifacts_for_user(
+        db,
+        current_user.id,
+        artifact_type=artifact_type,
+        source_doc_id=source_doc_id,
+        template_id=template_id,
+        generation_profile=generation_profile,
+        search=search,
+        sort_by=sort_by,
+        sort_order=sort_order,
+    )
     items = []
     for r in records:
         p = Path(r.path)
         size = p.stat().st_size if p.exists() else 0
+        source_doc_ids = []
+        for source_id in [r.source_doc_id, r.source_doc_id_2] + parse_source_doc_ids_blob(r.source_doc_ids):
+            value = str(source_id or "").strip()
+            if value and value not in source_doc_ids:
+                source_doc_ids.append(value)
         items.append(
             ArtifactItem(
                 id=r.id,
@@ -436,9 +504,25 @@ async def list_artifacts(
                 created_at=r.created_at.isoformat(),
                 artifact_type=r.artifact_type,
                 title=r.title,
+                template_id=r.template_id,
+                generation_profile=r.generation_profile,
+                confidence_level=r.confidence_level,
+                confidence_score=r.confidence_score,
+                metadata_version=int(r.metadata_version or 1),
+                source_doc_ids=source_doc_ids,
+                source_doc_count=len(source_doc_ids),
             )
         )
     return items
+
+
+@router.get("/artifacts/filters", response_model=ArtifactFilterOptionsResponse)
+async def list_artifact_filter_options(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ArtifactFilterOptionsResponse:
+    options = list_artifact_filter_options_for_user(db, current_user.id)
+    return ArtifactFilterOptionsResponse(**options)
 
 
 @router.get("/artifacts/id/{artifact_id}")

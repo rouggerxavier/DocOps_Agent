@@ -1002,6 +1002,166 @@ def test_artifact_duplicate_filename_requires_id_for_legacy_routes():
     app.dependency_overrides[get_db] = _override_get_db
 
 
+def test_artifacts_list_supports_metadata_filters_and_sort():
+    from docops.db import crud
+
+    app.dependency_overrides[get_db] = _override_get_db
+    Base.metadata.create_all(bind=_test_engine)
+    auth_client, _ = _make_auth_client()
+
+    scope = uuid.uuid4().hex[:10]
+    source_doc_a = f"{scope}-doc-a"
+    source_doc_b = f"{scope}-doc-b"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path_a = Path(tmpdir) / f"{scope}_a.md"
+        path_b = Path(tmpdir) / f"{scope}_b.md"
+        path_c = Path(tmpdir) / f"{scope}_c.md"
+        path_a.write_text("artifact a", encoding="utf-8")
+        path_b.write_text("artifact b", encoding="utf-8")
+        path_c.write_text("artifact c", encoding="utf-8")
+
+        db = _TestSession()
+        try:
+            rec_a = crud.create_artifact_record(
+                db,
+                user_id=1,
+                artifact_type="summary",
+                title=f"[{scope}] Alpha",
+                filename=f"{scope}_alpha.md",
+                path=str(path_a),
+                template_id="brief",
+                generation_profile="summary:brief:brief",
+                confidence_level="high",
+                confidence_score=0.91,
+                source_doc_ids=[source_doc_a],
+            )
+            rec_b = crud.create_artifact_record(
+                db,
+                user_id=1,
+                artifact_type="checklist",
+                title=f"[{scope}] Beta",
+                filename=f"{scope}_beta.md",
+                path=str(path_b),
+                template_id="exam_pack",
+                generation_profile="artifact:checklist:exam_pack",
+                confidence_level="low",
+                confidence_score=0.31,
+                source_doc_id=source_doc_b,
+                source_doc_ids=[source_doc_b],
+            )
+            rec_c = crud.create_artifact_record(
+                db,
+                user_id=1,
+                artifact_type="summary",
+                title=f"[{scope}] Gamma",
+                filename=f"{scope}_gamma.md",
+                path=str(path_c),
+                template_id="deep_dossier",
+                generation_profile="summary:deep:deep_dossier",
+                confidence_level="medium",
+                confidence_score=0.67,
+                source_doc_id=source_doc_a,
+                source_doc_ids=[source_doc_a, source_doc_b],
+            )
+            rec_a_id = rec_a.id
+            rec_b_id = rec_b.id
+            rec_c_id = rec_c.id
+        finally:
+            db.close()
+
+        filtered_template = auth_client.get(
+            "/api/artifacts",
+            params={"template_id": "exam_pack", "search": scope},
+        )
+        assert filtered_template.status_code == 200
+        filtered_template_ids = {item["id"] for item in filtered_template.json()}
+        assert rec_b_id in filtered_template_ids
+        assert rec_a_id not in filtered_template_ids
+        assert rec_c_id not in filtered_template_ids
+
+        filtered_source = auth_client.get(
+            "/api/artifacts",
+            params={
+                "source_doc_id": source_doc_a,
+                "sort_by": "confidence_score",
+                "sort_order": "desc",
+            },
+        )
+        assert filtered_source.status_code == 200
+        filtered_source_ids = [item["id"] for item in filtered_source.json()]
+        assert filtered_source_ids[:2] == [rec_a_id, rec_c_id]
+
+        first_item = filtered_source.json()[0]
+        assert first_item["generation_profile"] == "summary:brief:brief"
+        assert first_item["confidence_level"] == "high"
+        assert first_item["confidence_score"] == pytest.approx(0.91, rel=1e-6)
+        assert source_doc_a in first_item["source_doc_ids"]
+        assert first_item["source_doc_count"] >= 1
+
+        filtered_profile = auth_client.get(
+            "/api/artifacts",
+            params={"generation_profile": "summary:deep:deep_dossier", "search": scope},
+        )
+        assert filtered_profile.status_code == 200
+        filtered_profile_ids = {item["id"] for item in filtered_profile.json()}
+        assert rec_c_id in filtered_profile_ids
+        assert rec_a_id not in filtered_profile_ids
+        assert rec_b_id not in filtered_profile_ids
+
+    _clear_auth_override()
+    app.dependency_overrides[get_db] = _override_get_db
+
+
+def test_artifact_filter_options_endpoint_returns_metadata_dimensions():
+    from docops.db import crud
+
+    app.dependency_overrides[get_db] = _override_get_db
+    Base.metadata.create_all(bind=_test_engine)
+    auth_client, _ = _make_auth_client()
+
+    scope = uuid.uuid4().hex[:10]
+    source_doc_a = f"{scope}-opt-a"
+    source_doc_b = f"{scope}-opt-b"
+    profile = f"summary:deep:{scope}"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        file_path = Path(tmpdir) / f"{scope}_options.md"
+        file_path.write_text("artifact options", encoding="utf-8")
+
+        db = _TestSession()
+        try:
+            crud.create_artifact_record(
+                db,
+                user_id=1,
+                artifact_type=f"summary_{scope}",
+                title=f"[{scope}] Filter Options",
+                filename=f"{scope}_options.md",
+                path=str(file_path),
+                template_id=f"template_{scope}",
+                generation_profile=profile,
+                confidence_level="high",
+                confidence_score=0.88,
+                source_doc_id=source_doc_a,
+                source_doc_ids=[source_doc_a, source_doc_b],
+            )
+        finally:
+            db.close()
+
+        response = auth_client.get("/api/artifacts/filters")
+        assert response.status_code == 200
+        payload = response.json()
+        assert f"summary_{scope}" in payload["artifact_types"]
+        assert f"template_{scope}" in payload["template_ids"]
+        assert profile in payload["generation_profiles"]
+        assert source_doc_a in payload["source_doc_ids"]
+        assert source_doc_b in payload["source_doc_ids"]
+        assert "high" in payload["confidence_levels"]
+
+    _clear_auth_override()
+    app.dependency_overrides[get_db] = _override_get_db
+
+
 def test_alembic_upgrade_creates_supported_schema(tmp_path):
     from docops.db.database import run_db_migrations
 

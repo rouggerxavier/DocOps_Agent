@@ -79,8 +79,14 @@ class ArtifactRecord(Base):
     title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     filename: Mapped[str] = mapped_column(String(512), nullable=False)
     path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    template_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    generation_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    confidence_level: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    metadata_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     source_doc_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_doc_id_2: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_doc_ids: Mapped[str | None] = mapped_column(String(512), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
 
@@ -88,6 +94,10 @@ class ArtifactRecord(Base):
 
     __table_args__ = (
         Index("ix_artifact_user_filename", "user_id", "filename"),
+        Index("ix_artifact_user_type", "user_id", "artifact_type"),
+        Index("ix_artifact_user_template", "user_id", "template_id"),
+        Index("ix_artifact_user_created", "user_id", "created_at"),
+        Index("ix_artifact_user_confidence", "user_id", "confidence_score"),
     )
 
     def __repr__(self) -> str:
