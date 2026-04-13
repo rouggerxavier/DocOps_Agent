@@ -639,7 +639,7 @@ function StudySession({
           </span>
         </div>
         <div className="flex items-center gap-3">
-          <div className="h-1 w-24 bg-surface-container-highest rounded-full overflow-hidden">
+          <div className="h-1 w-24 rounded-full overflow-hidden bg-surface-container-highest sm:w-32">
             <div
               className="h-full bg-primary rounded-full transition-all duration-500"
               style={{ width: `${progressPct}%` }}
@@ -656,7 +656,7 @@ function StudySession({
           Pergunta
         </p>
         <h2
-          className="text-3xl md:text-4xl lg:text-5xl font-headline font-extrabold tracking-tighter text-on-surface leading-[1.1] mb-8"
+          className="text-2xl font-headline font-extrabold tracking-tighter text-on-surface leading-[1.1] mb-6 sm:text-3xl md:text-4xl lg:text-5xl sm:mb-8"
           style={{ textShadow: '0 0 40px rgba(147,197,253,0.15)' }}
         >
           {card.front}
@@ -876,9 +876,9 @@ function StudySession({
 
       {/* ── Fixed bottom ease buttons (only after reveal) ── */}
       {revealed && (
-        <div className="fixed bottom-0 left-0 right-0 z-50 md:pl-64"
+        <div className="fixed bottom-0 left-0 right-0 z-50"
           style={{ background: 'linear-gradient(to top, rgba(10,10,10,0.98) 60%, transparent)' }}>
-          <div className="max-w-4xl mx-auto px-4 md:px-8 pb-6 pt-4">
+          <div className="max-w-4xl mx-auto px-4 pb-20 pt-4 sm:pb-6 md:px-8">
             <div className="flex gap-3">
               <button
                 onClick={() => handleRate(1)}
@@ -1045,18 +1045,18 @@ export function Flashcards() {
           transform: 'translate(-50%, 50%)',
         }} />
 
-      <div className="px-8 py-10 max-w-7xl mx-auto">
+      <div className="px-4 py-6 max-w-7xl mx-auto sm:px-8 sm:py-10">
 
         {/* ── Hero section ── */}
-        <section className="flex flex-col md:flex-row md:items-end justify-between gap-8 mb-16">
+        <section className="flex flex-col gap-5 mb-8 sm:flex-row sm:items-end sm:justify-between sm:gap-8 sm:mb-16">
           <div className="max-w-2xl">
-            <span className="text-primary font-bold tracking-widest text-xs uppercase mb-3 block">
+            <span className="text-primary font-bold tracking-widest text-xs uppercase mb-2 block sm:mb-3">
               Seus Flashcards
             </span>
-            <h1 className="text-4xl md:text-5xl font-headline font-extrabold text-on-surface leading-tight tracking-tighter">
+            <h1 className="text-3xl font-headline font-extrabold text-on-surface leading-tight tracking-tighter sm:text-4xl md:text-5xl">
               Estude melhor, lembre mais.
             </h1>
-            <p className="mt-5 text-on-surface-variant text-lg leading-relaxed max-w-xl">
+            <p className="mt-3 text-on-surface-variant text-sm leading-relaxed max-w-xl sm:mt-5 sm:text-lg">
               Crie cartões de estudo a partir dos seus documentos e revise no seu ritmo. A IA gera as perguntas — você só precisa responder.
             </p>
           </div>
@@ -1064,7 +1064,7 @@ export function Flashcards() {
           <button
             onClick={() => { setGenerateError(null); setShowGenerate(true) }}
             disabled={docs.length === 0}
-            className="flex items-center gap-3 font-headline font-bold py-4 px-8 rounded-xl transition-all duration-300 hover:scale-[1.02] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 shrink-0 text-[#001e30]"
+            className="flex w-full items-center justify-center gap-3 font-headline font-bold py-3.5 px-6 rounded-xl transition-all duration-300 hover:scale-[1.02] active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:scale-100 shrink-0 text-[#001e30] sm:w-auto sm:py-4 sm:px-8"
             style={{
               background: 'linear-gradient(135deg, #c5e3ff 0%, #90caf9 100%)',
               boxShadow: '0 20px 50px rgba(197,227,255,0.12)',
@@ -1087,7 +1087,7 @@ export function Flashcards() {
           {!isLoading && decks.map(deck => (
             <div
               key={deck.id}
-              className="group relative rounded-xl p-6 transition-all duration-300 cursor-pointer flex flex-col justify-between h-64 overflow-hidden"
+              className="group relative rounded-xl p-5 transition-all duration-300 cursor-pointer flex flex-col justify-between min-h-[180px] overflow-hidden sm:p-6 sm:h-64"
               style={{ background: '#111111' }}
               onMouseEnter={e => (e.currentTarget.style.background = '#1e1e1e')}
               onMouseLeave={e => (e.currentTarget.style.background = '#111111')}
@@ -1132,10 +1132,10 @@ export function Flashcards() {
                 </div>
               </div>
 
-              {/* Delete button */}
+              {/* Delete button — always visible on mobile, hover-only on sm+ */}
               <button
                 onClick={e => { e.stopPropagation(); deleteMut.mutate(deck.id) }}
-                className="absolute top-3 right-3 opacity-0 group-hover:opacity-100 text-on-surface-variant hover:text-red-400 transition-all p-1 rounded"
+                className="absolute top-3 right-3 text-on-surface-variant hover:text-red-400 transition-all p-1 rounded sm:opacity-0 sm:group-hover:opacity-100"
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
