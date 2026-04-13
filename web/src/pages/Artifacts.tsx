@@ -20,13 +20,6 @@ const ARTIFACT_SORT_OPTIONS = [
   { value: 'confidence_score', label: 'Confiança' },
 ] as const
 
-function confidenceBadgeClass(level: string | null | undefined): string {
-  const normalized = String(level ?? '').toLowerCase()
-  if (normalized === 'high') return 'border-emerald-700/50 bg-emerald-950/30 text-emerald-400'
-  if (normalized === 'medium') return 'border-amber-700/50 bg-amber-950/30 text-amber-400'
-  if (normalized === 'low') return 'border-rose-700/50 bg-rose-950/30 text-rose-400'
-  return 'border-[#282828] bg-[#111111] text-[#c6c5d4]'
-}
 
 function pickDefaultTemplate(
   templates: ArtifactTemplate[],
