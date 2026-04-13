@@ -63,7 +63,7 @@ function SurfaceCard({
       'rounded-[1.15rem] border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] shadow-none',
       className,
     )}>
-      <CardContent className="p-5">{children}</CardContent>
+      <CardContent className="p-4 sm:p-5">{children}</CardContent>
     </Card>
   )
 }
@@ -75,6 +75,7 @@ function MetricCard({
   description,
   loading,
   tone = 'primary',
+  className,
 }: {
   title: string
   value: string | number
@@ -82,6 +83,7 @@ function MetricCard({
   description: string
   loading?: boolean
   tone?: 'primary' | 'tertiary' | 'neutral'
+  className?: string
 }) {
   const toneMap: Record<string, string> = {
     primary: 'text-[color:var(--ui-accent)] bg-[color:var(--ui-accent-soft)]',
@@ -90,19 +92,19 @@ function MetricCard({
   }
 
   return (
-    <SurfaceCard className="bg-[color:var(--ui-surface-2)]">
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div className={cn('flex h-11 w-11 items-center justify-center rounded-xl', toneMap[tone])}>
+    <SurfaceCard className={cn('h-full bg-[color:var(--ui-surface-2)]', className)}>
+      <div className="mb-4 flex items-start justify-between gap-4 sm:mb-5">
+        <div className={cn('flex h-10 w-10 items-center justify-center rounded-xl sm:h-11 sm:w-11', toneMap[tone])}>
           <Icon className="h-5 w-5" />
         </div>
       </div>
-      <p className="text-[11px] uppercase tracking-[0.16em] text-[color:var(--ui-text-meta)]">{title}</p>
+      <p className="text-[10px] uppercase tracking-[0.14em] text-[color:var(--ui-text-meta)] sm:text-[11px] sm:tracking-[0.16em]">{title}</p>
       {loading ? (
-        <Skeleton className="mt-2 h-8 w-20 rounded-md" />
+        <Skeleton className="mt-2 h-7 w-16 rounded-md sm:h-8 sm:w-20" />
       ) : (
-        <p className="mt-2 font-headline text-4xl font-bold leading-none text-[color:var(--ui-text)]">{value}</p>
+        <p className="mt-2 font-headline text-3xl font-bold leading-none text-[color:var(--ui-text)] sm:text-4xl">{value}</p>
       )}
-      <p className="mt-3 text-xs text-[color:var(--ui-text-dim)]">{description}</p>
+      <p className="mt-2 text-[11px] text-[color:var(--ui-text-dim)] sm:mt-3 sm:text-xs">{description}</p>
     </SurfaceCard>
   )
 }
@@ -127,10 +129,10 @@ function QuickActionTile({
   return (
     <Link
       to={to}
-      className="group cursor-pointer rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] p-4 transition-colors duration-200 hover:border-[color:var(--ui-border-strong)] hover:bg-[color:var(--ui-surface-3)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ui-accent)]"
+      className="group cursor-pointer rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] p-3.5 transition-colors duration-200 hover:border-[color:var(--ui-border-strong)] hover:bg-[color:var(--ui-surface-3)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ui-accent)] sm:p-4"
     >
       <Icon className={cn('h-5 w-5 transition-transform duration-200 group-hover:scale-110', toneClasses[tone])} />
-      <p className="mt-2 text-sm font-semibold text-[color:var(--ui-text)]">{label}</p>
+      <p className="mt-2 text-xs font-semibold text-[color:var(--ui-text)] sm:text-sm">{label}</p>
     </Link>
   )
 }
@@ -207,7 +209,7 @@ function DailyQuestionPanel({
           ) : null}
         </div>
 
-        <p className="font-headline text-2xl font-bold leading-tight text-[color:var(--ui-text)]">
+        <p className="font-headline text-xl font-bold leading-tight text-[color:var(--ui-text)] sm:text-2xl">
           {data.question}
         </p>
 
@@ -217,14 +219,14 @@ function DailyQuestionPanel({
               value={userAnswer}
               onChange={(event) => setUserAnswer(event.target.value)}
               placeholder="Articule sua resposta aqui..."
-              rows={4}
+              rows={3}
               className="w-full resize-none rounded-xl border border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-2)] px-4 py-3 text-sm text-[color:var(--ui-text)] placeholder:text-[color:var(--ui-text-meta)] outline-none transition-colors focus:border-[color:var(--ui-accent)]"
             />
             <div className="flex justify-end">
               <Button
                 onClick={() => evaluateMutation.mutate()}
                 disabled={userAnswer.trim().length < 3 || evaluateMutation.isPending}
-                className="bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)]"
+                className="w-full bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)] sm:w-auto"
               >
                 {evaluateMutation.isPending ? 'Avaliando...' : 'Avaliar resposta'}
               </Button>
@@ -363,18 +365,18 @@ export function Dashboard() {
   }
 
   return (
-    <PageShell className="space-y-6">
-      <section className="relative overflow-hidden rounded-[1.5rem] border border-[color:var(--ui-border-soft)] bg-[linear-gradient(120deg,rgba(15,20,28,0.98)_0%,rgba(19,26,36,0.95)_58%,rgba(27,36,48,0.88)_100%)] p-6 sm:p-8">
+    <PageShell className="space-y-5 pb-20 sm:space-y-6 md:pb-0">
+      <section className="relative overflow-hidden rounded-[1.25rem] border border-[color:var(--ui-border-soft)] bg-[linear-gradient(120deg,rgba(15,20,28,0.98)_0%,rgba(19,26,36,0.95)_58%,rgba(27,36,48,0.88)_100%)] p-4 sm:rounded-[1.5rem] sm:p-8">
         <div className="pointer-events-none absolute -top-20 right-8 h-52 w-52 rounded-full bg-[color:var(--ui-accent-soft)] blur-3xl" />
         <div className="pointer-events-none absolute bottom-0 left-0 h-24 w-full bg-[linear-gradient(180deg,transparent_0%,rgba(0,0,0,0.18)_100%)]" />
 
         <div className="relative z-10 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-[11px] uppercase tracking-[0.18em] text-[color:var(--ui-text-meta)]">{todayLabel} - {currentTimeLabel}</p>
-            <h1 className="mt-2 font-headline text-4xl font-extrabold tracking-tight text-[color:var(--ui-text)]">
+            <p className="text-[10px] uppercase tracking-[0.14em] text-[color:var(--ui-text-meta)] sm:text-[11px] sm:tracking-[0.18em]">{todayLabel} - {currentTimeLabel}</p>
+            <h1 className="mt-2 font-headline text-3xl font-extrabold tracking-tight text-[color:var(--ui-text)] sm:text-4xl">
               {greeting}, {firstName}.
             </h1>
-            <p className="mt-2 max-w-xl text-sm text-[color:var(--ui-text-dim)]">
+            <p className="mt-2 max-w-xl text-xs text-[color:var(--ui-text-dim)] sm:text-sm">
               Painel operacional com foco em contexto, ritmo diário e consolidação dos seus artefatos.
             </p>
             <div className="mt-4 flex flex-wrap items-center gap-3">
@@ -382,17 +384,17 @@ export function Dashboard() {
                 <span className={cn('h-1.5 w-1.5 rounded-full', docsError ? 'bg-rose-400' : 'bg-emerald-400')} />
                 {apiStatusLabel}
               </span>
-              <span className="text-xs text-[color:var(--ui-text-meta)]">{heroSignalText}</span>
+              <span className="text-[11px] text-[color:var(--ui-text-meta)] sm:text-xs">{heroSignalText}</span>
             </div>
           </div>
 
-          <div className="rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] px-4 py-3">
+          <div className="w-full rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] px-3 py-3 sm:w-auto sm:rounded-2xl sm:px-4">
             <div className="space-y-2">
-              <p className="text-[11px] uppercase tracking-[0.14em] text-[color:var(--ui-text-meta)]">Agora no workspace</p>
+              <p className="text-[10px] uppercase tracking-[0.12em] text-[color:var(--ui-text-meta)] sm:text-[11px] sm:tracking-[0.14em]">Agora no workspace</p>
               {isBriefingLoading || isCalendarLoading ? (
                 <Skeleton className="h-7 w-56 rounded-md" />
               ) : (
-                <p className="text-sm font-medium text-[color:var(--ui-text)]">{liveMomentLabel}</p>
+                <p className="text-xs font-medium text-[color:var(--ui-text)] sm:text-sm">{liveMomentLabel}</p>
               )}
               <Button
                 type="button"
@@ -400,7 +402,7 @@ export function Dashboard() {
                 size="sm"
                 onClick={handleSyncNow}
                 disabled={isSyncing}
-                className="h-8 gap-1 px-2 text-xs"
+                className="h-8 w-full gap-1 px-2 text-xs sm:w-auto"
               >
                 <RefreshCw className={cn('h-3.5 w-3.5', isSyncing && 'animate-spin')} />
                 {isSyncing ? 'Atualizando...' : 'Atualizar agora'}
@@ -417,7 +419,7 @@ export function Dashboard() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
         <MetricCard
           title="Documentos"
           value={docs?.length ?? 0}
@@ -435,6 +437,7 @@ export function Dashboard() {
           tone="tertiary"
         />
         <MetricCard
+          className="col-span-2 xl:col-span-1"
           title="Lembretes hoje"
           value={todayReminders.length}
           icon={CalendarClock}
@@ -444,13 +447,13 @@ export function Dashboard() {
         />
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_330px]">
+      <div className="grid gap-4 sm:gap-6 xl:grid-cols-[minmax(0,1fr)_330px]">
         <div className="space-y-6">
           <DailyQuestionPanel data={dailyQuestion} loading={isDailyQuestionLoading} />
 
           <SurfaceCard className="overflow-hidden bg-[color:var(--ui-surface-2)] p-0">
-            <div className="flex items-center justify-between px-5 py-4">
-              <h2 className="font-headline text-xl font-bold text-[color:var(--ui-text)]">Documentos recentes</h2>
+            <div className="flex items-center justify-between px-4 py-4 sm:px-5">
+              <h2 className="font-headline text-lg font-bold text-[color:var(--ui-text)] sm:text-xl">Documentos recentes</h2>
               {hasDocuments ? (
                 <Button variant="ghost" size="sm" asChild className="h-8 px-2 text-xs text-[color:var(--ui-accent)]">
                   <Link to="/docs">
@@ -462,7 +465,7 @@ export function Dashboard() {
             </div>
 
             {isDocsLoading ? (
-              <div className="space-y-2 px-5 pb-5">
+              <div className="space-y-2 px-4 pb-4 sm:px-5 sm:pb-5">
                 {[1, 2, 3].map((item) => (
                   <Skeleton key={item} className="h-16 w-full rounded-xl" />
                 ))}
@@ -470,28 +473,28 @@ export function Dashboard() {
             ) : null}
 
             {!isDocsLoading && !hasDocuments ? (
-              <div className="px-5 pb-5">
+              <div className="px-4 pb-4 sm:px-5 sm:pb-5">
                 <OnboardingSteps />
               </div>
             ) : null}
 
             {hasDocuments ? (
-              <div className="space-y-2 px-5 pb-5">
+              <div className="space-y-2 px-4 pb-4 sm:px-5 sm:pb-5">
                 {docs.slice(0, 5).map((doc) => (
                   <div
                     key={doc.doc_id}
-                    className="group flex items-center justify-between gap-4 rounded-xl bg-[color:var(--ui-surface-1)] px-4 py-3 transition-colors hover:bg-[color:var(--ui-surface-3)]"
+                    className="group flex flex-col items-start gap-3 rounded-xl bg-[color:var(--ui-surface-1)] px-3 py-3 transition-colors hover:bg-[color:var(--ui-surface-3)] sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4"
                   >
-                    <div className="min-w-0 flex items-center gap-3">
+                    <div className="min-w-0 flex w-full items-center gap-3 sm:w-auto">
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[color:var(--ui-accent-soft)]">
                         <FileText className="h-4 w-4 text-[color:var(--ui-accent)]" />
                       </div>
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold text-[color:var(--ui-text)]">{doc.file_name}</p>
-                        <p className="text-xs text-[color:var(--ui-text-meta)]">Fonte: {doc.source || 'local'}</p>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-semibold text-[color:var(--ui-text)] sm:text-sm">{doc.file_name}</p>
+                        <p className="text-[11px] text-[color:var(--ui-text-meta)]">Fonte: {doc.source || 'local'}</p>
                       </div>
                     </div>
-                    <span className="shrink-0 rounded-full bg-[color:var(--ui-surface-3)] px-2 py-0.5 text-xs text-[color:var(--ui-text-dim)]">
+                    <span className="shrink-0 rounded-full bg-[color:var(--ui-surface-3)] px-2 py-0.5 text-[11px] text-[color:var(--ui-text-dim)] sm:text-xs">
                       {doc.chunk_count} chunks
                     </span>
                   </div>
@@ -501,7 +504,7 @@ export function Dashboard() {
           </SurfaceCard>
         </div>
 
-        <aside className="space-y-6">
+        <aside className="space-y-4 sm:space-y-6">
           <SurfaceCard className="bg-[color:var(--ui-surface-2)]">
             <p className="mb-4 text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--ui-text-meta)]">
               Ações rápidas
@@ -516,7 +519,7 @@ export function Dashboard() {
 
           <SurfaceCard className="bg-[color:var(--ui-surface-2)]">
             <div className="mb-5 flex items-center justify-between">
-              <h3 className="font-headline text-lg font-bold text-[color:var(--ui-text)]">Agenda hoje</h3>
+              <h3 className="font-headline text-base font-bold text-[color:var(--ui-text)] sm:text-lg">Agenda hoje</h3>
               <Link to="/schedule" className="text-xs font-semibold text-[color:var(--ui-accent)] hover:underline">
                 Ver agenda
               </Link>
@@ -531,10 +534,10 @@ export function Dashboard() {
               <div className="space-y-3">
                 {todaySchedule.slice(0, 4).map((item) => (
                   <div key={item.id} className="flex gap-3">
-                    <p className="w-14 shrink-0 text-xs font-semibold text-[color:var(--ui-text-meta)]">{item.start_time}</p>
+                    <p className="w-11 shrink-0 text-[11px] font-semibold text-[color:var(--ui-text-meta)] sm:w-14 sm:text-xs">{item.start_time}</p>
                     <div className="flex-1 border-l border-[color:var(--ui-border-strong)] pl-3">
-                      <p className="text-sm font-semibold text-[color:var(--ui-text)]">{item.title}</p>
-                      <p className="text-xs text-[color:var(--ui-text-dim)]">
+                      <p className="text-xs font-semibold text-[color:var(--ui-text)] sm:text-sm">{item.title}</p>
+                      <p className="text-[11px] text-[color:var(--ui-text-dim)] sm:text-xs">
                         até {item.end_time}
                         {item.note ? ` - ${item.note}` : ''}
                       </p>
@@ -549,7 +552,7 @@ export function Dashboard() {
 
           <SurfaceCard className="bg-[color:var(--ui-surface-2)]">
             <div className="mb-5 flex items-center justify-between">
-              <h3 className="font-headline text-lg font-bold text-[color:var(--ui-text)]">Lembretes</h3>
+              <h3 className="font-headline text-base font-bold text-[color:var(--ui-text)] sm:text-lg">Lembretes</h3>
               <Link to="/schedule" className="text-xs font-semibold text-[color:var(--ui-accent)] hover:underline">
                 Gerenciar
               </Link>
@@ -563,12 +566,12 @@ export function Dashboard() {
             ) : todayReminders.length ? (
               <div className="space-y-3">
                 {todayReminders.slice(0, 4).map((reminder) => (
-                  <div key={reminder.id} className="rounded-xl bg-[color:var(--ui-surface-1)] px-3 py-2">
+                  <div key={reminder.id} className="rounded-xl bg-[color:var(--ui-surface-1)] px-3 py-2.5">
                     <div className="flex items-start gap-2">
                       <span className="mt-1.5 h-2 w-2 rounded-full bg-amber-300" />
                       <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-[color:var(--ui-text)]">{reminder.title}</p>
-                        <p className="text-xs text-[color:var(--ui-text-dim)]">
+                        <p className="truncate text-xs font-medium text-[color:var(--ui-text)] sm:text-sm">{reminder.title}</p>
+                        <p className="text-[11px] text-[color:var(--ui-text-dim)] sm:text-xs">
                           {reminder.all_day
                             ? 'Dia inteiro'
                             : new Date(reminder.starts_at).toLocaleTimeString('pt-BR', {
@@ -638,6 +641,32 @@ export function Dashboard() {
             </Button>
           </SurfaceCard>
         </aside>
+      </div>
+
+      <div className="fixed inset-x-4 bottom-3 z-30 md:hidden">
+        <div className="grid grid-cols-3 gap-2 rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface)]/95 p-2 shadow-[0_14px_34px_-18px_rgba(0,0,0,0.65)] backdrop-blur-xl">
+          <Link
+            to="/ingest"
+            className="inline-flex h-10 items-center justify-center gap-1 rounded-lg bg-[color:var(--ui-surface-2)] text-[11px] font-semibold text-[color:var(--ui-text)]"
+          >
+            <FileText className="h-3.5 w-3.5 text-[color:var(--ui-accent)]" />
+            Inserir
+          </Link>
+          <Link
+            to="/chat"
+            className="inline-flex h-10 items-center justify-center gap-1 rounded-lg bg-[color:var(--ui-accent)] text-[11px] font-semibold text-[color:var(--ui-bg)]"
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            Chat
+          </Link>
+          <Link
+            to="/tasks"
+            className="inline-flex h-10 items-center justify-center gap-1 rounded-lg bg-[color:var(--ui-surface-2)] text-[11px] font-semibold text-[color:var(--ui-text)]"
+          >
+            <NotebookPen className="h-3.5 w-3.5 text-amber-300" />
+            Tarefas
+          </Link>
+        </div>
       </div>
     </PageShell>
   )
