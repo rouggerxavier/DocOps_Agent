@@ -31,26 +31,26 @@ const COLUMNS: ColumnConfig[] = [
   {
     key: 'to_read',
     label: 'Para Ler',
-    dotClass: 'bg-[#8b9199]',
-    labelClass: 'text-[#c1c7cf]',
-    badgeClass: 'bg-[#2a2a2a] text-[#aab2bc]',
-    columnClass: 'bg-[#171717]',
+    dotClass: 'bg-[color:var(--ui-text-meta)]',
+    labelClass: 'text-[color:var(--ui-text-dim)]',
+    badgeClass: 'bg-[color:var(--ui-surface-3)] text-[color:var(--ui-text-dim)]',
+    columnClass: 'bg-[color:var(--ui-surface-1)] border border-[color:var(--ui-border-soft)]',
   },
   {
     key: 'reading',
     label: 'Lendo',
-    dotClass: 'bg-[#c5e3ff]',
-    labelClass: 'text-[#c5e3ff]',
-    badgeClass: 'bg-[#203142] text-[#c5e3ff]',
-    columnClass: 'bg-[#111519] ring-1 ring-[#90caf9]/30',
+    dotClass: 'bg-[color:var(--ui-accent)]',
+    labelClass: 'text-[color:var(--ui-accent)]',
+    badgeClass: 'bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]',
+    columnClass: 'bg-[color:var(--ui-bg-alt)] ring-1 ring-[color:var(--ui-accent)]/30',
   },
   {
     key: 'done',
     label: 'Lido',
-    dotClass: 'bg-[#ffd9ae]',
-    labelClass: 'text-[#d7c3a7]',
-    badgeClass: 'bg-[#2f2921] text-[#ffd9ae]',
-    columnClass: 'bg-[#171717]',
+    dotClass: 'bg-[color:var(--ui-warning)]',
+    labelClass: 'text-[color:var(--ui-warning)]',
+    badgeClass: 'bg-[color:var(--ui-warning)]/20 text-[color:var(--ui-warning)]',
+    columnClass: 'bg-[color:var(--ui-surface-1)] border border-[color:var(--ui-border-soft)]',
   },
 ]
 
@@ -337,20 +337,18 @@ export function ReadingKanban() {
 
   return (
     <>
-      <PageShell className="relative space-y-6 overflow-hidden">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_86%_10%,rgba(144,202,249,0.12),transparent_42%),radial-gradient(circle_at_14%_16%,rgba(201,139,94,0.08),transparent_48%)]" />
-
-        <header className="relative z-10 flex flex-wrap items-center justify-between gap-3">
+      <PageShell className="space-y-6">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b pb-5 app-divider">
           <div>
-            <h1 className="font-headline text-3xl font-extrabold tracking-tight text-[#90caf9]">Kanban de Leitura</h1>
-            <p className="mt-1 text-sm text-[#c1c7cf]">
+            <h1 className="font-headline text-3xl font-extrabold tracking-tight text-[color:var(--ui-text)]">Kanban de Leitura</h1>
+            <p className="mt-1 text-sm text-[color:var(--ui-text-dim)]">
               {isLoading ? 'Carregando board...' : `${counts.done} de ${totalDocs} documentos concluidos · ${donePercentage}%`}
             </p>
           </div>
 
           <Button
             onClick={() => setGapOpen(true)}
-            className="h-10 gap-2 rounded-xl border-0 bg-gradient-to-r from-[#c5e3ff] to-[#90caf9] text-[#03263b] hover:from-[#d6edff] hover:to-[#a6d4fb]"
+            className="h-10 gap-2 rounded-xl border-0 bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)]"
           >
             <Zap className="h-4 w-4" />
             Analise de Gaps
@@ -358,37 +356,37 @@ export function ReadingKanban() {
         </header>
 
         {!isLoading && totalDocs > 0 && (
-          <section className="relative z-10 rounded-2xl bg-[#1c1b1b] p-4">
-            <div className="mb-2 flex items-center justify-between text-xs text-[#aab2bc]">
+          <section className="app-surface p-4">
+            <div className="mb-2 flex items-center justify-between text-xs text-[color:var(--ui-text-dim)]">
               <span className="inline-flex items-center gap-1">
-                <GraduationCap className="h-3.5 w-3.5 text-[#90caf9]" />
+                <GraduationCap className="h-3.5 w-3.5 text-[color:var(--ui-accent)]" />
                 Progresso global
               </span>
               <span>{counts.done} / {totalDocs}</span>
             </div>
-            <div className="h-1.5 overflow-hidden rounded-full bg-[#131313]">
-              <div className="h-full rounded-full bg-[#90caf9]" style={{ width: `${donePercentage}%` }} />
+            <div className="h-1.5 overflow-hidden rounded-full bg-[color:var(--ui-bg-alt)]">
+              <div className="h-full rounded-full bg-[color:var(--ui-accent)]" style={{ width: `${donePercentage}%` }} />
             </div>
           </section>
         )}
 
-        <section className="relative z-10">
+        <section>
           {isLoading ? (
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               {COLUMNS.map(column => (
-                <div key={column.key} className="space-y-3 rounded-2xl bg-[#1c1b1b] p-4">
-                  <Skeleton className="h-6 w-36 rounded-lg bg-[#2a2a2a]" />
+                <div key={column.key} className="space-y-3 rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] p-4">
+                  <Skeleton className="h-6 w-36 rounded-lg bg-[color:var(--ui-surface-3)]" />
                   {[1, 2].map(item => (
-                    <Skeleton key={item} className="h-36 w-full rounded-xl bg-[#2a2a2a]" />
+                    <Skeleton key={item} className="h-36 w-full rounded-xl bg-[color:var(--ui-surface-3)]" />
                   ))}
                 </div>
               ))}
             </div>
           ) : totalDocs === 0 ? (
-            <div className="rounded-2xl bg-[#1c1b1b] p-10 text-center">
-              <FileText className="mx-auto mb-3 h-9 w-9 text-[#8b9199]" />
-              <p className="font-headline text-xl font-bold text-[#e5e2e1]">Nenhum documento disponivel</p>
-              <p className="mt-1 text-sm text-[#8b9199]">Adicione arquivos em Insercao para iniciar seu kanban de leitura.</p>
+            <div className="app-surface p-10 text-center">
+              <FileText className="mx-auto mb-3 h-9 w-9 text-[color:var(--ui-text-meta)]" />
+              <p className="font-headline text-xl font-bold text-[color:var(--ui-text)]">Nenhum documento disponivel</p>
+              <p className="mt-1 text-sm text-[color:var(--ui-text-meta)]">Adicione arquivos em Insercao para iniciar seu kanban de leitura.</p>
             </div>
           ) : (
             <div className="overflow-x-auto pb-2">
@@ -414,7 +412,7 @@ export function ReadingKanban() {
 
                       <div className="flex-1 space-y-3 overflow-y-auto pr-1">
                         {columnDocs.length === 0 ? (
-                          <div className="rounded-xl border border-dashed border-[#41474e]/40 p-6 text-center text-xs text-[#8b9199]">
+                          <div className="rounded-xl border border-dashed border-[color:var(--ui-border)]/70 p-6 text-center text-xs text-[color:var(--ui-text-meta)]">
                             Coluna vazia
                           </div>
                         ) : (
@@ -437,12 +435,12 @@ export function ReadingKanban() {
           )}
         </section>
 
-        <div className="relative z-10 rounded-2xl bg-[#1c1b1b] p-4">
+        <div className="app-surface p-4">
           <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-[#ffd9ae] shadow-[0_0_8px_rgba(255,217,174,0.7)] animate-pulse" />
-            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#ffd9ae]">System intelligence ativo</span>
-            <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-[#8b9199]">
-              <Sparkles className="h-3 w-3 text-[#c5e3ff]" />
+            <span className="h-2 w-2 rounded-full bg-[color:var(--ui-warning)] shadow-[0_0_8px_rgba(212,168,108,0.7)] animate-pulse" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[color:var(--ui-warning)]">System intelligence ativo</span>
+            <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-[color:var(--ui-text-meta)]">
+              <Sparkles className="h-3 w-3 text-[color:var(--ui-accent)]" />
               leitura sincronizada
             </span>
           </div>

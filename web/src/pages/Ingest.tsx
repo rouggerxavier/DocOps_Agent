@@ -4,7 +4,7 @@ import { Camera, CheckCircle, ChevronDown, ClipboardPaste, FileText, FolderOpen,
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { PageShell } from '@/components/ui/page-shell'
+import { PageHeader, PageShell } from '@/components/ui/page-shell'
 import { apiClient, type IngestResponse } from '@/api/client'
 import { cn } from '@/lib/utils'
 import * as XLSX from 'xlsx'
@@ -207,17 +207,13 @@ export function Ingest() {
   }, [previewIndex, selectedFiles])
 
   return (
-    <PageShell className="relative space-y-8 overflow-hidden">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_84%_10%,rgba(144,202,249,0.12),transparent_40%),radial-gradient(circle_at_14%_16%,rgba(201,139,94,0.08),transparent_46%)]" />
+    <PageShell className="space-y-8">
+      <PageHeader
+        title="Inserção de Documentos"
+        subtitle="Alimente o cérebro do DocOps Agent com novos conhecimentos. Os documentos são processados e indexados para consulta imediata."
+      />
 
-      <header className="relative z-10 space-y-2">
-        <h1 className="font-headline text-4xl font-extrabold tracking-tight text-[color:var(--ui-text)]">Insercao de Documentos</h1>
-        <p className="max-w-2xl text-sm text-[color:var(--ui-text-dim)]">
-          Alimente o cerebro do DocOps Agent com novos conhecimentos. Os documentos sao processados e indexados para consulta imediata.
-        </p>
-      </header>
-
-      <div className="relative z-10 flex w-fit gap-1 rounded-xl bg-[#0e0e0e] p-1">
+      <div className="flex w-fit gap-1 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] p-1">
         {([
           { key: 'upload', label: 'Upload' },
           { key: 'path', label: 'Caminho' },
@@ -229,7 +225,9 @@ export function Ingest() {
             onClick={() => setTab(item.key)}
             className={cn(
               'rounded-lg px-4 py-2 text-sm font-medium transition-colors',
-              tab === item.key ? 'bg-[#2a2a2a] text-[#c5e3ff]' : 'text-[#8b9199] hover:bg-[#1c1b1b] hover:text-[#e5e2e1]',
+              tab === item.key
+                ? 'bg-[color:var(--ui-surface-3)] text-[color:var(--ui-accent)]'
+                : 'text-[color:var(--ui-text-meta)] hover:bg-[color:var(--ui-surface-2)] hover:text-[color:var(--ui-text)]',
             )}
           >
             {item.label}
@@ -238,19 +236,24 @@ export function Ingest() {
       </div>
 
       {tab === 'upload' && (
-        <section className="relative z-10 grid grid-cols-12 gap-6">
+        <section className="grid grid-cols-12 gap-6">
           <div className="col-span-12 lg:col-span-8">
-            <div className="rounded-xl bg-[#1c1b1b] p-1">
+            <div className="app-surface p-1">
               <div
                 onDragOver={event => { event.preventDefault(); setDragOver(true) }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
                 onClick={() => fileInputRef.current?.click()}
-                className={cn('cursor-pointer rounded-lg border-2 border-dashed px-6 py-16 text-center transition-colors', dragOver ? 'border-[#90caf9]/80 bg-[#203142]/30' : 'border-[#41474e]/40 bg-[#131313] hover:border-[#90caf9]/50')}
+                className={cn(
+                  'cursor-pointer rounded-lg border-2 border-dashed px-6 py-16 text-center transition-colors',
+                  dragOver
+                    ? 'border-[color:var(--ui-accent)]/80 bg-[color:var(--ui-accent-soft)]'
+                    : 'border-[color:var(--ui-border-strong)]/60 bg-[color:var(--ui-bg-alt)] hover:border-[color:var(--ui-accent)]/50',
+                )}
               >
-                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-[#2a2a2a]"><Upload className="h-8 w-8 text-[#c5e3ff]" /></div>
-                <p className="text-lg font-semibold text-[#e5e2e1]">Arraste arquivos aqui ou clique para selecionar</p>
-                <p className="mt-2 text-xs text-[#8b9199]">PDF, TXT, MD, CSV, XLSX, XLS, ODS</p>
+                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-[color:var(--ui-surface-3)]"><Upload className="h-8 w-8 text-[color:var(--ui-accent)]" /></div>
+                <p className="text-lg font-semibold text-[color:var(--ui-text)]">Arraste arquivos aqui ou clique para selecionar</p>
+                <p className="mt-2 text-xs text-[color:var(--ui-text-meta)]">PDF, TXT, MD, CSV, XLSX, XLS, ODS</p>
                 <input ref={fileInputRef} type="file" multiple accept=".pdf,.txt,.md,.markdown,.csv,.xlsx,.xls,.ods" className="hidden" onChange={handleFileInput} />
               </div>
             </div>
@@ -258,18 +261,18 @@ export function Ingest() {
             {selectedFiles.length > 0 && (
               <div className="mt-4 space-y-2">
                 {selectedFiles.map((file, index) => (
-                  <div key={`${file.name}-${index}`} className="flex items-center justify-between rounded-lg bg-[#1c1b1b] px-3 py-2">
+                  <div key={`${file.name}-${index}`} className="flex items-center justify-between rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] px-3 py-2">
                     <div className="flex min-w-0 items-center gap-2">
-                      <FileText className="h-4 w-4 shrink-0 text-[#90caf9]" />
-                      <span className="truncate text-sm text-[#e5e2e1]">{file.name}</span>
-                      <span className="text-xs text-[#8b9199]">({(file.size / 1024).toFixed(1)} KB)</span>
+                      <FileText className="h-4 w-4 shrink-0 text-[color:var(--ui-accent)]" />
+                      <span className="truncate text-sm text-[color:var(--ui-text)]">{file.name}</span>
+                      <span className="text-xs text-[color:var(--ui-text-meta)]">({(file.size / 1024).toFixed(1)} KB)</span>
                       {/\.(csv|xlsx|xls|ods)$/i.test(file.name) && (
-                        <button onClick={event => { event.stopPropagation(); setPreviewIndex(index) }} className={cn('rounded border px-2 py-0.5 text-[10px]', previewIndex === index ? 'border-[#90caf9] bg-[#203142]/50 text-[#c5e3ff]' : 'border-[#41474e] text-[#8b9199]')}>
+                        <button onClick={event => { event.stopPropagation(); setPreviewIndex(index) }} className={cn('rounded border px-2 py-0.5 text-[10px]', previewIndex === index ? 'border-[color:var(--ui-accent)] bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'border-[color:var(--ui-border)] text-[color:var(--ui-text-meta)]')}>
                           Preview
                         </button>
                       )}
                     </div>
-                    <button onClick={event => { event.stopPropagation(); setSelectedFiles(prev => prev.filter((_, idx) => idx !== index)) }} className="text-[#8b9199] hover:text-[#ffb4ab]">
+                    <button onClick={event => { event.stopPropagation(); setSelectedFiles(prev => prev.filter((_, idx) => idx !== index)) }} className="text-[color:var(--ui-text-meta)] hover:text-rose-300">
                       <X className="h-4 w-4" />
                     </button>
                   </div>
@@ -278,19 +281,19 @@ export function Ingest() {
             )}
 
             {preview && (
-              <div className="mt-4 overflow-hidden rounded-xl border border-[#41474e] bg-[#0f0f0f]">
-                <p className="border-b border-[#41474e]/40 px-3 py-2 text-sm font-medium text-[#e5e2e1]">Pre-visualizacao tabular: {preview.fileName}</p>
+              <div className="mt-4 overflow-hidden rounded-xl border border-[color:var(--ui-border)] bg-[color:var(--ui-bg-alt)]">
+                <p className="border-b border-[color:var(--ui-border-soft)] px-3 py-2 text-sm font-medium text-[color:var(--ui-text)]">Pre-visualizacao tabular: {preview.fileName}</p>
                 <div className="overflow-auto">
                   <table className="min-w-full border-collapse text-xs">
                     <thead>
                       <tr>
-                        {preview.headers.map((header, idx) => <th key={`${header}-${idx}`} className="border border-[#2a2a2a] bg-[#1c1b1b] px-2 py-1 text-left text-[#c1c7cf]">{header || `col_${idx + 1}`}</th>)}
+                        {preview.headers.map((header, idx) => <th key={`${header}-${idx}`} className="border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] px-2 py-1 text-left text-[color:var(--ui-text-dim)]">{header || `col_${idx + 1}`}</th>)}
                       </tr>
                     </thead>
                     <tbody>
                       {preview.rows.map((row, rowIdx) => (
                         <tr key={rowIdx}>
-                          {preview.headers.map((_, colIdx) => <td key={`${rowIdx}-${colIdx}`} className="border border-[#2a2a2a] px-2 py-1 text-[#aab2bc]">{row[colIdx] ?? ''}</td>)}
+                          {preview.headers.map((_, colIdx) => <td key={`${rowIdx}-${colIdx}`} className="border border-[color:var(--ui-border-soft)] px-2 py-1 text-[color:var(--ui-text-dim)]">{row[colIdx] ?? ''}</td>)}
                         </tr>
                       ))}
                     </tbody>
@@ -301,22 +304,22 @@ export function Ingest() {
           </div>
 
           <div className="col-span-12 space-y-5 lg:col-span-4">
-            <div className="rounded-xl bg-[#1c1b1b] p-5">
-              <h3 className="mb-4 text-xs font-bold uppercase tracking-[0.14em] text-[#c5e3ff]/80">Informacao de indexacao</h3>
+            <div className="app-surface p-5">
+              <h3 className="mb-4 text-xs font-bold uppercase tracking-[0.14em] text-[color:var(--ui-accent)]/80">Informacao de indexacao</h3>
               <div className="space-y-3 text-sm">
-                <div className="flex items-center justify-between"><span className="text-[#8b9199]">Arquivos selecionados</span><span className="font-mono text-[#e5e2e1]">{selectedFiles.length}</span></div>
-                <div className="flex items-center justify-between"><span className="text-[#8b9199]">Tamanho total</span><span className="font-mono text-[#e5e2e1]">{totalSizeKb.toFixed(1)} KB</span></div>
+                <div className="flex items-center justify-between"><span className="text-[color:var(--ui-text-meta)]">Arquivos selecionados</span><span className="font-mono text-[color:var(--ui-text)]">{selectedFiles.length}</span></div>
+                <div className="flex items-center justify-between"><span className="text-[color:var(--ui-text-meta)]">Tamanho total</span><span className="font-mono text-[color:var(--ui-text)]">{totalSizeKb.toFixed(1)} KB</span></div>
               </div>
             </div>
 
             {isLoading && (
-              <div className="rounded-xl border border-[#41474e] bg-[#1c1b1b] p-4 space-y-3">
-                <div className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin text-[#90caf9]" /><span className="text-sm text-[#c1c7cf]">{stageLabel}</span><span className="ml-auto text-xs font-mono text-[#8b9199]">{pct}%</span></div>
-                <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#0e0e0e]"><div className="h-full rounded-full bg-[#90caf9] transition-all duration-700" style={{ width: `${pct}%` }} /></div>
+              <div className="rounded-xl border border-[color:var(--ui-border)] bg-[color:var(--ui-surface-1)] p-4 space-y-3">
+                <div className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin text-[color:var(--ui-accent)]" /><span className="text-sm text-[color:var(--ui-text-dim)]">{stageLabel}</span><span className="ml-auto text-xs font-mono text-[color:var(--ui-text-meta)]">{pct}%</span></div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-[color:var(--ui-bg-alt)]"><div className="h-full rounded-full bg-[color:var(--ui-accent)] transition-all duration-700" style={{ width: `${pct}%` }} /></div>
               </div>
             )}
 
-            <Button onClick={() => uploadMutation.mutate()} disabled={selectedFiles.length === 0 || isLoading} className="h-12 w-full rounded-xl border-0 bg-gradient-to-r from-[#c5e3ff] to-[#90caf9] text-[#03263b] disabled:opacity-40">
+            <Button onClick={() => uploadMutation.mutate()} disabled={selectedFiles.length === 0 || isLoading} className="h-12 w-full rounded-xl border-0 bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] disabled:opacity-40">
               {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Layers className="mr-2 h-4 w-4" />}
               {isLoading ? 'Indexando...' : 'Indexar Arquivos'}
             </Button>
@@ -325,9 +328,9 @@ export function Ingest() {
       )}
 
       {tab === 'path' && (
-        <section className="relative z-10 rounded-xl bg-[#1c1b1b] p-6 space-y-4">
-          <Input placeholder="Ex: /home/user/docs ou ./docs" value={serverPath} onChange={event => setServerPath(event.target.value)} className="h-11 border-[#41474e] bg-[#131313] text-[#e5e2e1]" />
-          <Button onClick={() => pathMutation.mutate()} disabled={!serverPath.trim() || isLoading} className="h-11 w-full rounded-lg border-0 bg-[#203142] text-[#c5e3ff]">
+        <section className="app-surface p-6 space-y-4">
+          <Input placeholder="Ex: /home/user/docs ou ./docs" value={serverPath} onChange={event => setServerPath(event.target.value)} className="h-11 border-[color:var(--ui-border)] bg-[color:var(--ui-bg-alt)] text-[color:var(--ui-text)]" />
+          <Button onClick={() => pathMutation.mutate()} disabled={!serverPath.trim() || isLoading} className="h-11 w-full rounded-lg border-0 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]">
             {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FolderOpen className="mr-2 h-4 w-4" />}
             {isLoading ? 'Indexando...' : 'Indexar Caminho'}
           </Button>
@@ -335,11 +338,11 @@ export function Ingest() {
       )}
 
       {tab === 'clip' && (
-        <section className="relative z-10 rounded-xl bg-[#1c1b1b] p-6 space-y-4">
-          <Input placeholder="Titulo (opcional)" value={clipTitle} onChange={event => setClipTitle(event.target.value)} className="h-11 border-[#41474e] bg-[#131313] text-[#e5e2e1]" />
-          <textarea value={clipText} onChange={event => setClipText(event.target.value)} placeholder="Cole texto para indexar..." rows={8} className="w-full rounded-lg border border-[#41474e] bg-[#131313] px-3 py-2 text-sm text-[#e5e2e1] outline-none" />
-          <p className="text-xs text-[#8b9199]">{clipText.length} caracteres</p>
-          <Button onClick={() => clipMutation.mutate()} disabled={clipText.trim().length < 10 || isLoading} className="h-11 w-full rounded-lg border-0 bg-[#203142] text-[#c5e3ff]">
+        <section className="app-surface p-6 space-y-4">
+          <Input placeholder="Titulo (opcional)" value={clipTitle} onChange={event => setClipTitle(event.target.value)} className="h-11 border-[color:var(--ui-border)] bg-[color:var(--ui-bg-alt)] text-[color:var(--ui-text)]" />
+          <textarea value={clipText} onChange={event => setClipText(event.target.value)} placeholder="Cole texto para indexar..." rows={8} className="w-full rounded-lg border border-[color:var(--ui-border)] bg-[color:var(--ui-bg-alt)] px-3 py-2 text-sm text-[color:var(--ui-text)] outline-none" />
+          <p className="text-xs text-[color:var(--ui-text-meta)]">{clipText.length} caracteres</p>
+          <Button onClick={() => clipMutation.mutate()} disabled={clipText.trim().length < 10 || isLoading} className="h-11 w-full rounded-lg border-0 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]">
             {clipMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ClipboardPaste className="mr-2 h-4 w-4" />}
             {clipMutation.isPending ? 'Indexando...' : 'Indexar Texto'}
           </Button>
@@ -347,10 +350,10 @@ export function Ingest() {
       )}
 
       {tab === 'photo' && (
-        <section className="relative z-10 rounded-xl bg-[#1c1b1b] p-6 space-y-4">
-          <Input placeholder="Titulo (opcional)" value={photoTitle} onChange={event => setPhotoTitle(event.target.value)} className="h-11 border-[#41474e] bg-[#131313] text-[#e5e2e1]" />
-          <div onClick={() => document.getElementById('photo-input')?.click()} className={cn('cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition-colors', photoFile ? 'border-[#90caf9]/60 bg-[#203142]/25' : 'border-[#41474e] hover:border-[#90caf9]/45')}>
-            {photoPreview ? <img src={photoPreview} alt="Preview" className="mx-auto max-h-52 rounded-lg object-contain" /> : <Camera className="mx-auto h-9 w-9 text-[#8b9199]" />}
+        <section className="app-surface p-6 space-y-4">
+          <Input placeholder="Titulo (opcional)" value={photoTitle} onChange={event => setPhotoTitle(event.target.value)} className="h-11 border-[color:var(--ui-border)] bg-[color:var(--ui-bg-alt)] text-[color:var(--ui-text)]" />
+          <div onClick={() => document.getElementById('photo-input')?.click()} className={cn('cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition-colors', photoFile ? 'border-[color:var(--ui-accent)]/60 bg-[color:var(--ui-accent-soft)]' : 'border-[color:var(--ui-border)] hover:border-[color:var(--ui-accent)]/45')}>
+            {photoPreview ? <img src={photoPreview} alt="Preview" className="mx-auto max-h-52 rounded-lg object-contain" /> : <Camera className="mx-auto h-9 w-9 text-[color:var(--ui-text-meta)]" />}
             <input
               id="photo-input"
               type="file"
@@ -366,43 +369,43 @@ export function Ingest() {
               }}
             />
           </div>
-          <Button onClick={() => photoMutation.mutate()} disabled={!photoFile || isLoading} className="h-11 w-full rounded-lg border-0 bg-[#203142] text-[#c5e3ff]">
+          <Button onClick={() => photoMutation.mutate()} disabled={!photoFile || isLoading} className="h-11 w-full rounded-lg border-0 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]">
             {photoMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Camera className="mr-2 h-4 w-4" />}
             {photoMutation.isPending ? 'Extraindo texto...' : 'Extrair e Indexar'}
           </Button>
         </section>
       )}
 
-      <section className="relative z-10 overflow-hidden rounded-xl border border-[#41474e]/30 bg-[#0f0f0f]">
-        <button onClick={() => setAdvancedOpen(v => !v)} className="flex w-full items-center justify-between px-4 py-3 hover:bg-[#1c1b1b]">
-          <span className="text-sm font-medium text-[#c1c7cf]">Configuracoes Avancadas</span>
-          <ChevronDown className={cn('h-4 w-4 text-[#8b9199] transition-transform', advancedOpen && 'rotate-180')} />
+      <section className="overflow-hidden rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-bg-alt)]">
+        <button onClick={() => setAdvancedOpen(v => !v)} className="flex w-full items-center justify-between px-4 py-3 hover:bg-[color:var(--ui-surface-1)]">
+          <span className="text-sm font-medium text-[color:var(--ui-text-dim)]">Configuracoes Avancadas</span>
+          <ChevronDown className={cn('h-4 w-4 text-[color:var(--ui-text-meta)] transition-transform', advancedOpen && 'rotate-180')} />
         </button>
         {advancedOpen && (
-          <div className="grid gap-4 border-t border-[#41474e]/30 px-4 pb-4 pt-3 sm:grid-cols-2">
+          <div className="grid gap-4 border-t border-[color:var(--ui-border-soft)] px-4 pb-4 pt-3 sm:grid-cols-2">
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-[#8b9199]">Chunk Size</label>
-              <Input type="number" placeholder="900" value={chunkSize} onChange={event => setChunkSize(event.target.value)} className="h-10 border-[#41474e] bg-[#131313] text-[#e5e2e1]" />
+              <label className="mb-1.5 block text-xs font-medium text-[color:var(--ui-text-meta)]">Chunk Size</label>
+              <Input type="number" placeholder="900" value={chunkSize} onChange={event => setChunkSize(event.target.value)} className="h-10 border-[color:var(--ui-border)] bg-[color:var(--ui-bg-alt)] text-[color:var(--ui-text)]" />
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-[#8b9199]">Chunk Overlap</label>
-              <Input type="number" placeholder="150" value={chunkOverlap} onChange={event => setChunkOverlap(event.target.value)} className="h-10 border-[#41474e] bg-[#131313] text-[#e5e2e1]" />
+              <label className="mb-1.5 block text-xs font-medium text-[color:var(--ui-text-meta)]">Chunk Overlap</label>
+              <Input type="number" placeholder="150" value={chunkOverlap} onChange={event => setChunkOverlap(event.target.value)} className="h-10 border-[color:var(--ui-border)] bg-[color:var(--ui-bg-alt)] text-[color:var(--ui-text)]" />
             </div>
           </div>
         )}
       </section>
 
       {result && (
-        <section className="relative z-10 rounded-xl border border-[#386445] bg-[#1b2a21] p-4">
+        <section className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 p-4">
           <div className="flex items-start gap-3">
-            <CheckCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#8ad6a0]" />
+            <CheckCircle className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" />
             <div>
-              <p className="font-medium text-[#b6e6c7]">Insercao concluida</p>
-              <p className="mt-1 text-sm text-[#9cc9aa]">{result.files_loaded} documento(s), {result.chunks_indexed} chunks indexados.</p>
+              <p className="font-medium text-emerald-200">Insercao concluida</p>
+              <p className="mt-1 text-sm text-emerald-300">{result.files_loaded} documento(s), {result.chunks_indexed} chunks indexados.</p>
               {result.file_names.length > 0 && (
                 <ul className="mt-2 space-y-1">
                   {result.file_names.map(name => (
-                    <li key={name} className="flex items-center gap-2 text-xs text-[#9cc9aa]">
+                    <li key={name} className="flex items-center gap-2 text-xs text-emerald-300">
                       <FileText className="h-3 w-3" />
                       {name}
                     </li>

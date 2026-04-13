@@ -18,7 +18,7 @@ import {
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { PageShell } from '@/components/ui/page-shell'
+import { PageHeader, PageShell } from '@/components/ui/page-shell'
 import { apiClient, type TaskActivityLog, type TaskChecklistItem, type TaskItem } from '@/api/client'
 import { cn } from '@/lib/utils'
 
@@ -570,43 +570,41 @@ export function Tasks() {
 
   return (
     <>
-      <PageShell className="relative space-y-6 overflow-hidden">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_82%_8%,rgba(144,202,249,0.16),transparent_44%),radial-gradient(circle_at_12%_18%,rgba(201,139,94,0.08),transparent_52%)]" />
+      <PageShell className="space-y-6">
+        <PageHeader
+          title="Tarefas"
+          subtitle="Gerencie suas entregas e prazos com foco editorial."
+        />
 
-        <header className="relative z-10 space-y-1">
-          <h1 className="font-headline text-4xl font-extrabold tracking-tight text-[#e5e2e1]">Tarefas</h1>
-          <p className="text-base text-[#c1c7cf]">Gerencie suas entregas e prazos com foco editorial.</p>
-        </header>
-
-        <section className="relative z-10 rounded-2xl bg-[#1c1b1b] p-2 shadow-[0_20px_36px_rgba(0,0,0,0.35)]">
+        <section className="app-surface p-2">
           <div className="grid gap-2 md:grid-cols-[1fr_auto_auto_auto]">
-            <div className="flex items-center gap-2 rounded-xl bg-[#0e0e0e] px-3">
-              <Plus className="h-4 w-4 text-[#90caf9]" />
+            <div className="flex items-center gap-2 rounded-xl bg-[color:var(--ui-bg-alt)] px-3">
+              <Plus className="h-4 w-4 text-[color:var(--ui-accent)]" />
               <input
                 value={quickTitle}
                 onChange={event => setQuickTitle(event.target.value)}
                 onKeyDown={event => { if (event.key === 'Enter') submitQuickTask() }}
                 placeholder="Adicionar nova tarefa rapida..."
-                className="h-11 w-full bg-transparent text-sm text-[#e5e2e1] outline-none placeholder:text-[#8b9199]"
+                className="h-11 w-full bg-transparent text-sm text-[color:var(--ui-text)] outline-none placeholder:text-[color:var(--ui-text-meta)]"
               />
             </div>
-            <select value={quickPriority} onChange={event => setQuickPriority(event.target.value)} className="h-11 rounded-xl border border-[#41474e] bg-[#131313] px-3 text-sm text-[#e5e2e1] outline-none">
+            <select value={quickPriority} onChange={event => setQuickPriority(event.target.value)} className="h-11 rounded-xl border border-[color:var(--ui-border)] bg-[color:var(--ui-bg-alt)] px-3 text-sm text-[color:var(--ui-text)] outline-none">
               <option value="high">Alta</option>
               <option value="normal">Media</option>
               <option value="low">Baixa</option>
             </select>
-            <Input type="datetime-local" value={quickDue} onChange={event => setQuickDue(event.target.value)} className="h-11 border-[#41474e] bg-[#131313] text-[#e5e2e1]" />
+            <Input type="datetime-local" value={quickDue} onChange={event => setQuickDue(event.target.value)} className="h-11 border-[color:var(--ui-border)] bg-[color:var(--ui-bg-alt)] text-[color:var(--ui-text)]" />
             <Button
               onClick={submitQuickTask}
               disabled={!quickTitle.trim() || createTaskMut.isPending}
-              className="h-11 rounded-xl border-0 bg-gradient-to-r from-[#c5e3ff] to-[#90caf9] px-5 text-[#03263b] hover:from-[#d6edff] hover:to-[#a6d4fb]"
+              className="h-11 rounded-xl border-0 bg-[color:var(--ui-accent)] px-5 text-[color:var(--ui-bg)]"
             >
               Criar
             </Button>
           </div>
         </section>
 
-        <section className="relative z-10 flex flex-wrap gap-2">
+        <section className="flex flex-wrap gap-2">
           {FILTER_ORDER.map(item => (
             <button
               key={item}
@@ -615,8 +613,8 @@ export function Tasks() {
               className={cn(
                 'rounded-full px-5 py-2 text-sm font-semibold transition-colors',
                 filter === item
-                  ? 'bg-[#c5e3ff] text-[#00344f]'
-                  : 'bg-[#2a2a2a] text-[#c1c7cf] hover:bg-[#3a3939] hover:text-[#e5e2e1]',
+                  ? 'bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)]'
+                  : 'bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-dim)] hover:bg-[color:var(--ui-surface-3)] hover:text-[color:var(--ui-text)]',
               )}
             >
               {FILTER_LABELS[item]} ({counts[item]})
@@ -624,16 +622,16 @@ export function Tasks() {
           ))}
         </section>
 
-        <section className="relative z-10">
+        <section>
           {isLoading ? (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-              {[1, 2, 3, 4].map(item => <div key={item} className="h-52 animate-pulse rounded-2xl bg-[#2a2a2a]" />)}
+              {[1, 2, 3, 4].map(item => <div key={item} className="h-52 animate-pulse rounded-2xl bg-[color:var(--ui-surface-2)]" />)}
             </div>
           ) : filteredTasks.length === 0 ? (
-            <div className="flex min-h-[280px] flex-col items-center justify-center rounded-3xl bg-[#151515] px-6 text-center">
-              <ListTodo className="mb-3 h-10 w-10 text-[#5f6770]" />
-              <p className="font-headline text-2xl font-bold text-[#e5e2e1]">Tudo limpo por aqui</p>
-              <p className="mt-1 max-w-md text-sm text-[#8b9199]">
+            <div className="app-surface-muted flex min-h-[280px] flex-col items-center justify-center px-6 text-center">
+              <ListTodo className="mb-3 h-10 w-10 text-[color:var(--ui-text-meta)]" />
+              <p className="font-headline text-2xl font-bold text-[color:var(--ui-text)]">Tudo limpo por aqui</p>
+              <p className="mt-1 max-w-md text-sm text-[color:var(--ui-text-meta)]">
                 Nao encontramos tarefas para o filtro selecionado. Crie uma nova entrega para iniciar o proximo ciclo.
               </p>
             </div>
@@ -653,12 +651,12 @@ export function Tasks() {
           )}
         </section>
 
-        <div className="relative z-10 rounded-2xl bg-[#1c1b1b] p-4">
+        <div className="app-surface p-4">
           <div className="flex items-center gap-2">
-            <span className="h-2 w-2 rounded-full bg-[#ffd9ae] shadow-[0_0_8px_rgba(255,217,174,0.7)] animate-pulse" />
-            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#ffd9ae]">Painel operacional ativo</span>
-            <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-[#8b9199]">
-              <Sparkles className="h-3 w-3 text-[#c5e3ff]" />
+            <span className="h-2 w-2 rounded-full bg-[color:var(--ui-warning)] shadow-[0_0_8px_rgba(212,168,108,0.7)] animate-pulse" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[color:var(--ui-warning)]">Painel operacional ativo</span>
+            <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-[color:var(--ui-text-meta)]">
+              <Sparkles className="h-3 w-3 text-[color:var(--ui-accent)]" />
               /api/tasks conectado
             </span>
           </div>

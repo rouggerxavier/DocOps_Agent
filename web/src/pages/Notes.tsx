@@ -360,39 +360,37 @@ export function Notes() {
   }
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[#131313] text-[#e5e2e1]">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_82%_8%,rgba(144,202,249,0.14),transparent_44%),radial-gradient(circle_at_12%_18%,rgba(201,139,94,0.09),transparent_50%),linear-gradient(180deg,#131313_0%,#111111_45%,#131313_100%)]" />
-
-      <header className="relative z-10 flex shrink-0 items-center justify-between gap-3 bg-[#131313]/80 px-4 py-4 backdrop-blur-xl md:px-8 md:py-5">
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[color:var(--ui-bg)] text-[color:var(--ui-text)]">
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b app-divider bg-[color:var(--ui-bg)]/90 px-4 py-4 backdrop-blur md:px-8 md:py-5">
         <div>
-          <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-[#8b9199]">Workspace Editorial</p>
-          <h1 className="mt-1 font-headline text-2xl font-extrabold tracking-tight text-[#c5e3ff]">Notas</h1>
+          <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-[color:var(--ui-text-meta)]">Workspace Editorial</p>
+          <h1 className="mt-1 font-headline text-2xl font-extrabold tracking-tight text-[color:var(--ui-text)]">Notas</h1>
         </div>
 
         <Button
           onClick={openCreate}
-          className="h-10 gap-2 rounded-xl border-0 bg-gradient-to-r from-[#c5e3ff] to-[#90caf9] px-4 text-[#03263b] shadow-[0_10px_28px_rgba(144,202,249,0.25)] hover:from-[#d6edff] hover:to-[#a6d4fb]"
+          className="h-10 gap-2 rounded-xl border-0 bg-[color:var(--ui-accent)] px-4 text-[color:var(--ui-bg)]"
         >
           <Plus className="h-4 w-4" />
           Nova nota
         </Button>
       </header>
 
-      <div className="relative z-10 flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-4 pb-4 md:gap-5 md:px-8 md:pb-6">
+      <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-hidden px-4 pb-4 pt-4 md:px-8 md:pb-6">
         <div className="grid min-h-0 flex-1 gap-4 xl:grid-cols-[1.05fr_1fr]">
-          <section className="flex min-h-0 flex-col overflow-hidden rounded-3xl bg-[#1c1b1b]/95 shadow-[0_24px_40px_rgba(0,0,0,0.35)]">
+          <section className="app-surface flex min-h-0 flex-col overflow-hidden">
             <div className="px-4 pb-3 pt-4 md:px-5 md:pt-5">
-              <label htmlFor="notes-search" className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-[#8b9199]">
+              <label htmlFor="notes-search" className="mb-2 block text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--ui-text-meta)]">
                 Buscar
               </label>
               <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8b9199]" />
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--ui-text-meta)]" />
                 <input
                   id="notes-search"
                   value={search}
                   onChange={event => setSearch(event.target.value)}
                   placeholder="Buscar por titulo, tags ou conteudo..."
-                  className="h-11 w-full rounded-xl bg-[#0e0e0e] pl-10 pr-3 text-sm text-[#e5e2e1] outline-none ring-1 ring-transparent transition-all placeholder:text-[#66707a] focus:ring-[#90caf9]/60"
+                  className="h-11 w-full rounded-xl bg-[color:var(--ui-bg-alt)] pl-10 pr-3 text-sm text-[color:var(--ui-text)] outline-none ring-1 ring-transparent transition-all placeholder:text-[color:var(--ui-text-meta)] focus:ring-[color:var(--ui-accent)]/60"
                 />
               </div>
             </div>
@@ -401,24 +399,24 @@ export function Notes() {
               {isLoading && (
                 <div className="space-y-3">
                   {[1, 2, 3].map(index => (
-                    <div key={index} className="h-28 animate-pulse rounded-2xl bg-[#2a2a2a]" />
+                    <div key={index} className="h-28 animate-pulse rounded-2xl bg-[color:var(--ui-surface-3)]" />
                   ))}
                 </div>
               )}
 
               {!isLoading && filtered.length === 0 && (
-                <div className="flex min-h-[220px] flex-col items-center justify-center rounded-2xl bg-[#151515] px-6 text-center">
-                  <StickyNote className="mb-3 h-10 w-10 text-[#5f6770]" />
-                  <p className="text-sm font-semibold text-[#d9d6d3]">
+                <div className="app-surface-muted flex min-h-[220px] flex-col items-center justify-center px-6 text-center">
+                  <StickyNote className="mb-3 h-10 w-10 text-[color:var(--ui-text-meta)]" />
+                  <p className="text-sm font-semibold text-[color:var(--ui-text)]">
                     {normalizedSearch ? 'Nenhuma nota encontrada.' : 'Voce ainda nao tem notas.'}
                   </p>
-                  <p className="mt-1 text-xs text-[#8b9199]">Comece registrando ideias, briefs e observacoes.</p>
+                  <p className="mt-1 text-xs text-[color:var(--ui-text-meta)]">Comece registrando ideias, briefs e observacoes.</p>
                   {!normalizedSearch && (
                     <Button
                       variant="outline"
                       size="sm"
                       onClick={openCreate}
-                      className="mt-4 border-[#41474e] bg-[#2a2a2a] text-[#e5e2e1] hover:border-[#90caf9]/70 hover:bg-[#313131]"
+                      className="mt-4 border-[color:var(--ui-border)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text)] hover:border-[color:var(--ui-accent)]/70 hover:bg-[color:var(--ui-surface-3)]"
                     >
                       Criar primeira nota
                     </Button>
@@ -441,9 +439,9 @@ export function Notes() {
               ))}
             </div>
 
-            <div className="flex items-center justify-between bg-[#171717] px-4 py-3 md:px-5">
-              <span className="text-xs text-[#8b9199]">{notes.length} notas</span>
-              <span className="inline-flex items-center gap-1 rounded-full bg-[#2a2a2a] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-[#c1c7cf]">
+            <div className="flex items-center justify-between border-t app-divider bg-[color:var(--ui-surface-1)] px-4 py-3 md:px-5">
+              <span className="text-xs text-[color:var(--ui-text-meta)]">{notes.length} notas</span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--ui-surface-2)] px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.1em] text-[color:var(--ui-text-dim)]">
                 <Pin className="h-3 w-3" />
                 {pinnedCount} fixadas
               </span>
@@ -463,15 +461,15 @@ export function Notes() {
               saving={savePending}
             />
           ) : (
-            <section className="flex min-h-0 flex-col items-center justify-center rounded-3xl bg-[#0f0f0f] px-6 text-center shadow-[0_20px_44px_rgba(0,0,0,0.35)]">
-              <BookText className="mb-3 h-12 w-12 text-[#5f6770]" />
-              <p className="font-headline text-xl font-bold text-[#e5e2e1]">Selecione uma nota</p>
-              <p className="mt-1 max-w-sm text-sm text-[#8b9199]">
+            <section className="app-surface-muted flex min-h-0 flex-col items-center justify-center px-6 text-center">
+              <BookText className="mb-3 h-12 w-12 text-[color:var(--ui-text-meta)]" />
+              <p className="font-headline text-xl font-bold text-[color:var(--ui-text)]">Selecione uma nota</p>
+              <p className="mt-1 max-w-sm text-sm text-[color:var(--ui-text-meta)]">
                 Abra uma nota da lista para editar em markdown ou crie uma nova nota no botao superior.
               </p>
               <Button
                 onClick={openCreate}
-                className="mt-5 h-10 gap-2 rounded-xl border-0 bg-gradient-to-r from-[#c5e3ff] to-[#90caf9] text-[#03263b] hover:from-[#d6edff] hover:to-[#a6d4fb]"
+                className="mt-5 h-10 gap-2 rounded-xl border-0 bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)]"
               >
                 <Plus className="h-4 w-4" />
                 Nova nota
@@ -481,14 +479,13 @@ export function Notes() {
         </div>
 
         <div className="grid gap-4 md:grid-cols-3">
-          <article className="relative overflow-hidden rounded-3xl bg-[#0e0e0e] p-6 md:col-span-2">
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_88%_26%,rgba(144,202,249,0.28),transparent_48%),linear-gradient(130deg,#0e0e0e_0%,#191919_56%,#111111_100%)]" />
-            <div className="relative z-10">
-              <span className="text-[10px] font-black uppercase tracking-[0.22em] text-[#c5e3ff]">Editor Choice</span>
-              <h2 className="mt-2 font-headline text-2xl font-extrabold tracking-tight text-[#e5e2e1]">
+          <article className="app-surface-muted overflow-hidden p-6 md:col-span-2">
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-[0.22em] text-[color:var(--ui-accent)]">Editor Choice</span>
+              <h2 className="mt-2 font-headline text-2xl font-extrabold tracking-tight text-[color:var(--ui-text)]">
                 {editorChoice?.title ?? 'Estruture seu repositorio de conhecimento'}
               </h2>
-              <p className="mt-2 max-w-2xl text-sm text-[#c1c7cf]">
+              <p className="mt-2 max-w-2xl text-sm text-[color:var(--ui-text-dim)]">
                 {editorChoice?.content
                   ? editorChoice.content.replace(/\s+/g, ' ').slice(0, 220)
                   : 'Padronize notas por tema, com objetivo, contexto e decisoes. Isso reduz retrabalho e acelera refinamentos no pipeline.'}
@@ -497,18 +494,18 @@ export function Notes() {
             </div>
           </article>
 
-          <aside className="flex flex-col justify-between rounded-3xl bg-[#1c1b1b] p-6">
-            <div className="mb-6 h-1.5 w-14 rounded-full bg-[#90caf9]" />
+          <aside className="app-surface flex flex-col justify-between p-6">
+            <div className="mb-6 h-1.5 w-14 rounded-full bg-[color:var(--ui-accent)]" />
             <div>
-              <p className="font-headline text-4xl font-black leading-none text-[#e5e2e1]">{notes.length}</p>
-              <p className="mt-1 text-xs font-bold uppercase tracking-[0.16em] text-[#8b9199]">Notas ativas</p>
+              <p className="font-headline text-4xl font-black leading-none text-[color:var(--ui-text)]">{notes.length}</p>
+              <p className="mt-1 text-xs font-bold uppercase tracking-[0.16em] text-[color:var(--ui-text-meta)]">Notas ativas</p>
             </div>
             <div className="mt-8 flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-[#ffd9ae] shadow-[0_0_10px_rgba(255,217,174,0.7)] animate-pulse" />
-              <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#ffd9ae]">Sistema sincronizado</span>
+              <span className="h-2 w-2 rounded-full bg-[color:var(--ui-warning)] shadow-[0_0_10px_rgba(212,168,108,0.7)] animate-pulse" />
+              <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[color:var(--ui-warning)]">Sistema sincronizado</span>
             </div>
             {editorChoice && (
-              <p className="mt-4 text-[11px] text-[#8b9199]">
+              <p className="mt-4 text-[11px] text-[color:var(--ui-text-meta)]">
                 Atualizada em {formatPreciseTimestamp(editorChoice.updated_at)}
               </p>
             )}
@@ -516,16 +513,16 @@ export function Notes() {
         </div>
       </div>
 
-      <div className="pointer-events-none fixed bottom-6 right-6 z-40 hidden items-center gap-3 rounded-full bg-[#2a2a2a]/65 px-4 py-2 shadow-[0_12px_28px_rgba(0,0,0,0.35)] backdrop-blur-md md:flex">
-        <span className="h-2 w-2 rounded-full bg-[#ffd9ae] shadow-[0_0_8px_rgba(255,217,174,0.7)]" />
-        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#e5e2e1]">
-          <Sparkles className="h-3 w-3 text-[#c5e3ff]" />
+      <div className="pointer-events-none fixed bottom-6 right-6 z-40 hidden items-center gap-3 rounded-full border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)]/85 px-4 py-2 shadow-[0_12px_28px_rgba(0,0,0,0.35)] backdrop-blur md:flex">
+        <span className="h-2 w-2 rounded-full bg-[color:var(--ui-warning)] shadow-[0_0_8px_rgba(212,168,108,0.7)]" />
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[color:var(--ui-text)]">
+          <Sparkles className="h-3 w-3 text-[color:var(--ui-accent)]" />
           System Sync 100%
         </span>
       </div>
 
-      <div className="pointer-events-none fixed bottom-6 left-6 z-40 hidden items-center gap-2 rounded-full bg-[#2a2a2a]/55 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#c1c7cf] md:flex">
-        <Clock3 className="h-3 w-3 text-[#90caf9]" />
+      <div className="pointer-events-none fixed bottom-6 left-6 z-40 hidden items-center gap-2 rounded-full border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)]/80 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[color:var(--ui-text-dim)] md:flex">
+        <Clock3 className="h-3 w-3 text-[color:var(--ui-accent)]" />
         /api/notes conectado
       </div>
     </div>
