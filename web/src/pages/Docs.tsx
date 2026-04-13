@@ -23,6 +23,12 @@ function fileAccent(fileName: string) {
   return 'text-[#c1c7cf]'
 }
 
+function formatChunkCount(count: number) {
+  if (count < 1000) return String(count)
+  const value = count >= 1_000_000 ? `${(count / 1_000_000).toFixed(1)}M` : `${(count / 1000).toFixed(1)}k`
+  return value.replace('.0', '')
+}
+
 function CompareDialog({ doc1, docs, onClose }: { doc1: string; docs: DocItem[]; onClose: () => void }) {
   const [doc2, setDoc2] = useState('')
   const [result, setResult] = useState('')

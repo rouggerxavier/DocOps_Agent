@@ -176,8 +176,9 @@ export function Ingest() {
   }
 
   function handleFileInput(event: React.ChangeEvent<HTMLInputElement>) {
-    if (!event.target.files) return
-    setSelectedFiles(prev => [...prev, ...Array.from(event.target.files)])
+    const { files } = event.currentTarget
+    if (!files) return
+    setSelectedFiles(prev => [...prev, ...Array.from(files)])
   }
 
   useEffect(() => {
