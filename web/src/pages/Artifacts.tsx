@@ -1210,15 +1210,15 @@ export function Artifacts() {
       <div className="fixed top-0 right-0 -z-10 w-[600px] h-[600px] bg-primary/5 blur-[120px] rounded-full translate-x-1/2 -translate-y-1/2 pointer-events-none" />
       <div className="fixed bottom-0 left-0 -z-10 w-[400px] h-[400px] bg-amber-400/5 blur-[100px] rounded-full -translate-x-1/2 translate-y-1/2 pointer-events-none" />
 
-      <div className="px-6 py-8 space-y-12">
+      <div className="px-4 py-6 space-y-8 sm:px-6 sm:py-8 sm:space-y-12">
 
         {/* ── Hero ── */}
         <header>
           <span className="app-kicker">Biblioteca de ativos inteligentes</span>
-          <h1 className="text-5xl font-extrabold font-headline tracking-tighter mt-2 text-[#e1e3e4]">
+          <h1 className="text-3xl font-extrabold font-headline tracking-tighter mt-2 text-[#e1e3e4] sm:text-5xl">
             Artefatos
           </h1>
-          <p className="mt-4 text-lg text-[#c6c5d4] max-w-2xl leading-relaxed">
+          <p className="mt-3 text-sm text-[#c6c5d4] max-w-2xl leading-relaxed sm:mt-4 sm:text-lg">
             {templatesEnabled
               ? 'Resumos, checklists e outros artefatos gerados com templates premium'
               : 'Resumos, checklists e outros artefatos gerados pelo agente'}
@@ -1227,57 +1227,57 @@ export function Artifacts() {
 
         {/* ── Action Hub ── */}
         <section>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-2 lg:grid-cols-4 sm:gap-4">
 
             {/* Resumir Documento */}
             <button
               onClick={() => setShowSummarize(true)}
-              className="group relative flex flex-col items-start p-6 rounded-xl bg-[#111111] hover:bg-[#1e1e1e] transition-all duration-300 text-left overflow-hidden border border-[#1e1e1e] hover:border-[#282828]"
+              className="group relative flex flex-col items-start p-4 rounded-xl bg-[#111111] hover:bg-[#1e1e1e] transition-all duration-300 text-left overflow-hidden border border-[#1e1e1e] hover:border-[#282828] sm:p-6"
             >
               <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className="w-12 h-12 rounded-lg bg-[#1e1e1e] mb-5 flex items-center justify-center group-hover:scale-110 transition-transform">
-                <BookOpen className="h-6 w-6 text-primary" />
+              <div className="w-10 h-10 rounded-lg bg-[#1e1e1e] mb-3 flex items-center justify-center group-hover:scale-110 transition-transform sm:w-12 sm:h-12 sm:mb-5">
+                <BookOpen className="h-5 w-5 text-primary sm:h-6 sm:w-6" />
               </div>
-              <h3 className="text-lg font-bold font-headline text-[#e1e3e4] mb-2">Resumir Documento</h3>
-              <p className="text-sm text-[#c6c5d4] leading-snug">Extraia a essência de arquivos extensos instantaneamente.</p>
+              <h3 className="text-sm font-bold font-headline text-[#e1e3e4] mb-1 sm:text-lg sm:mb-2">Resumir Documento</h3>
+              <p className="text-xs text-[#c6c5d4] leading-snug sm:text-sm">Extraia a essência de arquivos extensos instantaneamente.</p>
             </button>
 
             {/* Smart Digest */}
             <button
               onClick={() => setShowDigest(true)}
-              className="group relative flex flex-col items-start p-6 rounded-xl bg-[#111111] hover:bg-[#1e1e1e] transition-all duration-300 text-left overflow-hidden border border-[#1e1e1e] hover:border-[#282828]"
+              className="group relative flex flex-col items-start p-4 rounded-xl bg-[#111111] hover:bg-[#1e1e1e] transition-all duration-300 text-left overflow-hidden border border-[#1e1e1e] hover:border-[#282828] sm:p-6"
             >
               <div className="absolute inset-0 bg-gradient-to-br from-amber-400/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className="w-12 h-12 rounded-lg bg-[#1e1e1e] mb-5 flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Zap className="h-6 w-6 text-amber-400" />
+              <div className="w-10 h-10 rounded-lg bg-[#1e1e1e] mb-3 flex items-center justify-center group-hover:scale-110 transition-transform sm:w-12 sm:h-12 sm:mb-5">
+                <Zap className="h-5 w-5 text-amber-400 sm:h-6 sm:w-6" />
               </div>
-              <h3 className="text-lg font-bold font-headline text-[#e1e3e4] mb-2">Smart Digest</h3>
-              <p className="text-sm text-[#c6c5d4] leading-snug">Resumo + flashcards + tarefas em uma única operação.</p>
+              <h3 className="text-sm font-bold font-headline text-[#e1e3e4] mb-1 sm:text-lg sm:mb-2">Smart Digest</h3>
+              <p className="text-xs text-[#c6c5d4] leading-snug sm:text-sm">Resumo + flashcards + tarefas em uma única operação.</p>
             </button>
 
             {/* Plano de Estudos */}
             <button
               onClick={() => window.location.href = '/studyplan'}
-              className="group relative flex flex-col items-start p-6 rounded-xl bg-[#111111] hover:bg-[#1e1e1e] transition-all duration-300 text-left overflow-hidden border border-[#1e1e1e] hover:border-[#282828]"
+              className="group relative flex flex-col items-start p-4 rounded-xl bg-[#111111] hover:bg-[#1e1e1e] transition-all duration-300 text-left overflow-hidden border border-[#1e1e1e] hover:border-[#282828] sm:p-6"
             >
               <div className="absolute inset-0 bg-gradient-to-br from-emerald-400/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-              <div className="w-12 h-12 rounded-lg bg-[#1e1e1e] mb-5 flex items-center justify-center group-hover:scale-110 transition-transform">
-                <GraduationCap className="h-6 w-6 text-emerald-400" />
+              <div className="w-10 h-10 rounded-lg bg-[#1e1e1e] mb-3 flex items-center justify-center group-hover:scale-110 transition-transform sm:w-12 sm:h-12 sm:mb-5">
+                <GraduationCap className="h-5 w-5 text-emerald-400 sm:h-6 sm:w-6" />
               </div>
-              <h3 className="text-lg font-bold font-headline text-[#e1e3e4] mb-2">Plano de Estudos</h3>
-              <p className="text-sm text-[#c6c5d4] leading-snug">Roteiros de aprendizado gerados via IA generativa.</p>
+              <h3 className="text-sm font-bold font-headline text-[#e1e3e4] mb-1 sm:text-lg sm:mb-2">Plano de Estudos</h3>
+              <p className="text-xs text-[#c6c5d4] leading-snug sm:text-sm">Roteiros de aprendizado gerados via IA generativa.</p>
             </button>
 
             {/* Novo Artefato */}
             <button
               onClick={() => setShowCreate(true)}
-              className="group relative flex flex-col items-center justify-center p-6 rounded-xl border-2 border-dashed border-[#282828] hover:border-primary/50 transition-all duration-300 text-center bg-transparent"
+              className="group relative flex flex-col items-center justify-center p-4 rounded-xl border-2 border-dashed border-[#282828] hover:border-primary/50 transition-all duration-300 text-center bg-transparent sm:p-6"
             >
-              <div className="w-12 h-12 rounded-full bg-primary/10 mb-4 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
-                <Plus className="h-6 w-6 text-primary" />
+              <div className="w-10 h-10 rounded-full bg-primary/10 mb-3 flex items-center justify-center group-hover:bg-primary/20 transition-colors sm:w-12 sm:h-12 sm:mb-4">
+                <Plus className="h-5 w-5 text-primary sm:h-6 sm:w-6" />
               </div>
-              <h3 className="text-lg font-bold font-headline text-primary">Novo Artefato</h3>
-              <p className="text-xs text-[#c6c5d4] mt-2">Clique para iniciar criação livre</p>
+              <h3 className="text-sm font-bold font-headline text-primary sm:text-lg">Novo Artefato</h3>
+              <p className="text-xs text-[#c6c5d4] mt-1 sm:mt-2">Clique para iniciar criação livre</p>
             </button>
 
           </div>
@@ -1286,9 +1286,9 @@ export function Artifacts() {
         {/* ── Library Section ── */}
         <section>
           {/* Section header */}
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-4">
-              <h2 className="text-2xl font-bold font-headline text-[#e1e3e4]">Arquivos Recentes</h2>
+          <div className="mb-4 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-3">
+              <h2 className="text-xl font-bold font-headline text-[#e1e3e4] sm:text-2xl">Arquivos Recentes</h2>
               {!isLoading && artifacts && (
                 <span className="px-2.5 py-0.5 rounded-full bg-[#1e1e1e] text-xs text-[#c6c5d4] font-semibold">
                   {artifacts.length} {artifacts.length === 1 ? 'item' : 'itens'}
@@ -1297,20 +1297,20 @@ export function Artifacts() {
             </div>
             <div className="flex items-center gap-2">
               {/* Search */}
-              <div className="relative">
+              <div className="relative flex-1 sm:flex-none">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#c6c5d4]" />
                 <input
                   type="text"
                   placeholder="Buscar artefatos..."
                   value={search}
                   onChange={e => setSearch(e.target.value)}
-                  className="pl-10 pr-4 py-2 bg-[#111111] border border-[#1e1e1e] rounded-lg text-sm text-[#e1e3e4] placeholder-[#454652] focus:outline-none focus:border-primary/40 w-56 transition-all"
+                  className="w-full pl-10 pr-4 py-2 bg-[#111111] border border-[#1e1e1e] rounded-lg text-sm text-[#e1e3e4] placeholder-[#454652] focus:outline-none focus:border-primary/40 transition-all sm:w-56"
                 />
               </div>
               {/* Filter toggle */}
               <button
                 onClick={() => setShowFilters(f => !f)}
-                className={`p-2 rounded-lg transition-colors ${showFilters || hasActiveFilters ? 'bg-primary/15 text-primary border border-primary/30' : 'bg-[#111111] border border-[#1e1e1e] text-[#c6c5d4] hover:bg-[#1e1e1e]'}`}
+                className={`shrink-0 p-2 rounded-lg transition-colors ${showFilters || hasActiveFilters ? 'bg-primary/15 text-primary border border-primary/30' : 'bg-[#111111] border border-[#1e1e1e] text-[#c6c5d4] hover:bg-[#1e1e1e]'}`}
                 title="Filtros avançados"
               >
                 <SlidersHorizontal className="h-4 w-4" />
@@ -1323,7 +1323,7 @@ export function Artifacts() {
                     setSourceDocFilter('all'); setGenerationProfileFilter('all')
                     setSortBy('created_at'); setSortOrder('desc')
                   }}
-                  className="text-xs text-[#c6c5d4] hover:text-[#e1e3e4] transition-colors"
+                  className="shrink-0 text-xs text-[#c6c5d4] hover:text-[#e1e3e4] transition-colors"
                 >
                   Limpar
                 </button>
@@ -1391,59 +1391,33 @@ export function Artifacts() {
                 return (
                   <div
                     key={`${artifact.filename}-${artifact.created_at}`}
-                    className={`group flex items-center gap-5 p-4 rounded-xl transition-all duration-200 ${
+                    className={`group flex items-center gap-3 p-3 rounded-xl transition-all duration-200 sm:gap-5 sm:p-4 ${
                       idx % 2 === 0
                         ? 'bg-[#111111] hover:bg-[#1e1e1e]'
                         : 'bg-[#0d0d0d] border border-[#1e1e1e]/50 hover:bg-[#111111]'
                     }`}
                   >
                     {/* Icon */}
-                    <div className="w-12 h-12 rounded-xl bg-[#1e1e1e] flex items-center justify-center shrink-0">
+                    <div className="w-9 h-9 rounded-xl bg-[#1e1e1e] flex items-center justify-center shrink-0 sm:w-12 sm:h-12">
                       <ArtifactIcon type={artifact.artifact_type} filename={artifact.filename} />
                     </div>
 
                     {/* Content */}
                     <div className="flex-1 min-w-0">
-                      <h4 className="text-base font-bold font-headline text-[#e1e3e4] truncate group-hover:text-primary transition-colors">
+                      <h4 className="text-sm font-bold font-headline text-[#e1e3e4] truncate group-hover:text-primary transition-colors sm:text-base">
                         {artifact.title?.trim() ? artifact.title : artifact.filename}
                       </h4>
-                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                      <div className="flex items-center gap-1.5 mt-0.5 flex-wrap sm:gap-2 sm:mt-1">
                         {badge && <span className={`text-xs font-semibold ${badge.cls}`}>{badge.label}</span>}
                         {badge && <span className="w-1 h-1 rounded-full bg-[#282828]" />}
                         <span className="text-xs text-[#c6c5d4]">{formatDate(artifact.created_at)}</span>
-                        <span className="w-1 h-1 rounded-full bg-[#282828]" />
-                        <span className="text-xs text-[#c6c5d4]">{formatBytes(artifact.size)}</span>
+                        <span className="hidden w-1 h-1 rounded-full bg-[#282828] sm:block" />
+                        <span className="hidden text-xs text-[#c6c5d4] sm:block">{formatBytes(artifact.size)}</span>
                       </div>
-                      {/* Meta chips */}
-                      {(artifact.template_id || artifact.generation_profile || (artifact.source_doc_count ?? 0) > 0 || artifact.confidence_level) && (
-                        <div className="mt-1.5 flex flex-wrap gap-1.5">
-                          {artifact.template_id && (
-                            <span className="rounded-full border border-[#282828] bg-[#111111] px-2 py-0.5 text-[11px] text-[#c6c5d4]">
-                              Template: {artifact.template_id}
-                            </span>
-                          )}
-                          {artifact.generation_profile && (
-                            <span className="rounded-full border border-[#282828] bg-[#111111] px-2 py-0.5 text-[11px] text-[#c6c5d4]">
-                              Perfil: {artifact.generation_profile}
-                            </span>
-                          )}
-                          {(artifact.source_doc_count ?? 0) > 0 && (
-                            <span className="rounded-full border border-[#282828] bg-[#111111] px-2 py-0.5 text-[11px] text-[#c6c5d4]">
-                              Fontes: {artifact.source_doc_count}
-                            </span>
-                          )}
-                          {(artifact.confidence_level || typeof artifact.confidence_score === 'number') && (
-                            <span className={`rounded-full border px-2 py-0.5 text-[11px] ${confidenceBadgeClass(artifact.confidence_level)}`}>
-                              Confiança: {artifact.confidence_level ?? 'n/a'}
-                              {typeof artifact.confidence_score === 'number' ? ` (${Math.round(artifact.confidence_score * 100)}%)` : ''}
-                            </span>
-                          )}
-                        </div>
-                      )}
                     </div>
 
-                    {/* Hover actions */}
-                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    {/* Actions — always visible on mobile, hover-only on sm+ */}
+                    <div className="flex items-center gap-1 shrink-0 sm:opacity-0 sm:group-hover:opacity-100 sm:transition-opacity">
                       {isMarkdown && (
                         <button
                           onClick={() => setPreviewFile({ id: artifact.id, filename: artifact.filename })}
@@ -1469,7 +1443,7 @@ export function Artifacts() {
                         <button
                           onClick={() => handleDownloadPdf(artifact.id, artifact.filename)}
                           disabled={downloadingKey !== null}
-                          className="p-2 hover:bg-[#282828] rounded-lg text-[#c6c5d4] transition-colors disabled:opacity-50"
+                          className="hidden p-2 hover:bg-[#282828] rounded-lg text-[#c6c5d4] transition-colors disabled:opacity-50 sm:block"
                           title="Exportar PDF"
                         >
                           {downloadingKey === `${artifact.id}:pdf` ? (
