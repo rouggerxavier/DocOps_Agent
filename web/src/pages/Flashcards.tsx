@@ -100,7 +100,7 @@ function DocSelector({
                 {selected?.file_name ?? 'Selecione um documento'}
               </span>
               <span className="text-xs text-on-surface-variant mt-0.5">
-                {selected?.chunk_count ?? 0} chunks indexados
+                Documento pronto para gerar flashcards
               </span>
             </div>
           </div>
@@ -133,7 +133,6 @@ function DocSelector({
               >
                 <FileText className="w-4 h-4 shrink-0 opacity-60" />
                 <span className="text-sm truncate">{d.file_name}</span>
-                <span className="ml-auto text-[10px] text-on-surface-variant shrink-0">{d.chunk_count}c</span>
               </button>
             ))}
           </div>

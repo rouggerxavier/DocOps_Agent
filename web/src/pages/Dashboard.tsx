@@ -536,9 +536,9 @@ export function Dashboard() {
                 {docs.slice(0, docsPreviewCount).map((doc) => (
                   <div
                     key={doc.doc_id}
-                    className="group flex flex-col items-start gap-3 rounded-xl bg-[color:var(--ui-surface-1)] px-3 py-3 transition-colors hover:bg-[color:var(--ui-surface-3)] sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4"
+                    className="group flex items-center gap-3 rounded-xl bg-[color:var(--ui-surface-1)] px-3 py-3 transition-colors hover:bg-[color:var(--ui-surface-3)] sm:gap-4 sm:px-4"
                   >
-                    <div className="min-w-0 flex w-full items-center gap-3 sm:w-auto">
+                    <div className="min-w-0 flex w-full items-center gap-3">
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[color:var(--ui-accent-soft)]">
                         <FileText className="h-4 w-4 text-[color:var(--ui-accent)]" />
                       </div>
@@ -547,9 +547,6 @@ export function Dashboard() {
                         <p className="hidden text-[11px] text-[color:var(--ui-text-meta)] sm:block">Fonte: {doc.source || 'local'}</p>
                       </div>
                     </div>
-                    <span className="shrink-0 rounded-full bg-[color:var(--ui-surface-3)] px-2 py-0.5 text-[11px] text-[color:var(--ui-text-dim)] sm:text-xs">
-                      {doc.chunk_count}
-                    </span>
                   </div>
                 ))}
               </div>

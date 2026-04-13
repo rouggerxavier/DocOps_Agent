@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
 import { toast } from 'sonner'
-import { Brain, Database, Eye, FileText, GitCompare, GraduationCap, Loader2, Search, Trash2, X, Zap } from 'lucide-react'
+import { Brain, Eye, FileText, GitCompare, GraduationCap, Loader2, Search, Trash2, X, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -22,12 +22,6 @@ function fileAccent(fileName: string) {
   if (lower.endsWith('.docx') || lower.endsWith('.doc')) return 'text-amber-300'
   if (lower.endsWith('.xlsx') || lower.endsWith('.csv')) return 'text-emerald-400'
   return 'text-[color:var(--ui-text-dim)]'
-}
-
-function formatChunkCount(count: number) {
-  if (count < 1000) return String(count)
-  const value = count >= 1_000_000 ? `${(count / 1_000_000).toFixed(1)}M` : `${(count / 1000).toFixed(1)}k`
-  return value.replace('.0', '')
 }
 
 function CompareDialog({ doc1, docs, onClose }: { doc1: string; docs: DocItem[]; onClose: () => void }) {
@@ -195,8 +189,6 @@ export function Docs() {
 
   const normalized = search.trim().toLowerCase()
   const filtered = useMemo(() => docs.filter(doc => doc.file_name.toLowerCase().includes(normalized)), [docs, normalized])
-  const totalChunks = useMemo(() => docs.reduce((acc, doc) => acc + doc.chunk_count, 0), [docs])
-  const usage = totalChunks > 0 ? Math.min(100, Math.round((totalChunks / 1600) * 100)) : 0
 
   return (
     <>
@@ -217,22 +209,14 @@ export function Docs() {
             <article className="rounded-[1.15rem] border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] p-5">
               <div className="mb-5 flex items-start justify-between">
                 <div>
-                  <p className="text-[11px] uppercase tracking-[0.16em] text-[color:var(--ui-text-meta)]">Total Chunks</p>
-                  <p className="mt-2 font-headline text-4xl font-bold leading-none text-[color:var(--ui-text)]">{formatChunkCount(totalChunks)}</p>
+                  <p className="text-[11px] uppercase tracking-[0.16em] text-[color:var(--ui-text-meta)]">Documentos Indexados</p>
+                  <p className="mt-2 font-headline text-4xl font-bold leading-none text-[color:var(--ui-text)]">{docs.length}</p>
                 </div>
                 <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[color:var(--ui-accent-soft)]">
-                  <Database className="h-5 w-5 text-[color:var(--ui-accent)]" />
+                  <FileText className="h-5 w-5 text-[color:var(--ui-accent)]" />
                 </div>
               </div>
-              <p className="mt-3 text-xs text-[color:var(--ui-text-dim)]">Base indexada para consulta</p>
-              <div className="mt-4 space-y-1.5">
-                <div className="flex items-center justify-between text-xs text-[color:var(--ui-text-dim)]">
-                  <span>Storage usage</span><span>{usage}%</span>
-                </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-[color:var(--ui-surface-3)]">
-                  <div className="h-full rounded-full bg-[color:var(--ui-accent)]" style={{ width: `${usage}%` }} />
-                </div>
-              </div>
+              <p className="mt-3 text-xs text-[color:var(--ui-text-dim)]">Biblioteca pronta para consulta e operações inteligentes.</p>
             </article>
 
             <article className="rounded-[1.15rem] border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] p-5">
@@ -280,7 +264,7 @@ export function Docs() {
                         </div>
                         <div className="min-w-0">
                           <p className="truncate text-sm font-semibold text-[color:var(--ui-text)]">{doc.file_name}</p>
-                          <p className="text-xs text-[color:var(--ui-text-meta)]">{formatChunkCount(doc.chunk_count)} chunks indexados</p>
+                          <p className="text-xs text-[color:var(--ui-text-meta)]">Documento disponível para consulta</p>
                         </div>
                       </div>
                       <div className="flex items-center gap-1.5">

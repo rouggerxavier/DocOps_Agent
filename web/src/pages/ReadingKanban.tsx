@@ -54,11 +54,6 @@ const COLUMNS: ColumnConfig[] = [
   },
 ]
 
-function estimateReadMinutes(chunks: number) {
-  if (!Number.isFinite(chunks) || chunks <= 0) return 5
-  return Math.max(5, Math.round(chunks / 3))
-}
-
 function compactDocId(docId: string) {
   if (!docId) return 'N/A'
   return docId.length <= 10 ? docId.toUpperCase() : docId.slice(0, 10).toUpperCase()
@@ -216,9 +211,7 @@ function BoardCard({
 
       <div className="mt-3 space-y-2">
         <div className="flex items-center gap-3 text-xs text-[#aab2bc]">
-          <span>{doc.chunk_count} chunks</span>
-          <span>·</span>
-          <span>{estimateReadMinutes(doc.chunk_count)} min</span>
+          <span>{isDone ? 'Leitura concluida' : isReading ? 'Leitura em andamento' : 'Pronto para leitura'}</span>
         </div>
 
         {status !== 'to_read' && (

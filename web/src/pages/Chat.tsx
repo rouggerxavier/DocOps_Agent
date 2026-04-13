@@ -2629,7 +2629,7 @@ export function Chat() {
                           backgroundColor: '#161C24',
                         }}
                       >
-                        {doc.file_name} ({doc.chunk_count} chunks)
+                        {doc.file_name}
                       </option>
                     ))}
                 </select>

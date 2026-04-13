@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Camera, CheckCircle, ChevronDown, ClipboardPaste, FileText, FolderOpen, Layers, Loader2, Upload, X } from 'lucide-react'
+import { Camera, CheckCircle, ClipboardPaste, FileText, FolderOpen, Layers, Loader2, Upload, X } from 'lucide-react'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -43,8 +43,8 @@ async function buildPreview(file: File): Promise<TabularPreview | null> {
 
 const INGEST_STAGES = [
   { label: 'Carregando arquivos...', pct: 15 },
-  { label: 'Dividindo em chunks...', pct: 40 },
-  { label: 'Vetorizando chunks...', pct: 65 },
+  { label: 'Processando conteudo...', pct: 40 },
+  { label: 'Gerando vetores...', pct: 65 },
   { label: 'Indexando no Chroma...', pct: 85 },
   { label: 'Salvando metadados...', pct: 95 },
 ]
@@ -99,40 +99,26 @@ export function Ingest() {
   const [photoTitle, setPhotoTitle] = useState('')
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
 
-  const [chunkSize, setChunkSize] = useState('')
-  const [chunkOverlap, setChunkOverlap] = useState('')
-  const [advancedOpen, setAdvancedOpen] = useState(false)
-
   const [result, setResult] = useState<IngestResponse | null>(null)
 
   const uploadMutation = useMutation({
-    mutationFn: () =>
-      apiClient.ingestUpload(
-        selectedFiles,
-        chunkSize ? Number.parseInt(chunkSize, 10) : 0,
-        chunkOverlap ? Number.parseInt(chunkOverlap, 10) : 0,
-      ),
+    mutationFn: () => apiClient.ingestUpload(selectedFiles),
     onSuccess: data => {
       setResult(data)
       setSelectedFiles([])
       queryClient.invalidateQueries({ queryKey: ['docs'] })
-      toast.success(`${data.chunks_indexed} chunks indexados com sucesso!`)
+      toast.success('Documentos indexados com sucesso!')
     },
     onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao inserir arquivos'),
   })
 
   const pathMutation = useMutation({
-    mutationFn: () =>
-      apiClient.ingestPath(
-        serverPath,
-        chunkSize ? Number.parseInt(chunkSize, 10) : 0,
-        chunkOverlap ? Number.parseInt(chunkOverlap, 10) : 0,
-      ),
+    mutationFn: () => apiClient.ingestPath(serverPath),
     onSuccess: data => {
       setResult(data)
       setServerPath('')
       queryClient.invalidateQueries({ queryKey: ['docs'] })
-      toast.success(`${data.chunks_indexed} chunks indexados com sucesso!`)
+      toast.success('Documentos indexados com sucesso!')
     },
     onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao inserir caminho'),
   })
@@ -144,7 +130,7 @@ export function Ingest() {
       setClipText('')
       setClipTitle('')
       queryClient.invalidateQueries({ queryKey: ['docs'] })
-      toast.success(`${data.chunks_indexed} chunks indexados com sucesso!`)
+      toast.success('Documento indexado com sucesso!')
     },
     onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao inserir texto'),
   })
@@ -157,7 +143,7 @@ export function Ingest() {
       setPhotoTitle('')
       setPhotoPreview(null)
       queryClient.invalidateQueries({ queryKey: ['docs'] })
-      toast.success(`${data.chunks_indexed} chunks indexados com sucesso!`)
+      toast.success('Documento indexado com sucesso!')
     },
     onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao processar foto'),
   })
@@ -376,32 +362,13 @@ export function Ingest() {
         </section>
       )}
 
-      <section className="overflow-hidden rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-bg-alt)]">
-        <button onClick={() => setAdvancedOpen(v => !v)} className="flex w-full items-center justify-between px-4 py-3 hover:bg-[color:var(--ui-surface-1)]">
-          <span className="text-sm font-medium text-[color:var(--ui-text-dim)]">Configuracoes Avancadas</span>
-          <ChevronDown className={cn('h-4 w-4 text-[color:var(--ui-text-meta)] transition-transform', advancedOpen && 'rotate-180')} />
-        </button>
-        {advancedOpen && (
-          <div className="grid gap-4 border-t border-[color:var(--ui-border-soft)] px-4 pb-4 pt-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-[color:var(--ui-text-meta)]">Chunk Size</label>
-              <Input type="number" placeholder="900" value={chunkSize} onChange={event => setChunkSize(event.target.value)} className="h-10 border-[color:var(--ui-border)] bg-[color:var(--ui-bg-alt)] text-[color:var(--ui-text)]" />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-[color:var(--ui-text-meta)]">Chunk Overlap</label>
-              <Input type="number" placeholder="150" value={chunkOverlap} onChange={event => setChunkOverlap(event.target.value)} className="h-10 border-[color:var(--ui-border)] bg-[color:var(--ui-bg-alt)] text-[color:var(--ui-text)]" />
-            </div>
-          </div>
-        )}
-      </section>
-
       {result && (
         <section className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 p-4">
           <div className="flex items-start gap-3">
             <CheckCircle className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" />
             <div>
               <p className="font-medium text-emerald-200">Insercao concluida</p>
-              <p className="mt-1 text-sm text-emerald-300">{result.files_loaded} documento(s), {result.chunks_indexed} chunks indexados.</p>
+              <p className="mt-1 text-sm text-emerald-300">{result.files_loaded} documento(s) processado(s).</p>
               {result.file_names.length > 0 && (
                 <ul className="mt-2 space-y-1">
                   {result.file_names.map(name => (
