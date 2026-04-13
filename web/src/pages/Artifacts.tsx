@@ -1,38 +1,31 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  Archive, BookOpen, Brain, CheckSquare, Download, Eye,
-  FileText, GraduationCap, Loader2, Plus, Trash2, X, Zap,
+  Archive, BookOpen, Brain, CheckSquare, ChevronDown, Download, Eye,
+  FileText, GraduationCap, Loader2, Plus, Search, SlidersHorizontal,
+  Trash2, X, Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
-import { Card, CardContent } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
-import { PageHeader, PageShell } from '@/components/ui/page-shell'
 import { apiClient, type ArtifactFilterOptions, type ArtifactItem, type ArtifactTemplate, type DocItem } from '@/api/client'
 import { useCapabilities } from '@/features/CapabilitiesProvider'
 import { formatBytes, formatDate } from '@/lib/utils'
 
-const ARTIFACT_TYPES = [
-  { value: 'checklist', label: 'Checklist' },
-  { value: 'artifact', label: 'Artefato Livre' },
-] as const
 const MARKDOWN_FILE_RE = /\.(md|markdown|txt)$/i
 const ARTIFACT_SORT_OPTIONS = [
   { value: 'created_at', label: 'Mais recentes' },
   { value: 'title', label: 'Titulo (A-Z)' },
   { value: 'artifact_type', label: 'Tipo' },
-  { value: 'confidence_score', label: 'Confianca' },
+  { value: 'confidence_score', label: 'Confiança' },
 ] as const
 
 function confidenceBadgeClass(level: string | null | undefined): string {
   const normalized = String(level ?? '').toLowerCase()
-  if (normalized === 'high') return 'border-emerald-700 bg-emerald-950/40 text-emerald-300'
-  if (normalized === 'medium') return 'border-amber-700 bg-amber-950/40 text-amber-300'
-  if (normalized === 'low') return 'border-rose-700 bg-rose-950/40 text-rose-300'
-  return 'border-zinc-700 bg-zinc-900 text-zinc-400'
+  if (normalized === 'high') return 'border-emerald-700/50 bg-emerald-950/30 text-emerald-400'
+  if (normalized === 'medium') return 'border-amber-700/50 bg-amber-950/30 text-amber-400'
+  if (normalized === 'low') return 'border-rose-700/50 bg-rose-950/30 text-rose-400'
+  return 'border-[#282828] bg-[#111111] text-[#c6c5d4]'
 }
 
 function pickDefaultTemplate(
@@ -40,17 +33,14 @@ function pickDefaultTemplate(
   options: { summaryMode?: 'brief' | 'deep'; artifactType?: string }
 ): string {
   if (!templates.length) return ''
-
   if (options.summaryMode) {
     const byMode = templates.find(item => item.default_for_summary_modes.includes(options.summaryMode!))
     if (byMode) return byMode.template_id
   }
-
   if (options.artifactType) {
     const byType = templates.find(item => item.default_for_artifact_types.includes(options.artifactType!))
     if (byType) return byType.template_id
   }
-
   return templates[0]?.template_id ?? ''
 }
 
@@ -75,7 +65,123 @@ function downloadBlobFile(blob: Blob, filename: string) {
   URL.revokeObjectURL(objectUrl)
 }
 
-// â”€â”€ Resumir Documento Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Generic Custom Select ─────────────────────────────────────────────────────
+
+interface SelectOption { value: string; label: string }
+function FilterSelect({
+  options,
+  value,
+  onChange,
+  placeholder = 'Selecione...',
+}: {
+  options: SelectOption[]
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function onOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onOutside)
+    return () => document.removeEventListener('mousedown', onOutside)
+  }, [])
+
+  const selectedLabel = options.find(o => o.value === value)?.label ?? placeholder
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between gap-2 h-10 px-3 rounded-lg bg-[#111111] border border-[#282828] text-sm text-[#e1e3e4] hover:border-primary/40 transition-colors"
+      >
+        <span className="truncate text-left">{selectedLabel}</span>
+        <ChevronDown className={`h-4 w-4 text-[#c6c5d4] shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-full rounded-lg border border-[#282828] bg-[#111111] shadow-xl overflow-hidden max-h-52 overflow-y-auto">
+          {options.map(opt => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => { onChange(opt.value); setOpen(false) }}
+              className={`w-full text-left px-3 py-2 text-sm transition-colors hover:bg-[#1e1e1e] ${
+                value === opt.value ? 'text-primary font-medium' : 'text-[#e1e3e4]'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── DocSelector (named custom dropdown for doc lists) ─────────────────────────
+
+function DocSelector({
+  docs,
+  value,
+  onChange,
+}: {
+  docs: DocItem[]
+  value: string
+  onChange: (v: string) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function onOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', onOutside)
+    return () => document.removeEventListener('mousedown', onOutside)
+  }, [])
+
+  const selectedLabel = docs.find(d => d.file_name === value)?.file_name ?? 'Selecione um documento'
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between gap-2 h-10 px-3 rounded-lg bg-[#1e1e1e] border border-[#282828] text-sm text-[#e1e3e4] hover:border-primary/40 transition-colors"
+      >
+        <span className="truncate text-left">{selectedLabel}</span>
+        <ChevronDown className={`h-4 w-4 text-[#c6c5d4] shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-full rounded-lg border border-[#282828] bg-[#111111] shadow-xl overflow-hidden max-h-52 overflow-y-auto">
+          <button
+            type="button"
+            onClick={() => { onChange(''); setOpen(false) }}
+            className={`w-full text-left px-3 py-2 text-sm transition-colors hover:bg-[#1e1e1e] ${!value ? 'text-primary font-medium' : 'text-[#c6c5d4]'}`}
+          >
+            Selecione um documento
+          </button>
+          {docs.map(d => (
+            <button
+              key={d.file_name}
+              type="button"
+              onClick={() => { onChange(d.file_name); setOpen(false) }}
+              className={`w-full text-left px-3 py-2 text-sm transition-colors hover:bg-[#1e1e1e] ${value === d.file_name ? 'text-primary font-medium' : 'text-[#e1e3e4]'}`}
+            >
+              {d.file_name}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Resumir Documento Dialog ──────────────────────────────────────────────────
 
 function SummarizeDocDialog({
   onClose,
@@ -114,10 +220,7 @@ function SummarizeDocDialog({
 
   useEffect(() => {
     if (!templatesEnabled) return
-    if (!templateOptions.length) {
-      setSelectedTemplateId('')
-      return
-    }
+    if (!templateOptions.length) { setSelectedTemplateId(''); return }
     const hasActive = templateOptions.some(item => item.template_id === selectedTemplateId)
     if (hasActive) return
     setSelectedTemplateId(pickDefaultTemplate(templateOptions, { summaryMode: mode, artifactType: 'summary' }))
@@ -125,9 +228,7 @@ function SummarizeDocDialog({
 
   const startJob = useMutation({
     mutationFn: () => apiClient.summarizeAsync(
-      selectedDoc,
-      true,
-      mode,
+      selectedDoc, true, mode,
       templatesEnabled ? (selectedTemplateId || undefined) : undefined,
     ),
     onSuccess: data => setJobId(data.job_id),
@@ -139,8 +240,7 @@ function SummarizeDocDialog({
     queryFn: () => apiClient.getJobStatus(jobId!),
     enabled: !!jobId,
     refetchInterval: query =>
-      query.state.data?.status === 'succeeded' || query.state.data?.status === 'failed'
-        ? false : 1200,
+      query.state.data?.status === 'succeeded' || query.state.data?.status === 'failed' ? false : 1200,
   })
 
   useEffect(() => {
@@ -168,172 +268,255 @@ function SummarizeDocDialog({
   async function handleDownloadMd() {
     if (!artifactFilename) return
     setDownloading('md')
-    try {
-      const blob = await apiClient.getArtifactBlob(artifactFilename)
-      downloadBlobFile(blob, artifactFilename)
-    } catch { toast.error('Erro ao baixar .md') } finally { setDownloading(null) }
+    try { const blob = await apiClient.getArtifactBlob(artifactFilename); downloadBlobFile(blob, artifactFilename) }
+    catch { toast.error('Erro ao baixar .md') } finally { setDownloading(null) }
   }
 
   async function handleDownloadPdf() {
     if (!artifactFilename) return
     setDownloading('pdf')
-    try {
-      const blob = await apiClient.getArtifactPdfBlob(artifactFilename)
-      downloadBlobFile(blob, toPdfName(artifactFilename))
-    } catch { toast.error('Erro ao baixar PDF') } finally { setDownloading(null) }
+    try { const blob = await apiClient.getArtifactPdfBlob(artifactFilename); downloadBlobFile(blob, toPdfName(artifactFilename)) }
+    catch { toast.error('Erro ao baixar PDF') } finally { setDownloading(null) }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4 shrink-0">
-          <div className="flex items-center gap-2">
-            <BookOpen className="h-5 w-5 text-blue-400" />
-            <h2 className="font-semibold text-zinc-100">Resumir Documento</h2>
-          </div>
-          <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 overflow-y-auto">
+      <div className="w-full max-w-2xl rounded-2xl border border-[#1e1e1e] bg-[#0d0d0d] shadow-2xl shadow-black/60 my-auto">
+
+        {/* ── Close button ── */}
+        <div className="flex justify-end px-6 pt-5">
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-[#1e1e1e] text-[#c6c5d4] transition-colors">
+            <X className="h-4 w-4" />
+          </button>
         </div>
-        <div className="p-6 space-y-4 overflow-y-auto flex-1">
-          {!result && !isProcessing && (
-            <>
-              <p className="text-sm text-zinc-400">
-                Gera um resumo analÃ­tico do documento com IA e salva nos artefatos para download.
-              </p>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-zinc-300">Documento</label>
-                <select
-                  value={selectedDoc}
-                  onChange={e => setSelectedDoc(e.target.value)}
-                  className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100"
-                >
-                  <option value="">Selecione um documento</option>
-                  {(docs ?? []).map(d => (
-                    <option key={d.file_name} value={d.file_name}>{d.file_name}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <p className="mb-2 text-sm font-medium text-zinc-300">Tipo de resumo:</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setMode('brief')}
-                    className={`rounded-lg border px-4 py-3 text-left transition-colors ${mode === 'brief' ? 'border-blue-500 bg-blue-500/10 text-blue-300' : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600'}`}
-                  >
-                    <p className="text-sm font-semibold">Resumo Breve</p>
-                    <p className="mt-0.5 text-xs opacity-70">SÃ­ntese concisa â€” atÃ© 300 palavras com os pontos essenciais</p>
-                  </button>
-                  <button
-                    onClick={() => setMode('deep')}
-                    className={`rounded-lg border px-4 py-3 text-left transition-colors ${mode === 'deep' ? 'border-violet-500 bg-violet-500/10 text-violet-300' : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600'}`}
-                  >
-                    <p className="text-sm font-semibold">Resumo Aprofundado</p>
-                    <p className="mt-0.5 text-xs opacity-70">AnÃ¡lise completa seÃ§Ã£o por seÃ§Ã£o com detalhes tÃ©cnicos</p>
-                  </button>
-                </div>
-              </div>
-              {templatesEnabled && templateOptions.length > 0 && (
-                <div>
-                  <p className="mb-2 text-sm font-medium text-zinc-300">Template de saida:</p>
-                  <div className="grid gap-2 md:grid-cols-3">
-                    {templateOptions.map(template => (
-                      <button
-                        key={template.template_id}
-                        onClick={() => setSelectedTemplateId(template.template_id)}
-                        className={`rounded-lg border px-3 py-2 text-left transition-colors ${
-                          selectedTemplateId === template.template_id
-                            ? 'border-amber-500 bg-amber-500/10 text-amber-200'
-                            : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600'
-                        }`}
-                      >
-                        <p className="text-sm font-semibold">{template.label}</p>
-                        <p className="mt-0.5 text-xs opacity-80">{template.short_description}</p>
-                      </button>
-                    ))}
-                  </div>
-                  {selectedTemplate && (
-                    <div className="mt-2 rounded-lg border border-zinc-700 bg-zinc-800/70 p-3">
-                      <p className="text-xs font-medium text-zinc-200">{selectedTemplate.preview_title}</p>
-                      <p className="mt-1 text-xs text-zinc-400">{selectedTemplate.long_description}</p>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {selectedTemplate.preview_sections.map(section => (
-                          <span key={section} className="rounded-full border border-zinc-600 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-300">
-                            {section}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-              <Button
-                onClick={() => startJob.mutate()}
-                disabled={!selectedDoc || isProcessing}
-                className="w-full bg-blue-600 hover:bg-blue-700"
-              >
-                <BookOpen className="mr-2 h-4 w-4" />
-                Gerar {modeLabel}
-              </Button>
-            </>
-          )}
-          {isProcessing && (
-            <div className="flex flex-col items-center justify-center gap-3 py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-blue-400" />
-              <span className="text-sm text-zinc-400">
-                {mode === 'deep' ? 'Analisando documento em profundidade...' : 'Gerando resumo breve...'}
+
+        {result ? (
+          /* ── Result view ── */
+          <div className="px-8 pb-8 space-y-4">
+            <div className="flex items-center justify-between">
+              <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${mode === 'brief' ? 'bg-primary/15 text-primary' : 'bg-violet-500/15 text-violet-300'}`}>
+                {modeLabel}{resultTemplateLabel ? ` — ${resultTemplateLabel}` : ''}
               </span>
-              <div className="w-full max-w-md rounded-md border border-zinc-700 bg-zinc-800 p-2">
-                <div className="mb-1 flex justify-between text-[11px] text-zinc-400">
-                  <span>{jobQuery.data?.stage ?? 'iniciando'}</span>
-                  <span>{jobQuery.data?.progress ?? 5}%</span>
-                </div>
-                <div className="h-2 rounded bg-zinc-700">
-                  <div className="h-2 rounded bg-blue-500 transition-all" style={{ width: `${jobQuery.data?.progress ?? 5}%` }} />
-                </div>
+              <button
+                className="text-xs text-[#c6c5d4] hover:text-[#e1e3e4] transition-colors"
+                onClick={() => { setResult(''); setArtifactFilename(null); setResultTemplateLabel(null); startJob.reset() }}
+              >
+                ← Gerar outro
+              </button>
+            </div>
+            {artifactFilename && (
+              <div className="flex flex-wrap gap-2">
+                <button onClick={handleDownloadMd} disabled={downloading !== null} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#282828] bg-[#1e1e1e] text-sm text-[#e1e3e4] hover:border-primary/40 transition-colors disabled:opacity-50">
+                  <Download className="h-3.5 w-3.5" />{downloading === 'md' ? 'Baixando...' : 'Exportar .md'}
+                </button>
+                <button onClick={handleDownloadPdf} disabled={downloading !== null} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#282828] bg-[#1e1e1e] text-sm text-[#e1e3e4] hover:border-primary/40 transition-colors disabled:opacity-50">
+                  <FileText className="h-3.5 w-3.5" />{downloading === 'pdf' ? 'Baixando...' : 'Exportar PDF'}
+                </button>
+              </div>
+            )}
+            <div className="prose prose-invert prose-sm max-w-none max-h-[32rem] overflow-y-auto rounded-xl bg-[#1e1e1e] p-4">
+              <ReactMarkdown>{result}</ReactMarkdown>
+            </div>
+          </div>
+        ) : isProcessing ? (
+          /* ── Processing view ── */
+          <div className="px-8 pb-10 flex flex-col items-center gap-4">
+            {/* Kicker */}
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#1e1e1e] border border-[#282828]/40 mb-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shadow-[0_0_8px_rgba(147,197,253,0.6)]" />
+              <span className="text-[10px] uppercase tracking-widest font-bold text-[#c6c5d4]">Processando</span>
+            </div>
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="text-base font-semibold text-[#e1e3e4] text-center">
+              {mode === 'deep' ? 'Analisando documento em profundidade...' : 'Gerando resumo breve...'}
+            </p>
+            <div className="w-full rounded-xl border border-[#1e1e1e] bg-[#111111] p-3">
+              <div className="mb-2 flex justify-between text-[11px] text-[#c6c5d4]">
+                <span>{jobQuery.data?.stage ?? 'iniciando'}</span>
+                <span>{jobQuery.data?.progress ?? 5}%</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-[#1e1e1e]">
+                <div className="h-1.5 rounded-full bg-gradient-to-r from-primary to-primary/60 transition-all" style={{ width: `${jobQuery.data?.progress ?? 5}%` }} />
               </div>
             </div>
-          )}
-          {result && (
-            <>
-              <div className="flex items-center justify-between">
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${mode === 'brief' ? 'bg-blue-500/15 text-blue-300' : 'bg-violet-500/15 text-violet-300'}`}>
-                  {modeLabel} â€” {selectedDoc}{resultTemplateLabel ? ` â€” ${resultTemplateLabel}` : ''}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-xs text-zinc-500"
-                  onClick={() => {
-                    setResult('')
-                    setArtifactFilename(null)
-                    setResultTemplateLabel(null)
-                    startJob.reset()
-                  }}
+          </div>
+        ) : (
+          /* ── Config view ── */
+          <div className="px-8 pb-8 space-y-6">
+            {/* Kicker + headline */}
+            <div className="space-y-3">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#1e1e1e] border border-[#282828]/40">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shadow-[0_0_8px_rgba(251,191,36,0.5)]" />
+                <span className="text-[10px] uppercase tracking-widest font-bold text-[#c6c5d4]">Inteligência Artificial</span>
+              </div>
+              <h2 className="text-3xl font-headline font-extrabold text-[#e1e3e4] tracking-tight leading-tight">
+                Configuração do Resumo
+              </h2>
+              <p className="text-[#c6c5d4] text-sm leading-relaxed">
+                Transforme documentos extensos em inteligência estruturada através do motor de análise semântica.
+              </p>
+            </div>
+
+            {/* Document selector */}
+            <div>
+              <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[#c6c5d4]">Documento de Origem</label>
+              <DocSelector docs={docs ?? []} value={selectedDoc} onChange={setSelectedDoc} />
+            </div>
+
+            {/* Type cards */}
+            <div>
+              <p className="mb-3 text-xs font-bold uppercase tracking-widest text-[#c6c5d4]">Tipo de Análise</p>
+              <div className="grid grid-cols-2 gap-4">
+                {/* Resumo Breve */}
+                <button
+                  onClick={() => setMode('brief')}
+                  className={`relative rounded-xl p-5 text-left transition-all duration-300 border-2 ${
+                    mode === 'brief'
+                      ? 'bg-[#1e1e1e] border-primary/60 shadow-[0_0_24px_rgba(147,197,253,0.08)]'
+                      : 'bg-[#111111] border-transparent hover:bg-[#151515]'
+                  }`}
                 >
-                  Gerar outro
-                </Button>
+                  {mode === 'brief' && (
+                    <div className="absolute top-3 right-3 text-primary">
+                      <svg className="h-5 w-5 fill-current" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z" style={{display:'none'}}/></svg>
+                    </div>
+                  )}
+                  {mode === 'brief' && (
+                    <span className="absolute top-3 right-3 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[#001e30]">
+                      <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    </span>
+                  )}
+                  <div className={`w-12 h-12 rounded-lg mb-4 flex items-center justify-center ${mode === 'brief' ? 'bg-primary/10' : 'bg-[#1e1e1e]'}`}>
+                    <BookOpen className={`h-6 w-6 ${mode === 'brief' ? 'text-primary' : 'text-[#c6c5d4]'}`} />
+                  </div>
+                  <h3 className="text-base font-headline font-bold text-[#e1e3e4] mb-1">Resumo Breve</h3>
+                  <p className="text-xs text-[#c6c5d4] leading-relaxed mb-4">
+                    Síntese executiva focada nos pontos cruciais. Ideal para leituras rápidas e tomada de decisão.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${mode === 'brief' ? 'bg-primary/20 text-primary' : 'bg-[#0a0a0a] text-[#c6c5d4]'}`}>
+                      Até 300 palavras
+                    </span>
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${mode === 'brief' ? 'bg-primary/20 text-primary' : 'bg-[#0a0a0a] text-[#c6c5d4]'}`}>
+                      Formato Lista
+                    </span>
+                  </div>
+                </button>
+
+                {/* Resumo Aprofundado */}
+                <button
+                  onClick={() => setMode('deep')}
+                  className={`relative rounded-xl p-5 text-left transition-all duration-300 border-2 ${
+                    mode === 'deep'
+                      ? 'bg-[#1e1e1e] border-primary/60 shadow-[0_0_24px_rgba(147,197,253,0.08)]'
+                      : 'bg-[#111111] border-transparent hover:bg-[#151515]'
+                  }`}
+                >
+                  {mode === 'deep' && (
+                    <span className="absolute top-3 right-3 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[#001e30]">
+                      <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    </span>
+                  )}
+                  <div className={`w-12 h-12 rounded-lg mb-4 flex items-center justify-center ${mode === 'deep' ? 'bg-primary/10' : 'bg-[#1e1e1e]'}`}>
+                    <Brain className={`h-6 w-6 ${mode === 'deep' ? 'text-primary' : 'text-[#c6c5d4]'}`} />
+                  </div>
+                  <h3 className="text-base font-headline font-bold text-[#e1e3e4] mb-1">Resumo Aprofundado</h3>
+                  <p className="text-xs text-[#c6c5d4] leading-relaxed mb-4">
+                    Análise técnica completa, abrangendo metodologias, dados estatísticos e implicações de longo prazo.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${mode === 'deep' ? 'bg-primary/20 text-primary' : 'bg-[#0a0a0a] text-[#c6c5d4]'}`}>
+                      Análise Ilimitada
+                    </span>
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${mode === 'deep' ? 'bg-primary/20 text-primary' : 'bg-[#0a0a0a] text-[#c6c5d4]'}`}>
+                      Seção por Seção
+                    </span>
+                  </div>
+                </button>
               </div>
-              {artifactFilename && (
-                <div className="flex flex-wrap gap-2">
-                  <Button variant="outline" size="sm" onClick={handleDownloadMd} disabled={downloading !== null}>
-                    <Download className="mr-2 h-4 w-4" />{downloading === 'md' ? 'Baixando...' : 'Exportar .md'}
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={handleDownloadPdf} disabled={downloading !== null}>
-                    <FileText className="mr-2 h-4 w-4" />{downloading === 'pdf' ? 'Baixando...' : 'Exportar PDF'}
-                  </Button>
+            </div>
+
+            {/* Templates (premium) */}
+            {templatesEnabled && templateOptions.length > 0 && (
+              <div>
+                <p className="mb-3 text-xs font-bold uppercase tracking-widest text-[#c6c5d4]">Template de Saída</p>
+                <div className="grid gap-2 md:grid-cols-3">
+                  {templateOptions.map(template => (
+                    <button
+                      key={template.template_id}
+                      onClick={() => setSelectedTemplateId(template.template_id)}
+                      className={`rounded-xl border px-3 py-2.5 text-left transition-all ${
+                        selectedTemplateId === template.template_id
+                          ? 'border-amber-500/50 bg-amber-500/10 text-amber-300'
+                          : 'border-[#1e1e1e] bg-[#111111] text-[#c6c5d4] hover:border-[#282828]'
+                      }`}
+                    >
+                      <p className="text-sm font-semibold">{template.label}</p>
+                      <p className="mt-0.5 text-xs opacity-80">{template.short_description}</p>
+                    </button>
+                  ))}
                 </div>
-              )}
-              <div className="prose prose-invert prose-sm max-w-none max-h-[32rem] overflow-y-auto">
-                <ReactMarkdown>{result}</ReactMarkdown>
+                {selectedTemplate && (
+                  <div className="mt-2 rounded-xl border border-[#1e1e1e] bg-[#111111] p-3">
+                    <p className="text-xs font-medium text-[#e1e3e4]">{selectedTemplate.preview_title}</p>
+                    <p className="mt-1 text-xs text-[#c6c5d4]">{selectedTemplate.long_description}</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {selectedTemplate.preview_sections.map(section => (
+                        <span key={section} className="rounded-full border border-[#282828] bg-[#0a0a0a] px-2 py-0.5 text-[11px] text-[#c6c5d4]">
+                          {section}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-            </>
-          )}
-        </div>
+            )}
+
+            {/* Footer: AI status + CTA */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-[#1e1e1e]">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-[#1e1e1e] flex items-center justify-center border border-[#282828]">
+                  <Brain className="h-5 w-5 text-[#c6c5d4] opacity-60" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#c6c5d4]">Status do Processamento</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_6px_rgba(147,197,253,0.6)]" />
+                    <span className="text-sm font-medium text-[#e1e3e4]">IA Pronta para Analisar</span>
+                  </div>
+                </div>
+              </div>
+              <button
+                onClick={() => startJob.mutate()}
+                disabled={!selectedDoc || isProcessing}
+                className="flex items-center gap-3 px-7 py-3 rounded-xl font-bold font-headline text-[#001e30] bg-gradient-to-br from-primary to-primary/70 shadow-[0_8px_24px_rgba(147,197,253,0.2)] hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:scale-100"
+              >
+                <span>Gerar Resumo</span>
+                <Zap className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Stats bento */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: 'Tempo Estimado', value: mode === 'deep' ? '~45 seg' : '~14 seg' },
+                { label: 'Complexidade', value: mode === 'deep' ? 'Alta' : 'Baixa', accent: true },
+                { label: 'Créditos de IA', value: 'Premium' },
+              ].map(stat => (
+                <div key={stat.label} className="bg-[#0a0a0a] p-4 rounded-xl border border-[#1e1e1e]">
+                  <span className="text-[10px] text-[#c6c5d4] uppercase font-bold tracking-widest block mb-1">{stat.label}</span>
+                  <p className={`text-xl font-headline font-bold ${stat.accent ? 'text-primary' : 'text-[#e1e3e4]'}`}>{stat.value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
-// â”€â”€ Smart Digest Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Smart Digest Dialog ───────────────────────────────────────────────────────
 
 function SmartDigestDialog({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
@@ -359,148 +542,262 @@ function SmartDigestDialog({ onClose }: { onClose: () => void }) {
       setDigestResult(data)
       if (data.deck_id) qc.invalidateQueries({ queryKey: ['flashcard-decks'] })
       if (data.tasks_created > 0) qc.invalidateQueries({ queryKey: ['tasks'] })
-      toast.success('Smart Digest concluÃ­do!')
+      toast.success('Smart Digest concluído!')
     },
     onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro no Smart Digest'),
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4 shrink-0">
-          <div className="flex items-center gap-2">
-            <Zap className="h-5 w-5 text-amber-400" />
-            <h2 className="font-semibold text-zinc-100">Smart Digest</h2>
-          </div>
-          <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 overflow-y-auto">
+      <div className="w-full max-w-2xl rounded-2xl border border-[#1e1e1e] bg-[#0d0d0d] shadow-2xl shadow-black/60 my-auto">
+
+        {/* ── Close button ── */}
+        <div className="flex justify-end px-6 pt-5">
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-[#1e1e1e] text-[#c6c5d4] transition-colors">
+            <X className="h-4 w-4" />
+          </button>
         </div>
-        <div className="p-6 space-y-4 overflow-y-auto flex-1">
-          {!digestResult && !digestMutation.isPending && (
-            <>
-              <p className="text-sm text-zinc-400">
-                Analisa o documento com IA e gera em uma operaÃ§Ã£o: <strong>resumo analÃ­tico</strong>, <strong>flashcards</strong> para revisÃ£o espaÃ§ada e <strong>tarefas</strong> extraÃ­das automaticamente.
-              </p>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-zinc-300">Documento</label>
-                <select
-                  value={selectedDoc}
-                  onChange={e => setSelectedDoc(e.target.value)}
-                  className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100"
-                >
-                  <option value="">Selecione um documento</option>
-                  {(docs ?? []).map(d => (
-                    <option key={d.file_name} value={d.file_name}>{d.file_name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-3">
-                <label className="flex items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 cursor-pointer hover:border-zinc-600 transition-colors">
-                  <input type="checkbox" checked={genFlashcards} onChange={e => setGenFlashcards(e.target.checked)} className="h-4 w-4 accent-blue-500" />
-                  <div>
-                    <p className="text-sm font-medium text-zinc-200">Gerar Flashcards</p>
-                    <p className="text-xs text-zinc-500">Cria um deck de flashcards para revisÃ£o espaÃ§ada</p>
-                  </div>
-                </label>
-                {genFlashcards && (
-                  <div className="ml-7 flex items-center gap-3">
-                    <span className="text-xs text-zinc-400 shrink-0">Quantidade de cards:</span>
-                    <input type="range" min={5} max={30} step={5} value={numCards} onChange={e => setNumCards(Number(e.target.value))} className="flex-1" />
-                    <span className="text-xs font-medium text-blue-400 w-8 text-right">{numCards}</span>
-                  </div>
-                )}
-                <label className="flex items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 cursor-pointer hover:border-zinc-600 transition-colors">
-                  <input type="checkbox" checked={extractTasks} onChange={e => setExtractTasks(e.target.checked)} className="h-4 w-4 accent-emerald-500" />
-                  <div>
-                    <p className="text-sm font-medium text-zinc-200">Extrair Tarefas</p>
-                    <p className="text-xs text-zinc-500">Identifica aÃ§Ãµes, exercÃ­cios e entregas no documento</p>
-                  </div>
-                </label>
-                {genFlashcards && (
-                  <label className="flex items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 cursor-pointer hover:border-zinc-600 transition-colors">
-                    <input type="checkbox" checked={scheduleReviews} onChange={e => setScheduleReviews(e.target.checked)} className="h-4 w-4 accent-purple-500" />
-                    <div>
-                      <p className="text-sm font-medium text-zinc-200">Agendar RevisÃµes SRS</p>
-                      <p className="text-xs text-zinc-500">Cria lembretes de revisÃ£o espaÃ§ada no calendÃ¡rio (+1d, +3d, +7d)</p>
-                    </div>
-                  </label>
-                )}
-              </div>
-              <Button
-                onClick={() => digestMutation.mutate()}
-                disabled={!selectedDoc}
-                className="w-full bg-amber-600 hover:bg-amber-700 text-white"
+
+        {digestResult ? (
+          /* ── Result view ── */
+          <div className="px-8 pb-8 space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-400">
+                Smart Digest — concluído
+              </span>
+              <button
+                className="text-xs text-[#c6c5d4] hover:text-[#e1e3e4] transition-colors"
+                onClick={() => { setDigestResult(null); digestMutation.reset() }}
               >
-                <Zap className="mr-2 h-4 w-4" />
-                Executar Smart Digest
-              </Button>
-            </>
-          )}
-          {digestMutation.isPending && (
-            <div className="flex flex-col items-center justify-center gap-3 py-10">
-              <Brain className="h-8 w-8 animate-pulse text-amber-400" />
-              <span className="text-sm text-zinc-400">Analisando documento...</span>
-              <span className="text-xs text-zinc-600">Gerando resumo, flashcards e extraindo tarefas</span>
+                ← Fazer novamente
+              </button>
             </div>
-          )}
-          {digestResult && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                {digestResult.deck_id && (
-                  <div className="rounded-lg border border-blue-800 bg-blue-950/30 p-3">
-                    <p className="text-xs text-blue-400 font-medium mb-1">Flashcards criados</p>
-                    <p className="text-lg font-bold text-blue-300">{numCards} cards</p>
-                    <a href="/flashcards" className="text-xs text-blue-500 hover:underline">Ver em Flashcards â†’</a>
-                  </div>
-                )}
-                {digestResult.tasks_created > 0 && (
-                  <div className="rounded-lg border border-emerald-800 bg-emerald-950/30 p-3">
-                    <p className="text-xs text-emerald-400 font-medium mb-1">Tarefas extraÃ­das</p>
-                    <p className="text-lg font-bold text-emerald-300">{digestResult.tasks_created} tarefas</p>
-                    <a href="/tasks" className="text-xs text-emerald-500 hover:underline">Ver em Tarefas â†’</a>
-                  </div>
-                )}
-                {digestResult.reviews_scheduled > 0 && (
-                  <div className="rounded-lg border border-purple-800 bg-purple-950/30 p-3">
-                    <p className="text-xs text-purple-400 font-medium mb-1">RevisÃµes SRS agendadas</p>
-                    <p className="text-lg font-bold text-purple-300">{digestResult.reviews_scheduled} lembretes</p>
-                    <a href="/schedule" className="text-xs text-purple-500 hover:underline">Ver CalendÃ¡rio â†’</a>
-                  </div>
-                )}
-              </div>
-              {digestResult.task_titles.length > 0 && (
-                <div>
-                  <p className="text-xs font-medium text-zinc-400 mb-2 flex items-center gap-1">
-                    <CheckSquare className="h-3 w-3" /> Tarefas criadas:
-                  </p>
-                  <ul className="space-y-1">
-                    {digestResult.task_titles.map((t, i) => (
-                      <li key={i} className="text-xs text-zinc-300 flex items-start gap-2">
-                        <span className="text-emerald-500 mt-0.5">âœ“</span>{t}
-                      </li>
-                    ))}
-                  </ul>
+            <div className="grid grid-cols-2 gap-3">
+              {digestResult.deck_id && (
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+                  <p className="text-xs text-primary font-bold uppercase tracking-widest mb-1">Flashcards criados</p>
+                  <p className="text-2xl font-headline font-bold text-primary">{numCards} cards</p>
+                  <a href="/flashcards" className="text-xs text-primary/70 hover:text-primary transition-colors mt-1 block">Ver em Flashcards →</a>
                 </div>
               )}
+              {digestResult.tasks_created > 0 && (
+                <div className="rounded-xl border border-emerald-700/30 bg-emerald-950/20 p-4">
+                  <p className="text-xs text-emerald-400 font-bold uppercase tracking-widest mb-1">Tarefas extraídas</p>
+                  <p className="text-2xl font-headline font-bold text-emerald-300">{digestResult.tasks_created}</p>
+                  <a href="/tasks" className="text-xs text-emerald-500/70 hover:text-emerald-400 transition-colors mt-1 block">Ver em Tarefas →</a>
+                </div>
+              )}
+              {digestResult.reviews_scheduled > 0 && (
+                <div className="rounded-xl border border-purple-700/30 bg-purple-950/20 p-4">
+                  <p className="text-xs text-purple-400 font-bold uppercase tracking-widest mb-1">Revisões SRS</p>
+                  <p className="text-2xl font-headline font-bold text-purple-300">{digestResult.reviews_scheduled}</p>
+                  <a href="/schedule" className="text-xs text-purple-500/70 hover:text-purple-400 transition-colors mt-1 block">Ver Calendário →</a>
+                </div>
+              )}
+            </div>
+            {digestResult.task_titles.length > 0 && (
               <div>
-                <p className="text-xs font-medium text-zinc-400 mb-2 flex items-center gap-1">
-                  <BookOpen className="h-3 w-3" /> Resumo:
+                <p className="text-xs font-bold uppercase tracking-widest text-[#c6c5d4] mb-2 flex items-center gap-1">
+                  <CheckSquare className="h-3 w-3" /> Tarefas criadas
                 </p>
-                <div className="prose prose-invert prose-xs max-w-none max-h-60 overflow-y-auto rounded-lg bg-zinc-800 p-3">
-                  <ReactMarkdown>{digestResult.summary}</ReactMarkdown>
+                <ul className="space-y-1">
+                  {digestResult.task_titles.map((t, i) => (
+                    <li key={i} className="text-xs text-[#e1e3e4] flex items-start gap-2">
+                      <span className="text-emerald-500 mt-0.5">✓</span>{t}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-[#c6c5d4] mb-2 flex items-center gap-1">
+                <BookOpen className="h-3 w-3" /> Resumo gerado
+              </p>
+              <div className="prose prose-invert prose-xs max-w-none max-h-60 overflow-y-auto rounded-xl bg-[#111111] p-4">
+                <ReactMarkdown>{digestResult.summary}</ReactMarkdown>
+              </div>
+            </div>
+          </div>
+
+        ) : digestMutation.isPending ? (
+          /* ── Processing view ── */
+          <div className="px-8 pb-10 flex flex-col items-center gap-4">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#1e1e1e] border border-[#282828]/40 mb-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shadow-[0_0_8px_rgba(251,191,36,0.5)]" />
+              <span className="text-[10px] uppercase tracking-widest font-bold text-[#c6c5d4]">Processando</span>
+            </div>
+            <Brain className="h-8 w-8 animate-pulse text-amber-400" />
+            <p className="text-base font-semibold text-[#e1e3e4] text-center">Analisando documento...</p>
+            <p className="text-xs text-[#8e9099] text-center">Gerando resumo, flashcards e extraindo tarefas</p>
+          </div>
+
+        ) : (
+          /* ── Config view ── */
+          <div className="px-8 pb-8 space-y-6">
+            {/* Kicker + headline */}
+            <div className="space-y-3">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#1e1e1e] border border-[#282828]/40">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shadow-[0_0_8px_rgba(251,191,36,0.5)]" />
+                <span className="text-[10px] uppercase tracking-widest font-bold text-[#c6c5d4]">Automação Inteligente</span>
+              </div>
+              <h2 className="text-3xl font-headline font-extrabold text-[#e1e3e4] tracking-tight leading-tight">
+                Configurar Smart Digest
+              </h2>
+              <p className="text-[#c6c5d4] text-sm leading-relaxed">
+                Uma operação, três entregas: <strong className="text-[#e1e3e4]">resumo analítico</strong>, <strong className="text-[#e1e3e4]">flashcards</strong> para revisão espaçada e <strong className="text-[#e1e3e4]">tarefas</strong> extraídas automaticamente.
+              </p>
+            </div>
+
+            {/* Document selector */}
+            <div>
+              <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[#c6c5d4]">Documento de Origem</label>
+              <DocSelector docs={docs ?? []} value={selectedDoc} onChange={setSelectedDoc} />
+            </div>
+
+            {/* Option cards */}
+            <div>
+              <p className="mb-3 text-xs font-bold uppercase tracking-widest text-[#c6c5d4]">O que será gerado</p>
+              <div className="space-y-2">
+
+                {/* Flashcards card */}
+                <button
+                  type="button"
+                  onClick={() => setGenFlashcards(v => !v)}
+                  className={`w-full text-left rounded-xl border-2 p-4 transition-all duration-200 ${
+                    genFlashcards
+                      ? 'border-primary/50 bg-[#111111] shadow-[0_0_20px_rgba(147,197,253,0.06)]'
+                      : 'border-transparent bg-[#111111] hover:bg-[#151515]'
+                  }`}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${genFlashcards ? 'bg-primary/10' : 'bg-[#1e1e1e]'}`}>
+                      <BookOpen className={`h-5 w-5 ${genFlashcards ? 'text-primary' : 'text-[#c6c5d4]'}`} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-bold font-headline text-[#e1e3e4]">Gerar Flashcards</p>
+                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${genFlashcards ? 'border-primary bg-primary' : 'border-[#454652]'}`}>
+                          {genFlashcards && <svg className="h-2.5 w-2.5 text-[#001e30]" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                        </div>
+                      </div>
+                      <p className="text-xs text-[#c6c5d4] mt-0.5">Cria um deck de flashcards para revisão espaçada</p>
+                      {genFlashcards && (
+                        <div className="mt-3 flex items-center gap-3" onClick={e => e.stopPropagation()}>
+                          <span className="text-xs text-[#c6c5d4] shrink-0">Quantidade:</span>
+                          <input
+                            type="range" min={5} max={30} step={5} value={numCards}
+                            onChange={e => setNumCards(Number(e.target.value))}
+                            className="flex-1"
+                            style={{ background: `linear-gradient(to right, #93C5FD ${((numCards - 5) / 25) * 100}%, #282828 ${((numCards - 5) / 25) * 100}%)` }}
+                          />
+                          <span className="text-xs font-bold text-primary w-8 text-right font-mono">{numCards}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </button>
+
+                {/* Extract tasks card */}
+                <button
+                  type="button"
+                  onClick={() => setExtractTasks(v => !v)}
+                  className={`w-full text-left rounded-xl border-2 p-4 transition-all duration-200 ${
+                    extractTasks
+                      ? 'border-emerald-500/40 bg-[#111111] shadow-[0_0_20px_rgba(52,211,153,0.04)]'
+                      : 'border-transparent bg-[#111111] hover:bg-[#151515]'
+                  }`}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${extractTasks ? 'bg-emerald-500/10' : 'bg-[#1e1e1e]'}`}>
+                      <CheckSquare className={`h-5 w-5 ${extractTasks ? 'text-emerald-400' : 'text-[#c6c5d4]'}`} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-bold font-headline text-[#e1e3e4]">Extrair Tarefas</p>
+                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${extractTasks ? 'border-emerald-500 bg-emerald-500' : 'border-[#454652]'}`}>
+                          {extractTasks && <svg className="h-2.5 w-2.5 text-[#001e30]" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                        </div>
+                      </div>
+                      <p className="text-xs text-[#c6c5d4] mt-0.5">Identifica ações, exercícios e entregas no documento</p>
+                    </div>
+                  </div>
+                </button>
+
+                {/* Schedule reviews card (only if flashcards enabled) */}
+                {genFlashcards && (
+                  <button
+                    type="button"
+                    onClick={() => setScheduleReviews(v => !v)}
+                    className={`w-full text-left rounded-xl border-2 p-4 transition-all duration-200 ${
+                      scheduleReviews
+                        ? 'border-purple-500/40 bg-[#111111] shadow-[0_0_20px_rgba(168,85,247,0.04)]'
+                        : 'border-transparent bg-[#111111] hover:bg-[#151515]'
+                    }`}
+                  >
+                    <div className="flex items-start gap-4">
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${scheduleReviews ? 'bg-purple-500/10' : 'bg-[#1e1e1e]'}`}>
+                        <GraduationCap className={`h-5 w-5 ${scheduleReviews ? 'text-purple-400' : 'text-[#c6c5d4]'}`} />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-bold font-headline text-[#e1e3e4]">Agendar Revisões SRS</p>
+                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${scheduleReviews ? 'border-purple-500 bg-purple-500' : 'border-[#454652]'}`}>
+                            {scheduleReviews && <svg className="h-2.5 w-2.5 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                          </div>
+                        </div>
+                        <p className="text-xs text-[#c6c5d4] mt-0.5">Cria lembretes de revisão espaçada no calendário (+1d, +3d, +7d)</p>
+                      </div>
+                    </div>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Footer: AI status + CTA */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-[#1e1e1e]">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-[#1e1e1e] flex items-center justify-center border border-[#282828]">
+                  <Brain className="h-5 w-5 text-amber-400 opacity-70" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#c6c5d4]">Status do Processamento</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shadow-[0_0_6px_rgba(251,191,36,0.6)]" />
+                    <span className="text-sm font-medium text-[#e1e3e4]">Agente Pronto</span>
+                  </div>
                 </div>
               </div>
-              <Button variant="outline" size="sm" onClick={() => { setDigestResult(null); digestMutation.reset() }} className="w-full">
-                Fazer novamente
-              </Button>
+              <button
+                onClick={() => digestMutation.mutate()}
+                disabled={!selectedDoc}
+                className="flex items-center gap-3 px-7 py-3 rounded-xl font-bold font-headline text-[#000000] bg-gradient-to-br from-amber-400 to-amber-500/80 shadow-[0_8px_24px_rgba(251,191,36,0.2)] hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:scale-100"
+              >
+                <span>Executar Smart Digest</span>
+                <Zap className="h-4 w-4" />
+              </button>
             </div>
-          )}
-        </div>
+
+            {/* Stats bento */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: 'Entregas', value: [genFlashcards, extractTasks, scheduleReviews].filter(Boolean).length + 1 + ' itens' },
+                { label: 'Flashcards', value: genFlashcards ? `${numCards} cards` : 'Desativado', accent: genFlashcards },
+                { label: 'Modo', value: 'Paralelo' },
+              ].map(stat => (
+                <div key={stat.label} className="bg-[#0a0a0a] p-4 rounded-xl border border-[#1e1e1e]">
+                  <span className="text-[10px] text-[#c6c5d4] uppercase font-bold tracking-widest block mb-1">{stat.label}</span>
+                  <p className={`text-xl font-headline font-bold ${stat.accent ? 'text-amber-400' : 'text-[#e1e3e4]'}`}>{stat.value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
 }
 
-// â”€â”€ Create Artifact Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Create Artifact Dialog ────────────────────────────────────────────────────
 
 function CreateArtifactDialog({
   onClose,
@@ -539,10 +836,7 @@ function CreateArtifactDialog({
 
   useEffect(() => {
     if (!templatesEnabled) return
-    if (!templateOptions.length) {
-      setSelectedTemplateId('')
-      return
-    }
+    if (!templateOptions.length) { setSelectedTemplateId(''); return }
     const hasActive = templateOptions.some(item => item.template_id === selectedTemplateId)
     if (hasActive) return
     setSelectedTemplateId(pickDefaultTemplate(templateOptions, { artifactType: type }))
@@ -551,9 +845,7 @@ function CreateArtifactDialog({
   const startJob = useMutation({
     mutationFn: () =>
       apiClient.createArtifactAsync(
-        type,
-        topic,
-        undefined,
+        type, topic, undefined,
         selectedDocs.map(doc => doc.doc_id),
         templatesEnabled ? (selectedTemplateId || undefined) : undefined,
       ),
@@ -565,8 +857,7 @@ function CreateArtifactDialog({
     queryFn: () => apiClient.getJobStatus(jobId!),
     enabled: !!jobId,
     refetchInterval: query =>
-      query.state.data?.status === 'succeeded' || query.state.data?.status === 'failed'
-        ? false : 1200,
+      query.state.data?.status === 'succeeded' || query.state.data?.status === 'failed' ? false : 1200,
   })
 
   useEffect(() => {
@@ -587,62 +878,75 @@ function CreateArtifactDialog({
 
   const isProcessing = startJob.isPending || !!jobId
 
+  const typeSelectOptions = [
+    { value: 'checklist', label: 'Checklist' },
+    { value: 'artifact', label: 'Artefato Livre' },
+  ]
+
+  // Docs available to add (exclude already selected)
+  const availableDocs = (docs ?? []).filter(doc => !selectedDocs.some(item => item.doc_id === doc.doc_id))
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
-          <h2 className="font-semibold text-zinc-100">Gerar Artefato</h2>
-          <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+      <div className="w-full max-w-2xl rounded-2xl border border-[#282828] bg-[#111111] shadow-2xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between border-b border-[#282828] px-6 py-4 shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-[#1e1e1e] flex items-center justify-center">
+              <Plus className="h-4 w-4 text-primary" />
+            </div>
+            <h2 className="font-bold font-headline text-[#e1e3e4]">Novo Artefato</h2>
+          </div>
+          <button onClick={onClose} className="p-2 rounded-lg hover:bg-[#1e1e1e] text-[#c6c5d4] transition-colors">
+            <X className="h-4 w-4" />
+          </button>
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-6 space-y-5 overflow-y-auto flex-1">
           {!result ? (
             <>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-zinc-300">Tipo de Artefato</label>
-                <select
-                  value={type}
-                  onChange={e => setType(e.target.value)}
-                  className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100"
-                >
-                  {ARTIFACT_TYPES.map(t => (
-                    <option key={t.value} value={t.value}>{t.label}</option>
-                  ))}
-                </select>
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-[#c6c5d4]">Tipo de Artefato</label>
+                <FilterSelect options={typeSelectOptions} value={type} onChange={setType} />
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium text-zinc-300">TÃ³pico</label>
-                <Input placeholder="Ex: Python para iniciantes" value={topic} onChange={e => setTopic(e.target.value)} />
+                <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-[#c6c5d4]">Tópico</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Python para iniciantes"
+                  value={topic}
+                  onChange={e => setTopic(e.target.value)}
+                  className="w-full h-10 px-3 rounded-lg bg-[#1e1e1e] border border-[#282828] text-sm text-[#e1e3e4] placeholder-[#454652] focus:outline-none focus:border-primary/40 transition-colors"
+                />
               </div>
               <div className="space-y-2">
-                <label className="mb-1.5 block text-sm font-medium text-zinc-300">Documentos para usar (opcional)</label>
+                <label className="block text-xs font-semibold uppercase tracking-widest text-[#c6c5d4]">Documentos para usar (opcional)</label>
                 <div className="flex gap-2">
-                  <select
-                    value={selectedDoc}
-                    onChange={e => setSelectedDoc(e.target.value)}
-                    className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100"
-                  >
-                    <option value="">Selecione um documento</option>
-                    {(docs ?? []).filter(doc => !selectedDocs.some(item => item.doc_id === doc.doc_id)).map(doc => (
-                      <option key={doc.doc_id} value={doc.doc_id}>{doc.file_name}</option>
-                    ))}
-                  </select>
-                  <Button
-                    type="button" variant="outline"
+                  <div className="flex-1">
+                    <DocSelector
+                      docs={availableDocs}
+                      value={selectedDoc}
+                      onChange={setSelectedDoc}
+                    />
+                  </div>
+                  <button
+                    type="button"
                     onClick={() => {
-                      const docToAdd = (docs ?? []).find(doc => doc.doc_id === selectedDoc)
-                      if (!docToAdd || selectedDocs.some(item => item.doc_id === docToAdd.doc_id)) return
-                      setSelectedDocs(prev => [...prev, docToAdd])
+                      const found = (docs ?? []).find(doc => doc.file_name === selectedDoc)
+                      if (!found || selectedDocs.some(item => item.doc_id === found.doc_id)) return
+                      setSelectedDocs(prev => [...prev, found])
                       setSelectedDoc('')
                     }}
                     disabled={!selectedDoc}
-                  >Adicionar</Button>
+                    className="px-4 py-2 rounded-lg border border-[#282828] bg-[#1e1e1e] text-sm text-[#e1e3e4] hover:border-primary/40 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Adicionar
+                  </button>
                 </div>
                 {selectedDocs.length > 0 && (
                   <div className="flex flex-wrap gap-2">
                     {selectedDocs.map(doc => (
-                      <span key={doc.doc_id} className="inline-flex items-center gap-2 rounded-full border border-zinc-700 bg-zinc-800 px-3 py-1 text-xs text-zinc-200">
+                      <span key={doc.doc_id} className="inline-flex items-center gap-2 rounded-full border border-[#282828] bg-[#1e1e1e] px-3 py-1 text-xs text-[#e1e3e4]">
                         {doc.file_name}
-                        <button type="button" onClick={() => setSelectedDocs(prev => prev.filter(item => item.doc_id !== doc.doc_id))} className="text-zinc-400 hover:text-red-400">
+                        <button type="button" onClick={() => setSelectedDocs(prev => prev.filter(item => item.doc_id !== doc.doc_id))} className="text-[#c6c5d4] hover:text-rose-400 transition-colors">
                           <X className="h-3 w-3" />
                         </button>
                       </span>
@@ -652,16 +956,16 @@ function CreateArtifactDialog({
               </div>
               {templatesEnabled && templateOptions.length > 0 && (
                 <div>
-                  <label className="mb-1.5 block text-sm font-medium text-zinc-300">Template</label>
+                  <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-[#c6c5d4]">Template</label>
                   <div className="grid gap-2 md:grid-cols-3">
                     {templateOptions.map(template => (
                       <button
                         key={template.template_id}
                         onClick={() => setSelectedTemplateId(template.template_id)}
-                        className={`rounded-lg border px-3 py-2 text-left transition-colors ${
+                        className={`rounded-xl border px-3 py-2 text-left transition-all ${
                           selectedTemplateId === template.template_id
-                            ? 'border-amber-500 bg-amber-500/10 text-amber-200'
-                            : 'border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600'
+                            ? 'border-amber-500/50 bg-amber-500/10 text-amber-300'
+                            : 'border-[#282828] bg-[#1e1e1e] text-[#c6c5d4] hover:border-[#454652]'
                         }`}
                       >
                         <p className="text-sm font-semibold">{template.label}</p>
@@ -670,12 +974,12 @@ function CreateArtifactDialog({
                     ))}
                   </div>
                   {selectedTemplate && (
-                    <div className="mt-2 rounded-lg border border-zinc-700 bg-zinc-800/70 p-3">
-                      <p className="text-xs font-medium text-zinc-200">{selectedTemplate.preview_title}</p>
-                      <p className="mt-1 text-xs text-zinc-400">{selectedTemplate.long_description}</p>
+                    <div className="mt-2 rounded-xl border border-[#282828] bg-[#1e1e1e] p-3">
+                      <p className="text-xs font-medium text-[#e1e3e4]">{selectedTemplate.preview_title}</p>
+                      <p className="mt-1 text-xs text-[#c6c5d4]">{selectedTemplate.long_description}</p>
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {selectedTemplate.preview_sections.map(section => (
-                          <span key={section} className="rounded-full border border-zinc-600 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-300">
+                          <span key={section} className="rounded-full border border-[#282828] bg-[#111111] px-2 py-0.5 text-[11px] text-[#c6c5d4]">
                             {section}
                           </span>
                         ))}
@@ -684,34 +988,42 @@ function CreateArtifactDialog({
                   )}
                 </div>
               )}
-              <Button onClick={() => startJob.mutate()} disabled={!topic.trim() || isProcessing} className="w-full">
-                {isProcessing ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" />{jobQuery.data?.stage ?? 'Gerando...'}</>
-                ) : 'Gerar'}
-              </Button>
               {isProcessing && (
-                <div className="rounded-md border border-zinc-700 bg-zinc-800 p-2">
-                  <div className="mb-1 flex justify-between text-[11px] text-zinc-400">
+                <div className="rounded-xl border border-[#282828] bg-[#1e1e1e] p-3">
+                  <div className="mb-1 flex justify-between text-[11px] text-[#c6c5d4]">
                     <span>{jobQuery.data?.stage ?? 'iniciando'}</span>
                     <span>{jobQuery.data?.progress ?? 5}%</span>
                   </div>
-                  <div className="h-2 rounded bg-zinc-700">
-                    <div className="h-2 rounded bg-blue-500 transition-all" style={{ width: `${jobQuery.data?.progress ?? 5}%` }} />
+                  <div className="h-1.5 rounded-full bg-[#282828]">
+                    <div className="h-1.5 rounded-full bg-primary transition-all" style={{ width: `${jobQuery.data?.progress ?? 5}%` }} />
                   </div>
                 </div>
               )}
+              <button
+                onClick={() => startJob.mutate()}
+                disabled={!topic.trim() || isProcessing}
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-primary text-[#000000] font-bold font-headline transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {isProcessing ? (
+                  <><Loader2 className="h-4 w-4 animate-spin" />{jobQuery.data?.stage ?? 'Gerando...'}</>
+                ) : (
+                  <><Plus className="h-4 w-4" />Gerar Artefato</>
+                )}
+              </button>
             </>
           ) : (
             <>
               {resultTemplateLabel && (
-                <div className="rounded-md border border-amber-700/50 bg-amber-950/20 px-3 py-2 text-xs text-amber-200">
+                <div className="rounded-xl border border-amber-700/30 bg-amber-950/10 px-3 py-2 text-xs text-amber-300">
                   Template aplicado: {resultTemplateLabel}
                 </div>
               )}
-              <div className="prose prose-invert prose-sm max-w-none max-h-80 overflow-y-auto">
+              <div className="prose prose-invert prose-sm max-w-none max-h-80 overflow-y-auto rounded-xl bg-[#1e1e1e] p-4">
                 <ReactMarkdown>{result}</ReactMarkdown>
               </div>
-              <Button variant="outline" onClick={onClose} className="w-full">Fechar</Button>
+              <button onClick={onClose} className="w-full py-2 rounded-xl border border-[#282828] bg-[#1e1e1e] text-sm text-[#e1e3e4] hover:border-primary/30 transition-colors">
+                Fechar
+              </button>
             </>
           )}
         </div>
@@ -720,7 +1032,7 @@ function CreateArtifactDialog({
   )
 }
 
-// â”€â”€ Preview Dialog â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Preview Dialog ────────────────────────────────────────────────────────────
 
 function PreviewDialog({ artifact, onClose }: { artifact: { id: number; filename: string }; onClose: () => void }) {
   const { id: artifactId, filename } = artifact
@@ -731,7 +1043,7 @@ function PreviewDialog({ artifact, onClose }: { artifact: { id: number; filename
   useEffect(() => {
     let cancelled = false
     if (!isMarkdownArtifact(filename)) {
-      if (!cancelled) { setContent('Preview disponivel apenas para arquivos de texto (.md, .markdown, .txt).'); setLoading(false) }
+      if (!cancelled) { setContent('Preview disponível apenas para arquivos de texto (.md, .markdown, .txt).'); setLoading(false) }
       return
     }
     setLoading(true)
@@ -755,16 +1067,22 @@ function PreviewDialog({ artifact, onClose }: { artifact: { id: number; filename
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
-          <h2 className="font-semibold text-zinc-100 truncate">{filename}</h2>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+      <div className="w-full max-w-2xl rounded-2xl border border-[#282828] bg-[#111111] shadow-2xl">
+        <div className="flex items-center justify-between border-b border-[#282828] px-6 py-4">
+          <h2 className="font-bold font-headline text-[#e1e3e4] truncate">{filename}</h2>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm" onClick={handleDownload} disabled={downloading}><Download className="h-4 w-4 mr-1" />Download</Button>
+            <button onClick={handleDownload} disabled={downloading} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#282828] bg-[#1e1e1e] text-xs text-[#e1e3e4] hover:border-primary/40 transition-colors disabled:opacity-50">
+              <Download className="h-3.5 w-3.5" />Download
+            </button>
             {isMarkdownArtifact(filename) && (
-              <Button variant="outline" size="sm" onClick={handleDownloadPdf} disabled={downloading}><FileText className="h-4 w-4 mr-1" />PDF</Button>
+              <button onClick={handleDownloadPdf} disabled={downloading} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[#282828] bg-[#1e1e1e] text-xs text-[#e1e3e4] hover:border-primary/40 transition-colors disabled:opacity-50">
+                <FileText className="h-3.5 w-3.5" />PDF
+              </button>
             )}
-            <Button variant="ghost" size="sm" onClick={onClose}><X className="h-4 w-4" /></Button>
+            <button onClick={onClose} className="p-2 rounded-lg hover:bg-[#1e1e1e] text-[#c6c5d4] transition-colors">
+              <X className="h-4 w-4" />
+            </button>
           </div>
         </div>
         <div className="p-6 max-h-[60vh] overflow-y-auto">
@@ -779,7 +1097,25 @@ function PreviewDialog({ artifact, onClose }: { artifact: { id: number; filename
   )
 }
 
-// â”€â”€ Main Artifacts Page â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ── Artifact Icon helper ──────────────────────────────────────────────────────
+
+function ArtifactIcon({ type, filename }: { type?: string | null; filename: string }) {
+  if (type === 'summary') return <BookOpen className="h-5 w-5 text-primary" />
+  if (type === 'checklist') return <CheckSquare className="h-5 w-5 text-emerald-400" />
+  if (type === 'study_plan') return <GraduationCap className="h-5 w-5 text-amber-400" />
+  if (isMarkdownArtifact(filename)) return <FileText className="h-5 w-5 text-primary" />
+  return <Archive className="h-5 w-5 text-[#c6c5d4]" />
+}
+
+function artifactTypeBadge(type?: string | null) {
+  if (!type) return null
+  if (type === 'summary') return { label: 'Resumo', cls: 'text-primary' }
+  if (type === 'checklist') return { label: 'Checklist', cls: 'text-emerald-400' }
+  if (type === 'study_plan') return { label: 'Plano de Estudos', cls: 'text-amber-400' }
+  return { label: type, cls: 'text-[#c6c5d4]' }
+}
+
+// ── Main Artifacts Page ───────────────────────────────────────────────────────
 
 export function Artifacts() {
   const qc = useQueryClient()
@@ -797,6 +1133,7 @@ export function Artifacts() {
   const [sortBy, setSortBy] = useState<(typeof ARTIFACT_SORT_OPTIONS)[number]['value']>('created_at')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
   const [search, setSearch] = useState('')
+  const [showFilters, setShowFilters] = useState(false)
 
   const queryParams = useMemo(() => ({
     artifact_type: artifactTypeFilter !== 'all' ? artifactTypeFilter : undefined,
@@ -842,270 +1179,343 @@ export function Artifacts() {
     catch { toast.error('Erro ao baixar PDF') } finally { setDownloadingKey(null) }
   }
 
+  // Build filter select options from filterOptions
+  const typeFilterOptions: SelectOption[] = [
+    { value: 'all', label: 'Todos os tipos' },
+    ...(filterOptions?.artifact_types ?? []).map(t => ({ value: t, label: t })),
+  ]
+  const templateFilterOptions: SelectOption[] = [
+    { value: 'all', label: 'Todos os templates' },
+    ...(filterOptions?.template_ids ?? []).map(t => ({ value: t, label: t })),
+  ]
+  const sourceDocFilterOptions: SelectOption[] = [
+    { value: 'all', label: 'Todos os documentos' },
+    ...(filterOptions?.source_doc_ids ?? []).map(t => ({ value: t, label: t })),
+  ]
+  const profileFilterOptions: SelectOption[] = [
+    { value: 'all', label: 'Todos os perfis' },
+    ...(filterOptions?.generation_profiles ?? []).map(t => ({ value: t, label: t })),
+  ]
+  const sortByOptions: SelectOption[] = ARTIFACT_SORT_OPTIONS.map(o => ({ value: o.value, label: o.label }))
+  const sortOrderOptions: SelectOption[] = [
+    { value: 'desc', label: 'Descendente' },
+    { value: 'asc', label: 'Ascendente' },
+  ]
+
+  const hasActiveFilters = artifactTypeFilter !== 'all' || templateFilter !== 'all' || sourceDocFilter !== 'all' || generationProfileFilter !== 'all'
+
   return (
-    <PageShell>
-      <PageHeader
-        title="Artefatos"
-        subtitle={
-          templatesEnabled
-            ? 'Resumos, checklists e outros artefatos gerados com templates premium'
-            : 'Resumos, checklists e outros artefatos gerados pelo agente'
-        }
-        actions={(
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            onClick={() => setShowSummarize(true)}
-            className="border-blue-700 text-blue-400 hover:bg-blue-900/20"
-            title="Gera resumo breve ou aprofundado de um documento"
-          >
-            <BookOpen className="mr-2 h-4 w-4" />
-            Resumir Documento
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => setShowDigest(true)}
-            className="border-amber-700 text-amber-400 hover:bg-amber-900/20"
-            title="Gera resumo + flashcards + extrai tarefas em uma operaÃ§Ã£o"
-          >
-            <Zap className="mr-2 h-4 w-4" />
-            Smart Digest
-          </Button>
-          <Button
-            variant="outline"
-            onClick={() => window.location.href = '/studyplan'}
-            className="border-emerald-700 text-emerald-400 hover:bg-emerald-900/20"
-            title="Cria plano de estudos completo: sessÃµes, tarefas, flashcards"
-          >
-            <GraduationCap className="mr-2 h-4 w-4" />
-            Plano de Estudos
-          </Button>
-          <Button onClick={() => setShowCreate(true)}>
-            <Plus className="mr-2 h-4 w-4" />
-            Novo Artefato
-          </Button>
-        </div>
-        )}
-      />
+    <div className="relative min-h-screen">
+      {/* Background decoration blobs */}
+      <div className="fixed top-0 right-0 -z-10 w-[600px] h-[600px] bg-primary/5 blur-[120px] rounded-full translate-x-1/2 -translate-y-1/2 pointer-events-none" />
+      <div className="fixed bottom-0 left-0 -z-10 w-[400px] h-[400px] bg-amber-400/5 blur-[100px] rounded-full -translate-x-1/2 translate-y-1/2 pointer-events-none" />
 
-      {/* DescriÃ§Ãµes das aÃ§Ãµes principais */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="rounded-lg border border-blue-900/40 bg-blue-950/10 px-4 py-3">
-          <p className="text-xs font-semibold text-blue-400 mb-0.5">Resumir Documento</p>
-          <p className="text-xs text-zinc-500">Resumo breve (â‰¤300 palavras) ou aprofundado (seÃ§Ã£o por seÃ§Ã£o) com download em .md e PDF.</p>
-        </div>
-        <div className="rounded-lg border border-amber-900/40 bg-amber-950/10 px-4 py-3">
-          <p className="text-xs font-semibold text-amber-400 mb-0.5">Smart Digest</p>
-          <p className="text-xs text-zinc-500">Resumo analÃ­tico + flashcards para revisÃ£o espaÃ§ada + extraÃ§Ã£o automÃ¡tica de tarefas, tudo de uma vez.</p>
-        </div>
-        <div className="rounded-lg border border-emerald-900/40 bg-emerald-950/10 px-4 py-3">
-          <p className="text-xs font-semibold text-emerald-400 mb-0.5">Plano de Estudos</p>
-          <p className="text-xs text-zinc-500">Plano completo com sessÃµes diÃ¡rias no calendÃ¡rio, tarefas por tÃ³pico, flashcards SRS e resumo inicial.</p>
-        </div>
-      </div>
+      <div className="px-6 py-8 space-y-12">
 
-      <Card>
-        <CardContent className="space-y-3 py-4">
-          <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-4">
-            <Input
-              placeholder="Buscar por titulo ou arquivo..."
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
-            <select
-              value={artifactTypeFilter}
-              onChange={e => setArtifactTypeFilter(e.target.value)}
-              className="h-10 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100"
+        {/* ── Hero ── */}
+        <header>
+          <span className="app-kicker">Biblioteca de ativos inteligentes</span>
+          <h1 className="text-5xl font-extrabold font-headline tracking-tighter mt-2 text-[#e1e3e4]">
+            Artefatos
+          </h1>
+          <p className="mt-4 text-lg text-[#c6c5d4] max-w-2xl leading-relaxed">
+            {templatesEnabled
+              ? 'Resumos, checklists e outros artefatos gerados com templates premium'
+              : 'Resumos, checklists e outros artefatos gerados pelo agente'}
+          </p>
+        </header>
+
+        {/* ── Action Hub ── */}
+        <section>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+
+            {/* Resumir Documento */}
+            <button
+              onClick={() => setShowSummarize(true)}
+              className="group relative flex flex-col items-start p-6 rounded-xl bg-[#111111] hover:bg-[#1e1e1e] transition-all duration-300 text-left overflow-hidden border border-[#1e1e1e] hover:border-[#282828]"
             >
-              <option value="all">Todos os tipos</option>
-              {(filterOptions?.artifact_types ?? []).map(type => (
-                <option key={type} value={type}>{type}</option>
-              ))}
-            </select>
-            <select
-              value={templateFilter}
-              onChange={e => setTemplateFilter(e.target.value)}
-              className="h-10 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100"
+              <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="w-12 h-12 rounded-lg bg-[#1e1e1e] mb-5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                <BookOpen className="h-6 w-6 text-primary" />
+              </div>
+              <h3 className="text-lg font-bold font-headline text-[#e1e3e4] mb-2">Resumir Documento</h3>
+              <p className="text-sm text-[#c6c5d4] leading-snug">Extraia a essência de arquivos extensos instantaneamente.</p>
+            </button>
+
+            {/* Smart Digest */}
+            <button
+              onClick={() => setShowDigest(true)}
+              className="group relative flex flex-col items-start p-6 rounded-xl bg-[#111111] hover:bg-[#1e1e1e] transition-all duration-300 text-left overflow-hidden border border-[#1e1e1e] hover:border-[#282828]"
             >
-              <option value="all">Todos os templates</option>
-              {(filterOptions?.template_ids ?? []).map(templateId => (
-                <option key={templateId} value={templateId}>{templateId}</option>
-              ))}
-            </select>
-            <select
-              value={sourceDocFilter}
-              onChange={e => setSourceDocFilter(e.target.value)}
-              className="h-10 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100"
+              <div className="absolute inset-0 bg-gradient-to-br from-amber-400/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="w-12 h-12 rounded-lg bg-[#1e1e1e] mb-5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                <Zap className="h-6 w-6 text-amber-400" />
+              </div>
+              <h3 className="text-lg font-bold font-headline text-[#e1e3e4] mb-2">Smart Digest</h3>
+              <p className="text-sm text-[#c6c5d4] leading-snug">Resumo + flashcards + tarefas em uma única operação.</p>
+            </button>
+
+            {/* Plano de Estudos */}
+            <button
+              onClick={() => window.location.href = '/studyplan'}
+              className="group relative flex flex-col items-start p-6 rounded-xl bg-[#111111] hover:bg-[#1e1e1e] transition-all duration-300 text-left overflow-hidden border border-[#1e1e1e] hover:border-[#282828]"
             >
-              <option value="all">Todos os documentos</option>
-              {(filterOptions?.source_doc_ids ?? []).map(sourceDocId => (
-                <option key={sourceDocId} value={sourceDocId}>{sourceDocId}</option>
-              ))}
-            </select>
+              <div className="absolute inset-0 bg-gradient-to-br from-emerald-400/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+              <div className="w-12 h-12 rounded-lg bg-[#1e1e1e] mb-5 flex items-center justify-center group-hover:scale-110 transition-transform">
+                <GraduationCap className="h-6 w-6 text-emerald-400" />
+              </div>
+              <h3 className="text-lg font-bold font-headline text-[#e1e3e4] mb-2">Plano de Estudos</h3>
+              <p className="text-sm text-[#c6c5d4] leading-snug">Roteiros de aprendizado gerados via IA generativa.</p>
+            </button>
+
+            {/* Novo Artefato */}
+            <button
+              onClick={() => setShowCreate(true)}
+              className="group relative flex flex-col items-center justify-center p-6 rounded-xl border-2 border-dashed border-[#282828] hover:border-primary/50 transition-all duration-300 text-center bg-transparent"
+            >
+              <div className="w-12 h-12 rounded-full bg-primary/10 mb-4 flex items-center justify-center group-hover:bg-primary/20 transition-colors">
+                <Plus className="h-6 w-6 text-primary" />
+              </div>
+              <h3 className="text-lg font-bold font-headline text-primary">Novo Artefato</h3>
+              <p className="text-xs text-[#c6c5d4] mt-2">Clique para iniciar criação livre</p>
+            </button>
+
           </div>
-          <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-4">
-            <select
-              value={generationProfileFilter}
-              onChange={e => setGenerationProfileFilter(e.target.value)}
-              className="h-10 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100"
-            >
-              <option value="all">Todos os perfis</option>
-              {(filterOptions?.generation_profiles ?? []).map(profile => (
-                <option key={profile} value={profile}>{profile}</option>
-              ))}
-            </select>
-            <select
-              value={sortBy}
-              onChange={e => setSortBy(e.target.value as (typeof ARTIFACT_SORT_OPTIONS)[number]['value'])}
-              className="h-10 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100"
-            >
-              {ARTIFACT_SORT_OPTIONS.map(option => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-            <select
-              value={sortOrder}
-              onChange={e => setSortOrder(e.target.value as 'asc' | 'desc')}
-              className="h-10 rounded-md border border-zinc-700 bg-zinc-900 px-3 text-sm text-zinc-100"
-            >
-              <option value="desc">Descendente</option>
-              <option value="asc">Ascendente</option>
-            </select>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setSearch('')
-                setArtifactTypeFilter('all')
-                setTemplateFilter('all')
-                setSourceDocFilter('all')
-                setGenerationProfileFilter('all')
-                setSortBy('created_at')
-                setSortOrder('desc')
-              }}
-            >
-              Limpar filtros
-            </Button>
+        </section>
+
+        {/* ── Library Section ── */}
+        <section>
+          {/* Section header */}
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-4">
+              <h2 className="text-2xl font-bold font-headline text-[#e1e3e4]">Arquivos Recentes</h2>
+              {!isLoading && artifacts && (
+                <span className="px-2.5 py-0.5 rounded-full bg-[#1e1e1e] text-xs text-[#c6c5d4] font-semibold">
+                  {artifacts.length} {artifacts.length === 1 ? 'item' : 'itens'}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {/* Search */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#c6c5d4]" />
+                <input
+                  type="text"
+                  placeholder="Buscar artefatos..."
+                  value={search}
+                  onChange={e => setSearch(e.target.value)}
+                  className="pl-10 pr-4 py-2 bg-[#111111] border border-[#1e1e1e] rounded-lg text-sm text-[#e1e3e4] placeholder-[#454652] focus:outline-none focus:border-primary/40 w-56 transition-all"
+                />
+              </div>
+              {/* Filter toggle */}
+              <button
+                onClick={() => setShowFilters(f => !f)}
+                className={`p-2 rounded-lg transition-colors ${showFilters || hasActiveFilters ? 'bg-primary/15 text-primary border border-primary/30' : 'bg-[#111111] border border-[#1e1e1e] text-[#c6c5d4] hover:bg-[#1e1e1e]'}`}
+                title="Filtros avançados"
+              >
+                <SlidersHorizontal className="h-4 w-4" />
+              </button>
+              {/* Clear filters */}
+              {hasActiveFilters && (
+                <button
+                  onClick={() => {
+                    setArtifactTypeFilter('all'); setTemplateFilter('all')
+                    setSourceDocFilter('all'); setGenerationProfileFilter('all')
+                    setSortBy('created_at'); setSortOrder('desc')
+                  }}
+                  className="text-xs text-[#c6c5d4] hover:text-[#e1e3e4] transition-colors"
+                >
+                  Limpar
+                </button>
+              )}
+            </div>
           </div>
-        </CardContent>
-      </Card>
 
-      {error && (
-        <div className="rounded-lg border border-red-800 bg-red-950/30 px-4 py-3 text-sm text-red-400">Erro ao carregar artefatos.</div>
-      )}
+          {/* Expandable filter panel */}
+          {showFilters && (
+            <div className="mb-6 p-4 rounded-xl bg-[#111111] border border-[#1e1e1e] space-y-3">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <FilterSelect options={typeFilterOptions} value={artifactTypeFilter} onChange={setArtifactTypeFilter} />
+                <FilterSelect options={templateFilterOptions} value={templateFilter} onChange={setTemplateFilter} />
+                <FilterSelect options={sourceDocFilterOptions} value={sourceDocFilter} onChange={setSourceDocFilter} />
+                <FilterSelect options={profileFilterOptions} value={generationProfileFilter} onChange={setGenerationProfileFilter} />
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <FilterSelect options={sortByOptions} value={sortBy} onChange={v => setSortBy(v as typeof sortBy)} />
+                <FilterSelect options={sortOrderOptions} value={sortOrder} onChange={v => setSortOrder(v as 'asc' | 'desc')} />
+              </div>
+            </div>
+          )}
 
-      {isLoading && (
-        <div className="space-y-3">{[1, 2, 3].map(i => <Skeleton key={i} className="h-16 w-full" />)}</div>
-      )}
+          {/* Error */}
+          {error && (
+            <div className="rounded-xl border border-rose-800/40 bg-rose-950/20 px-4 py-3 text-sm text-rose-400">
+              Erro ao carregar artefatos.
+            </div>
+          )}
 
-      {!isLoading && (!artifacts || artifacts.length === 0) && !error && (
-        <Card>
-          <CardContent className="flex flex-col items-center gap-3 py-12">
-            <Archive className="h-12 w-12 text-zinc-600" />
-            <p className="font-medium text-zinc-300">Nenhum artefato gerado</p>
-            <p className="text-sm text-zinc-500">Gere resumos, checklists e mais</p>
-            <Button onClick={() => setShowCreate(true)}><Plus className="mr-2 h-4 w-4" />Criar Artefato</Button>
-          </CardContent>
-        </Card>
-      )}
+          {/* Loading */}
+          {isLoading && (
+            <div className="space-y-3">
+              {[1, 2, 3].map(i => <Skeleton key={i} className="h-20 w-full rounded-xl" />)}
+            </div>
+          )}
 
-      {artifacts && artifacts.length > 0 && (
-        <div className="space-y-2">
-          {artifacts.map(artifact => {
-            const isMarkdown = isMarkdownArtifact(artifact.filename)
-            const typeLabel = artifact.artifact_type
-              ? (() => {
-                  if (artifact.artifact_type === 'summary') return 'Resumo'
-                  if (artifact.artifact_type === 'checklist') return 'Checklist'
-                  if (artifact.artifact_type === 'study_plan') return 'Plano de Estudos'
-                  return artifact.artifact_type
-                })()
-              : null
+          {/* Empty state */}
+          {!isLoading && (!artifacts || artifacts.length === 0) && !error && (
+            <div className="flex flex-col items-center gap-4 py-16 rounded-xl border-2 border-dashed border-[#1e1e1e]">
+              <div className="w-16 h-16 rounded-2xl bg-[#111111] flex items-center justify-center">
+                <Archive className="h-8 w-8 text-[#454652]" />
+              </div>
+              <div className="text-center">
+                <p className="font-bold font-headline text-[#e1e3e4]">Nenhum artefato gerado</p>
+                <p className="text-sm text-[#c6c5d4] mt-1">Gere resumos, checklists e mais usando as ações acima</p>
+              </div>
+              <button
+                onClick={() => setShowCreate(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-[#000000] font-bold text-sm font-headline hover:opacity-90 transition-opacity"
+              >
+                <Plus className="h-4 w-4" />
+                Criar Artefato
+              </button>
+            </div>
+          )}
 
-            return (
-              <Card key={`${artifact.filename}-${artifact.created_at}`} className="hover:border-zinc-700 transition-colors">
-                <CardContent className="flex items-center justify-between py-4">
-                  <div className="flex items-center gap-3 min-w-0">
-                    <Archive className="h-5 w-5 shrink-0 text-blue-400" />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-zinc-100 truncate">
+          {/* Artifact list */}
+          {artifacts && artifacts.length > 0 && (
+            <div className="space-y-2">
+              {artifacts.map((artifact, idx) => {
+                const isMarkdown = isMarkdownArtifact(artifact.filename)
+                const badge = artifactTypeBadge(artifact.artifact_type)
+
+                return (
+                  <div
+                    key={`${artifact.filename}-${artifact.created_at}`}
+                    className={`group flex items-center gap-5 p-4 rounded-xl transition-all duration-200 ${
+                      idx % 2 === 0
+                        ? 'bg-[#111111] hover:bg-[#1e1e1e]'
+                        : 'bg-[#0d0d0d] border border-[#1e1e1e]/50 hover:bg-[#111111]'
+                    }`}
+                  >
+                    {/* Icon */}
+                    <div className="w-12 h-12 rounded-xl bg-[#1e1e1e] flex items-center justify-center shrink-0">
+                      <ArtifactIcon type={artifact.artifact_type} filename={artifact.filename} />
+                    </div>
+
+                    {/* Content */}
+                    <div className="flex-1 min-w-0">
+                      <h4 className="text-base font-bold font-headline text-[#e1e3e4] truncate group-hover:text-primary transition-colors">
                         {artifact.title?.trim() ? artifact.title : artifact.filename}
-                      </p>
-                      <p className="text-xs text-zinc-500">
-                        {typeLabel ? `${typeLabel} Â· ` : ''}{formatBytes(artifact.size)} Â· {formatDate(artifact.created_at)}
-                      </p>
-                      <div className="mt-1 flex flex-wrap gap-1.5">
-                        {artifact.template_id && (
-                          <span className="rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-300">
-                            Template: {artifact.template_id}
-                          </span>
-                        )}
-                        {artifact.generation_profile && (
-                          <span className="rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-300">
-                            Perfil: {artifact.generation_profile}
-                          </span>
-                        )}
-                        {(artifact.source_doc_count ?? 0) > 0 && (
-                          <span className="rounded-full border border-zinc-700 bg-zinc-900 px-2 py-0.5 text-[11px] text-zinc-300">
-                            Fontes: {artifact.source_doc_count}
-                          </span>
-                        )}
-                        {(artifact.confidence_level || typeof artifact.confidence_score === 'number') && (
-                          <span className={`rounded-full border px-2 py-0.5 text-[11px] ${confidenceBadgeClass(artifact.confidence_level)}`}>
-                            Confianca: {artifact.confidence_level ?? 'n/a'}
-                            {typeof artifact.confidence_score === 'number' ? ` (${Math.round(artifact.confidence_score * 100)}%)` : ''}
-                          </span>
-                        )}
+                      </h4>
+                      <div className="flex items-center gap-2 mt-1 flex-wrap">
+                        {badge && <span className={`text-xs font-semibold ${badge.cls}`}>{badge.label}</span>}
+                        {badge && <span className="w-1 h-1 rounded-full bg-[#282828]" />}
+                        <span className="text-xs text-[#c6c5d4]">{formatDate(artifact.created_at)}</span>
+                        <span className="w-1 h-1 rounded-full bg-[#282828]" />
+                        <span className="text-xs text-[#c6c5d4]">{formatBytes(artifact.size)}</span>
                       </div>
+                      {/* Meta chips */}
+                      {(artifact.template_id || artifact.generation_profile || (artifact.source_doc_count ?? 0) > 0 || artifact.confidence_level) && (
+                        <div className="mt-1.5 flex flex-wrap gap-1.5">
+                          {artifact.template_id && (
+                            <span className="rounded-full border border-[#282828] bg-[#111111] px-2 py-0.5 text-[11px] text-[#c6c5d4]">
+                              Template: {artifact.template_id}
+                            </span>
+                          )}
+                          {artifact.generation_profile && (
+                            <span className="rounded-full border border-[#282828] bg-[#111111] px-2 py-0.5 text-[11px] text-[#c6c5d4]">
+                              Perfil: {artifact.generation_profile}
+                            </span>
+                          )}
+                          {(artifact.source_doc_count ?? 0) > 0 && (
+                            <span className="rounded-full border border-[#282828] bg-[#111111] px-2 py-0.5 text-[11px] text-[#c6c5d4]">
+                              Fontes: {artifact.source_doc_count}
+                            </span>
+                          )}
+                          {(artifact.confidence_level || typeof artifact.confidence_score === 'number') && (
+                            <span className={`rounded-full border px-2 py-0.5 text-[11px] ${confidenceBadgeClass(artifact.confidence_level)}`}>
+                              Confiança: {artifact.confidence_level ?? 'n/a'}
+                              {typeof artifact.confidence_score === 'number' ? ` (${Math.round(artifact.confidence_score * 100)}%)` : ''}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Hover actions */}
+                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                      {isMarkdown && (
+                        <button
+                          onClick={() => setPreviewFile({ id: artifact.id, filename: artifact.filename })}
+                          className="p-2 hover:bg-[#282828] rounded-lg text-[#c6c5d4] transition-colors"
+                          title="Preview"
+                        >
+                          <Eye className="h-4 w-4" />
+                        </button>
+                      )}
+                      <button
+                        onClick={() => handleDownload(artifact.id, artifact.filename)}
+                        disabled={downloadingKey !== null}
+                        className="p-2 hover:bg-[#282828] rounded-lg text-[#c6c5d4] transition-colors disabled:opacity-50"
+                        title="Download"
+                      >
+                        {downloadingKey === `${artifact.id}:file` ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Download className="h-4 w-4" />
+                        )}
+                      </button>
+                      {isMarkdown && (
+                        <button
+                          onClick={() => handleDownloadPdf(artifact.id, artifact.filename)}
+                          disabled={downloadingKey !== null}
+                          className="p-2 hover:bg-[#282828] rounded-lg text-[#c6c5d4] transition-colors disabled:opacity-50"
+                          title="Exportar PDF"
+                        >
+                          {downloadingKey === `${artifact.id}:pdf` ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <FileText className="h-4 w-4" />
+                          )}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => { if (confirm(`Remover "${artifact.filename}"?`)) deleteMut.mutate(artifact.id) }}
+                        disabled={deleteMut.isPending}
+                        className="p-2 hover:bg-rose-950/30 text-[#454652] hover:text-rose-400 rounded-lg transition-colors"
+                        title="Remover"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0 ml-4">
-                    {isMarkdown && (
-                      <Button variant="ghost" size="sm" onClick={() => setPreviewFile({ id: artifact.id, filename: artifact.filename })}>
-                        <Eye className="h-4 w-4 mr-1" />Preview
-                      </Button>
-                    )}
-                    <Button variant="outline" size="sm" onClick={() => handleDownload(artifact.id, artifact.filename)} disabled={downloadingKey !== null}>
-                      <Download className="h-4 w-4 mr-1" />
-                      {downloadingKey === `${artifact.id}:file` ? 'Baixando...' : 'Download'}
-                    </Button>
-                    {isMarkdown && (
-                      <Button variant="outline" size="sm" onClick={() => handleDownloadPdf(artifact.id, artifact.filename)} disabled={downloadingKey !== null}>
-                        <FileText className="h-4 w-4 mr-1" />
-                        {downloadingKey === `${artifact.id}:pdf` ? 'Baixando...' : 'PDF'}
-                      </Button>
-                    )}
-                    <Button
-                      variant="ghost" size="sm"
-                      onClick={() => { if (confirm(`Remover "${artifact.filename}"?`)) deleteMut.mutate(artifact.id) }}
-                      disabled={deleteMut.isPending}
-                      className="text-zinc-600 hover:text-red-400"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            )
-          })}
-        </div>
-      )}
+                )
+              })}
+            </div>
+          )}
+        </section>
+      </div>
 
+      {/* ── FAB ── */}
+      <div className="fixed bottom-8 right-8 z-50">
+        <button
+          onClick={() => window.location.href = '/chat'}
+          className="flex items-center gap-3 bg-primary text-[#000000] px-6 py-4 rounded-full font-bold font-headline shadow-[0_10px_30px_rgba(147,197,253,0.25)] hover:scale-105 active:scale-95 transition-all"
+        >
+          <Zap className="h-5 w-5" />
+          <span>Perguntar ao Agente</span>
+        </button>
+      </div>
+
+      {/* Dialogs */}
       {showSummarize && (
-        <SummarizeDocDialog
-          onClose={() => setShowSummarize(false)}
-          templatesEnabled={templatesEnabled}
-        />
+        <SummarizeDocDialog onClose={() => setShowSummarize(false)} templatesEnabled={templatesEnabled} />
       )}
       {showDigest && <SmartDigestDialog onClose={() => setShowDigest(false)} />}
       {showCreate && (
-        <CreateArtifactDialog
-          onClose={() => setShowCreate(false)}
-          templatesEnabled={templatesEnabled}
-        />
+        <CreateArtifactDialog onClose={() => setShowCreate(false)} templatesEnabled={templatesEnabled} />
       )}
       {previewFile && <PreviewDialog artifact={previewFile} onClose={() => setPreviewFile(null)} />}
-    </PageShell>
+    </div>
   )
 }
-
-
