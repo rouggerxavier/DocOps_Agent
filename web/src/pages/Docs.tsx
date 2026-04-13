@@ -252,35 +252,39 @@ export function Docs() {
                 <div className="flex items-center justify-between px-5 py-4">
                   <p className="app-kicker">Biblioteca de Ativos</p>
                 </div>
-                <div className="space-y-2 px-5 pb-5">
+                <div className="space-y-2 px-3 pb-3 sm:px-5 sm:pb-5">
                   {filtered.map(doc => (
                     <div
                       key={doc.doc_id}
-                      className="group flex items-center justify-between gap-4 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] px-4 py-3 transition-colors hover:border-[color:var(--ui-border-strong)] hover:bg-[color:var(--ui-surface-3)]"
+                      className="group flex flex-col gap-3 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] px-4 py-3 transition-colors hover:border-[color:var(--ui-border-strong)] hover:bg-[color:var(--ui-surface-3)] sm:flex-row sm:items-center sm:justify-between sm:gap-4"
                     >
-                      <div className="min-w-0 flex items-center gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
                         <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[color:var(--ui-accent-soft)]', fileAccent(doc.file_name))}>
                           <FileText className="h-4 w-4" />
                         </div>
                         <div className="min-w-0">
                           <p className="truncate text-sm font-semibold text-[color:var(--ui-text)]">{doc.file_name}</p>
-                          <p className="text-xs text-[color:var(--ui-text-meta)]">Documento disponível para consulta</p>
+                          <p className="text-xs text-[color:var(--ui-text-meta)]">Disponível para consulta</p>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1.5">
-                        <Button variant="outline" size="sm" onClick={() => setViewDoc(doc)} className="h-8 border-[color:var(--ui-border-soft)] bg-transparent text-[color:var(--ui-text-dim)] hover:text-[color:var(--ui-text)]">
-                          <Eye className="h-3.5 w-3.5" />
+                      <div className="flex items-center gap-2 sm:gap-1.5">
+                        <Button variant="outline" size="sm" onClick={() => setViewDoc(doc)} className="h-9 flex-1 border-[color:var(--ui-border-soft)] bg-transparent text-[color:var(--ui-text-dim)] hover:text-[color:var(--ui-text)] sm:h-8 sm:flex-none">
+                          <Eye className="h-3.5 w-3.5 sm:mr-0" />
+                          <span className="ml-1.5 text-xs sm:hidden">Ver</span>
                         </Button>
-                        <Button size="sm" onClick={() => setOpsDoc(doc.file_name)} className="h-8 rounded-lg border-0 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)] hover:bg-[color:var(--ui-surface-3)]">
-                          <Zap className="mr-1 h-3.5 w-3.5" />Ops
+                        <Button size="sm" onClick={() => setOpsDoc(doc.file_name)} className="h-9 flex-1 rounded-lg border-0 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)] hover:bg-[color:var(--ui-surface-3)] sm:h-8 sm:flex-none">
+                          <Zap className="h-3.5 w-3.5" />
+                          <span className="ml-1.5 text-xs">Ops</span>
                         </Button>
                         {docs.length > 1 ? (
-                          <Button variant="outline" size="sm" onClick={() => setCompareDoc(doc.file_name)} className="h-8 border-[color:var(--ui-border-soft)] bg-transparent text-[color:var(--ui-text-dim)] hover:text-[color:var(--ui-text)]">
-                            <GitCompare className="h-3.5 w-3.5" />
+                          <Button variant="outline" size="sm" onClick={() => setCompareDoc(doc.file_name)} className="h-9 flex-1 border-[color:var(--ui-border-soft)] bg-transparent text-[color:var(--ui-text-dim)] hover:text-[color:var(--ui-text)] sm:h-8 sm:flex-none">
+                            <GitCompare className="h-3.5 w-3.5 sm:mr-0" />
+                            <span className="ml-1.5 text-xs sm:hidden">Comparar</span>
                           </Button>
                         ) : null}
-                        <Button variant="outline" size="sm" onClick={() => { if (window.confirm(`Remover "${doc.file_name}"?`)) deleteMut.mutate(doc.doc_id) }} disabled={deleteMut.isPending} className="h-8 border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20">
-                          <Trash2 className="h-3.5 w-3.5" />
+                        <Button variant="outline" size="sm" onClick={() => { if (window.confirm(`Remover "${doc.file_name}"?`)) deleteMut.mutate(doc.doc_id) }} disabled={deleteMut.isPending} className="h-9 flex-1 border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20 sm:h-8 sm:flex-none">
+                          <Trash2 className="h-3.5 w-3.5 sm:mr-0" />
+                          <span className="ml-1.5 text-xs sm:hidden">Remover</span>
                         </Button>
                       </div>
                     </div>
@@ -292,7 +296,7 @@ export function Docs() {
         </div>
       </PageShell>
 
-      <button type="button" onClick={() => navigate('/ingest')} className="fixed bottom-6 right-6 z-40 inline-flex items-center gap-2 rounded-xl bg-[color:var(--ui-accent)] px-5 py-3 font-headline text-sm font-bold text-[color:var(--ui-bg)] shadow-2xl transition-all active:scale-95">
+      <button type="button" onClick={() => navigate('/ingest')} className="fixed bottom-20 right-4 z-40 inline-flex items-center gap-2 rounded-xl bg-[color:var(--ui-accent)] px-5 py-3 font-headline text-sm font-bold text-[color:var(--ui-bg)] shadow-2xl transition-all active:scale-95 sm:bottom-6 sm:right-6">
         <FileText className="h-4 w-4" />
         Novo artefato
       </button>
