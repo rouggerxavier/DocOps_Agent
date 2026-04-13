@@ -461,10 +461,10 @@ function WeekView({
       {/* Header dias — scroll horizontal sincronizado */}
       <div className="overflow-x-auto border-b border-[color:var(--ui-border-soft)]/70 bg-[color:var(--ui-bg)]" style={{ scrollbarWidth: 'none' }}>
         <div className="flex" style={{ minWidth: 'max(100%, 680px)' }}>
-          <div className="flex h-16 w-[44px] shrink-0 items-center justify-center border-r border-[color:var(--ui-border-soft)]/60 text-[10px] font-semibold tracking-[0.12em] text-[color:var(--ui-text-meta)] sm:w-[60px]">
+          <div className="flex h-12 w-[44px] shrink-0 items-center justify-center border-r border-[color:var(--ui-border-soft)]/60 text-[10px] font-semibold tracking-[0.12em] text-[color:var(--ui-text-meta)] sm:h-16 sm:w-[60px]">
             <span className="hidden sm:inline">GMT-3</span>
           </div>
-          <div className="grid flex-1 h-16" style={{ gridTemplateColumns: 'repeat(7, minmax(90px, 1fr))' }}>
+          <div className="grid flex-1 h-12 sm:h-16" style={{ gridTemplateColumns: 'repeat(7, minmax(90px, 1fr))' }}>
         {weekDays.map((day, i) => {
           const key = toDateKey(day)
           const isSelected = key === selectedDate
@@ -493,7 +493,7 @@ function WeekView({
               </span>
               <span
                 className={cn(
-                  'mt-1.5 flex h-8 w-8 items-center justify-center rounded-full text-base font-headline font-bold',
+                  'mt-1 flex h-6 w-6 items-center justify-center rounded-full text-sm font-headline font-bold sm:mt-1.5 sm:h-8 sm:w-8 sm:text-base',
                   isTodayDay
                     ? 'bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)]'
                     : isSelected
@@ -505,7 +505,7 @@ function WeekView({
               >
                 {day.getDate()}
               </span>
-              <span className={cn('mt-0.5 text-[10px]', isWeekend ? 'text-[color:var(--ui-text-meta)]/45' : 'text-[color:var(--ui-text-meta)]/65')}>
+              <span className={cn('hidden sm:inline mt-0.5 text-[10px]', isWeekend ? 'text-[color:var(--ui-text-meta)]/45' : 'text-[color:var(--ui-text-meta)]/65')}>
                 {MONTH_NAMES[day.getMonth()].slice(0, 3)}
               </span>
               {isTodayDay && !isSelected && (
@@ -519,7 +519,7 @@ function WeekView({
       </div>
 
       {/* Body — scroll vertical + horizontal sincronizado */}
-      <div className="flex flex-1 overflow-x-auto overflow-y-auto">
+      <div className="flex flex-1 overflow-x-auto overflow-y-auto pb-12 md:pb-0">
         <div className="flex" style={{ minWidth: 'max(100%, 680px)' }}>
         <div className="w-[44px] shrink-0 border-r border-[color:var(--ui-border-soft)]/50 bg-[color:var(--ui-bg)] sm:w-[60px]">
           {hours.map(h => (
@@ -885,25 +885,25 @@ export function Schedule() {
     <div className="relative flex h-[calc(100vh-4rem)] flex-col gap-0 overflow-hidden rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-bg)] shadow-[0_24px_60px_rgba(0,0,0,0.42)] md:flex-row">
       {/* ── COLUNA ESQUERDA: Calendário ─────────────────────────────────────── */}
       <div className={`${mobilePanel === 'calendar' ? 'flex' : 'hidden'} md:flex flex-1 flex-col overflow-hidden`}>
-        {/* Header do calendário — mobile: 2 linhas, desktop: 1 linha */}
-        <div className="flex flex-col gap-2 border-b border-[color:var(--ui-border-soft)]/70 bg-[color:var(--ui-bg)] px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
-          {/* Linha 1: ícone + título */}
-          <div className="flex items-center gap-2 sm:gap-4">
-            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[color:var(--ui-accent-soft)] sm:h-9 sm:w-9">
-              <Calendar className="h-4 w-4 text-[color:var(--ui-accent)]" />
+        {/* Header do calendário */}
+        <div className="flex items-center justify-between border-b border-[color:var(--ui-border-soft)]/70 bg-[color:var(--ui-bg)] px-3 py-2 sm:px-6 sm:py-4">
+          {/* Ícone + título */}
+          <div className="flex min-w-0 items-center gap-2 sm:gap-4">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-xl bg-[color:var(--ui-accent-soft)] sm:h-9 sm:w-9">
+              <Calendar className="h-3.5 w-3.5 text-[color:var(--ui-accent)] sm:h-4 sm:w-4" />
             </div>
-            <h1 className="font-headline text-sm font-bold text-[color:var(--ui-text)] sm:text-xl">
+            <h1 className="truncate font-headline text-sm font-bold text-[color:var(--ui-text)] sm:text-xl">
               {view === 'week' ? weekLabel : `${MONTH_NAMES[monthCursor.getMonth()]} ${monthCursor.getFullYear()}`}
             </h1>
           </div>
-          {/* Linha 2 (mobile) / mesma linha (desktop): controles */}
-          <div className="flex items-center gap-1.5 sm:gap-2">
+          {/* Controles */}
+          <div className="ml-2 flex shrink-0 items-center gap-1 sm:gap-2">
             {/* Toggle view */}
             <div className="flex rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] p-0.5">
               <button
                 onClick={() => setView('month')}
                 className={cn(
-                  'rounded-md px-2.5 py-1 text-xs font-semibold transition-colors sm:px-3 sm:py-1.5',
+                  'rounded-md px-2 py-1 text-[11px] font-semibold transition-colors sm:px-3 sm:py-1.5 sm:text-xs',
                   view === 'month' ? 'bg-[color:var(--ui-surface-2)] text-[color:var(--ui-accent)]' : 'text-[color:var(--ui-text-meta)] hover:text-[color:var(--ui-text)]'
                 )}
               >
@@ -912,7 +912,7 @@ export function Schedule() {
               <button
                 onClick={() => setView('week')}
                 className={cn(
-                  'rounded-md px-2.5 py-1 text-xs font-semibold transition-colors sm:px-3 sm:py-1.5',
+                  'rounded-md px-2 py-1 text-[11px] font-semibold transition-colors sm:px-3 sm:py-1.5 sm:text-xs',
                   view === 'week' ? 'bg-[color:var(--ui-surface-2)] text-[color:var(--ui-accent)]' : 'text-[color:var(--ui-text-meta)] hover:text-[color:var(--ui-text)]'
                 )}
               >
@@ -925,9 +925,9 @@ export function Schedule() {
                 if (view === 'week') prevWeek()
                 else setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth() - 1, 1))
               }}
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)] sm:h-9 sm:w-9"
+              className="flex h-7 w-7 items-center justify-center rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] text-[color:var(--ui-text-meta)] transition-colors hover:text-[color:var(--ui-text)] sm:h-9 sm:w-9"
             >
-              <ChevronLeft className="h-4 w-4" />
+              <ChevronLeft className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
             </button>
             <button
               onClick={() => {
@@ -935,7 +935,7 @@ export function Schedule() {
                 setMonthCursor(startOfMonth(now))
                 setSelectedDate(toDateKey(now))
               }}
-              className="rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] px-2.5 py-1 text-xs font-semibold text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)] sm:py-1.5 sm:px-3"
+              className="rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] px-2 py-1 text-[11px] font-semibold text-[color:var(--ui-text-meta)] transition-colors hover:text-[color:var(--ui-text)] sm:px-3 sm:py-1.5 sm:text-xs"
             >
               Hoje
             </button>
@@ -944,9 +944,9 @@ export function Schedule() {
                 if (view === 'week') nextWeek()
                 else setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 1))
               }}
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)] sm:h-9 sm:w-9"
+              className="flex h-7 w-7 items-center justify-center rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] text-[color:var(--ui-text-meta)] transition-colors hover:text-[color:var(--ui-text)] sm:h-9 sm:w-9"
             >
-              <ChevronRight className="h-4 w-4" />
+              <ChevronRight className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
             </button>
           </div>
         </div>
