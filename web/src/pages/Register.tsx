@@ -60,7 +60,8 @@ export function Register() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
-    if (!name || !email || !password) {
+    const preferredName = name.trim()
+    if (!preferredName || !email || !password) {
       toast.error('Preencha todos os campos.')
       return
     }
@@ -70,7 +71,7 @@ export function Register() {
     }
     setLoading(true)
     try {
-      await register(name, email, password)
+      await register(preferredName, email, password)
       await login(email, password)
       toast.success('Conta criada com sucesso!')
       navigate('/dashboard', { replace: true })
@@ -153,30 +154,33 @@ export function Register() {
           }}
         >
           <form onSubmit={handleSubmit} className="space-y-5 sm:space-y-6">
-            {/* Nome */}
+            {/* Como quer ser chamado */}
             <div className="space-y-2">
               <label
                 htmlFor="name"
                 className="block text-[11px] font-semibold uppercase tracking-widest text-[#c2c7cf]"
                 style={{ fontFamily: "'Inter', sans-serif" }}
               >
-                Nome completo
+                Como você quer ser chamado?
               </label>
               <input
                 id="name"
                 type="text"
                 name="name"
-                placeholder="Seu nome"
+                placeholder="Ex.: Rougger"
                 value={name}
                 onChange={e => setName(e.target.value)}
                 disabled={loading}
-                autoComplete="name"
+                autoComplete="nickname"
                 required
                 className={inputClass}
                 style={inputBase}
                 onFocus={handleFocus}
                 onBlur={handleBlur}
               />
+              <p className="text-[11px] text-[#c2c7cf]/60">
+                Esse nome vai aparecer no seu painel.
+              </p>
             </div>
 
             {/* Email */}
