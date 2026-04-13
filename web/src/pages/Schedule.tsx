@@ -1008,19 +1008,42 @@ export function Schedule() {
                       )}
                     </div>
 
-                    <div className="flex flex-col gap-0.5 overflow-hidden">
-                      {daySchedules.slice(0, 1).map((s, i) => (
-                        <EventPill key={`s-${s.id}`} title={s.title} colorIdx={i + 2} />
-                      ))}
-                      {dayReminders.slice(0, 2).map((r, i) => (
-                        <EventPill key={`r-${r.id}`} title={r.title} colorIdx={i} />
-                      ))}
-                      {(dayReminders.length + daySchedules.length) > 3 && (
-                        <span className="mt-0.5 text-[10px] text-[color:var(--ui-text-meta)]">
-                          +{dayReminders.length + daySchedules.length - 3} mais
-                        </span>
-                      )}
-                    </div>
+                    {(() => {
+                      const MAX_PILLS = 4
+                      type CellEvent = { key: string; title: string; colorIdx: number; durationMin: number }
+                      const allEvents: CellEvent[] = [
+                        ...daySchedules.map((s, i) => ({
+                          key: `s-${s.id}`,
+                          title: s.title,
+                          colorIdx: i + 2,
+                          durationMin: timeToMinutes(s.end_time) - timeToMinutes(s.start_time),
+                        })),
+                        ...dayReminders.map((r, i) => ({
+                          key: `r-${r.id}`,
+                          title: r.title,
+                          colorIdx: i,
+                          durationMin: r.ends_at
+                            ? (new Date(r.ends_at).getTime() - new Date(r.starts_at).getTime()) / 60000
+                            : 30,
+                        })),
+                      ].sort((a, b) => b.durationMin - a.durationMin)
+
+                      const visible = allEvents.slice(0, MAX_PILLS)
+                      const hidden = allEvents.length - visible.length
+
+                      return (
+                        <div className="flex flex-col gap-0.5 overflow-hidden">
+                          {visible.map(ev => (
+                            <EventPill key={ev.key} title={ev.title} colorIdx={ev.colorIdx} />
+                          ))}
+                          {hidden > 0 && (
+                            <span className="mt-0.5 text-[10px] text-[color:var(--ui-text-meta)]">
+                              +{hidden} mais
+                            </span>
+                          )}
+                        </div>
+                      )
+                    })()}
                   </button>
                 )
               })}
