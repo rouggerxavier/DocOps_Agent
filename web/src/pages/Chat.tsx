@@ -4,9 +4,9 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import {
   Send, Bot, User, FileText, ChevronRight, ChevronDown, Loader2, X,
-  Plus, MessageSquare, Clock, CalendarCheck, Trash2,
+  Plus, Clock, CalendarCheck, Trash2,
   Sparkles, Search, Pause,
-  MoreHorizontal, Paperclip,
+  MoreHorizontal, Paperclip, Menu,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
@@ -1223,7 +1223,14 @@ export function Chat() {
   const [composerOverrides, setComposerOverrides] = useState<ComposerPreferenceOverrides>(() => emptyComposerOverrides())
   const [activeSources, setActiveSources] = useState<SourceItem[]>([])
   const [selectedSource, setSelectedSource] = useState<SourceItem | null>(null)
-  const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sidebarOpen, setSidebarOpen] = useState(() => (
+    typeof window !== 'undefined' ? window.matchMedia('(min-width: 1024px)').matches : true
+  ))
+  const [isMobile, setIsMobile] = useState(() => (
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 1023px)').matches : false
+  ))
+  const [showNewChatBubble, setShowNewChatBubble] = useState(true)
+  const [mobileSourcesOpen, setMobileSourcesOpen] = useState(false)
   const [sessionSearch, setSessionSearch] = useState('')
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [pendingFlashcardCommand, setPendingFlashcardCommand] = useState<FlashcardCommandPlan | null>(null)
@@ -1259,7 +1266,41 @@ export function Chat() {
     setPendingFlashcardCommand(null)
     setSavingArtifactTurnRef(null)
     setComposerOverrides(emptyComposerOverrides())
+    setMobileSourcesOpen(false)
   }, [activeSessionId])
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 1023px)')
+    const handleChange = (event: MediaQueryListEvent) => {
+      setIsMobile(event.matches)
+      setSidebarOpen(!event.matches)
+    }
+
+    setIsMobile(media.matches)
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', handleChange)
+      return () => media.removeEventListener('change', handleChange)
+    }
+    media.addListener(handleChange)
+    return () => media.removeListener(handleChange)
+  }, [])
+
+  useEffect(() => {
+    if (!isMobile) {
+      setShowNewChatBubble(false)
+      return
+    }
+    setShowNewChatBubble(true)
+    const timer = window.setTimeout(() => setShowNewChatBubble(false), 5000)
+    return () => window.clearTimeout(timer)
+  }, [isMobile])
+
+  useEffect(() => {
+    if (!isMobile) return
+    if (activeSources.length > 0) {
+      setMobileSourcesOpen(true)
+    }
+  }, [activeSources, isMobile])
 
   const { data: docs } = useQuery<DocItem[]>({
     queryKey: ['docs'],
@@ -2044,17 +2085,45 @@ export function Chat() {
   })
 
   return (
-    <div className="flex h-[calc(100dvh-3.5rem)] md:h-[100dvh] overflow-hidden rounded-[1.4rem] bg-[color:var(--ui-surface)] shadow-[0_26px_70px_rgba(0,0,0,0.45)]">
+    <div className={cn(
+      'relative flex h-[calc(100dvh-3.5rem)] overflow-hidden bg-[color:var(--ui-surface)] md:h-[100dvh]',
+      isMobile
+        ? 'rounded-none shadow-none'
+        : 'rounded-[1.4rem] shadow-[0_26px_70px_rgba(0,0,0,0.45)]',
+    )}>
       {/* ── Sidebar de sessões ────────────────────────────────────────────── */}
       {sidebarOpen && (
-        <aside className="flex w-[19rem] shrink-0 flex-col bg-[color:var(--ui-surface)]">
-          <div className="border-b border-[color:var(--ui-border-soft)] px-6 pb-5 pt-6">
+        <>
+          {isMobile ? (
+            <button
+              type="button"
+              aria-label="Fechar conversas"
+              onClick={() => setSidebarOpen(false)}
+              className="absolute inset-0 z-30 bg-black/45 backdrop-blur-[1px]"
+            />
+          ) : null}
+          <aside className={cn(
+            'z-40 flex flex-col bg-[color:var(--ui-surface)]',
+            isMobile
+              ? 'absolute inset-y-0 left-0 w-[88vw] max-w-[22rem] border-r border-[color:var(--ui-border-soft)]'
+              : 'w-[19rem] shrink-0',
+          )}>
+          <div className={cn(
+            'border-b border-[color:var(--ui-border-soft)]',
+            isMobile ? 'px-4 pb-4 pt-4' : 'px-6 pb-5 pt-6',
+          )}>
             <div className="mb-6 flex items-center justify-between">
-              <h2 className="font-headline text-xl font-extrabold tracking-tight text-[color:var(--ui-text)]">
+              <h2 className={cn(
+                'font-headline font-extrabold tracking-tight text-[color:var(--ui-text)]',
+                isMobile ? 'text-lg' : 'text-xl',
+              )}>
                 Conversas
               </h2>
               <button
-                onClick={createNewSession}
+                onClick={() => {
+                  createNewSession()
+                  if (isMobile) setSidebarOpen(false)
+                }}
                 className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-[color:var(--ui-surface-2)] text-[color:var(--ui-accent)] transition-colors hover:bg-[color:var(--ui-surface-3)]"
                 title="Nova conversa"
               >
@@ -2077,7 +2146,10 @@ export function Chat() {
               />
             </div>
           </div>
-          <div className="flex-1 space-y-2 overflow-y-auto px-4 py-4">
+          <div className={cn(
+            'flex-1 space-y-2 overflow-y-auto px-4',
+            isMobile ? 'pb-4 pt-3' : 'py-4',
+          )}>
             {visibleSessions.map(session => {
               const isActive = session.id === activeSessionId
               const messageCount = session.messages.filter(message => !message.streaming).length
@@ -2093,6 +2165,7 @@ export function Chat() {
                     setActiveSessionId(session.id)
                     setActiveSources([])
                     setSelectedSource(null)
+                    if (isMobile) setSidebarOpen(false)
                   }}
                   onKeyDown={event => {
                     if (event.key === 'Enter' || event.key === ' ') {
@@ -2100,6 +2173,7 @@ export function Chat() {
                       setActiveSessionId(session.id)
                       setActiveSources([])
                       setSelectedSource(null)
+                      if (isMobile) setSidebarOpen(false)
                     }
                   }}
                   className={cn(
@@ -2165,33 +2239,41 @@ export function Chat() {
             Salvo localmente
           </div>
         </aside>
+        </>
       )}
 
       {/* ── Área principal ────────────────────────────────────────────────── */}
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-[color:var(--ui-surface-container-lowest)]">
         {/* Header */}
-        <div className="flex h-16 items-center gap-3 border-b border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)]/85 px-6 backdrop-blur">
+        <div className={cn(
+          'flex items-center gap-3 border-b border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)]/90 backdrop-blur',
+          isMobile ? 'h-14 px-3' : 'h-16 px-6',
+        )}>
           <button
             onClick={() => setSidebarOpen(v => !v)}
             className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-[color:var(--ui-text-meta)] transition-colors hover:bg-[color:var(--ui-surface-2)] hover:text-[color:var(--ui-text)]"
+            title="Conversas"
           >
-            <MessageSquare className="h-4 w-4" />
+            <Menu className="h-4 w-4" />
           </button>
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]">
+          <div className={cn(
+            'shrink-0 items-center justify-center rounded-md bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]',
+            isMobile ? 'hidden' : 'flex h-8 w-8',
+          )}>
             <FileText className="h-4 w-4" />
           </div>
           <div className="flex-1 min-w-0">
             <p className="truncate text-sm font-bold text-[color:var(--ui-text)]">
               {activeSession?.title ?? 'Nova conversa'}
             </p>
-            <div className="flex items-center gap-2">
+            <div className={cn('items-center gap-2', isMobile ? 'hidden' : 'flex')}>
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-300" />
               <p className="truncate text-[10px] font-medium text-[color:var(--ui-text-meta)]">
                 DocOps Agent processando contexto
               </p>
             </div>
           </div>
-          {messages.length > 0 && (
+          {!isMobile && messages.length > 0 && (
             <Badge
               variant="secondary"
               className="border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[10px] text-[color:var(--ui-text-dim)]"
@@ -2199,11 +2281,26 @@ export function Chat() {
               {messages.filter(m => !m.streaming).length} msgs
             </Badge>
           )}
-          <button className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[color:var(--ui-text-meta)] transition-colors hover:bg-[color:var(--ui-surface-2)] hover:text-[color:var(--ui-text)]">
-            <MoreHorizontal className="h-4 w-4" />
-          </button>
+          {hasSources ? (
+            <button
+              type="button"
+              onClick={() => setMobileSourcesOpen(true)}
+              className={cn(
+                'inline-flex items-center justify-center rounded-lg text-[color:var(--ui-text-meta)] transition-colors hover:bg-[color:var(--ui-surface-2)] hover:text-[color:var(--ui-text)]',
+                isMobile ? 'h-8 w-8' : 'h-8 w-8',
+              )}
+              title="Fontes citadas"
+            >
+              <FileText className="h-4 w-4" />
+            </button>
+          ) : null}
+          {!isMobile ? (
+            <button className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[color:var(--ui-text-meta)] transition-colors hover:bg-[color:var(--ui-surface-2)] hover:text-[color:var(--ui-text)]">
+              <MoreHorizontal className="h-4 w-4" />
+            </button>
+          ) : null}
         </div>
-        {isPersonalizationEnabled && (
+        {isPersonalizationEnabled && !isMobile && (
           <div className="border-b border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)] px-6 py-2.5">
             <div className="flex items-start gap-2 rounded-xl bg-[color:var(--ui-surface-container-low)] px-3 py-2 text-xs text-[color:var(--ui-text-meta)]">
               <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[color:var(--ui-accent)]" />
@@ -2221,18 +2318,31 @@ export function Chat() {
         )}
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 sm:py-8">
+        <div className={cn(
+          'flex-1 overflow-y-auto',
+          isMobile ? 'px-3 pb-36 pt-5' : 'px-4 py-6 sm:px-6 sm:py-8',
+        )}>
           <div className="flex w-full flex-col gap-8">
             {messages.length === 0 && (
-              <div className="mx-auto flex max-w-md flex-col items-center text-center">
-                <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-full bg-[color:var(--ui-surface-container-low)]">
-                  <Bot className="h-6 w-6 text-[color:var(--ui-text-meta)]" />
-                </div>
-                <h3 className="font-headline text-xl font-bold text-[color:var(--ui-text)]">Qual o proximo objetivo?</h3>
-                <p className="mt-2 text-sm text-[color:var(--ui-text-meta)]">
-                  Pergunte sobre os seus documentos, crie artefatos, agenda ou tarefas sem sair do chat.
-                </p>
-              </div>
+              <>
+                {isMobile ? (
+                  <div className="mx-auto mt-[15vh] flex max-w-[16rem] flex-col items-center text-center">
+                    <h3 className="font-headline text-[2rem] font-semibold leading-tight text-[color:var(--ui-text)]">
+                      No que você está pensando hoje?
+                    </h3>
+                  </div>
+                ) : (
+                  <div className="mx-auto flex max-w-md flex-col items-center text-center">
+                    <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-full bg-[color:var(--ui-surface-container-low)]">
+                      <Bot className="h-6 w-6 text-[color:var(--ui-text-meta)]" />
+                    </div>
+                    <h3 className="font-headline text-xl font-bold text-[color:var(--ui-text)]">Qual o proximo objetivo?</h3>
+                    <p className="mt-2 text-sm text-[color:var(--ui-text-meta)]">
+                      Pergunte sobre os seus documentos, crie artefatos, agenda ou tarefas sem sair do chat.
+                    </p>
+                  </div>
+                )}
+              </>
             )}
 
           {messages.map((msg, i) => {
@@ -2335,10 +2445,20 @@ export function Chat() {
         </div>
 
         {/* Input area */}
-        <div className="border-t border-[color:var(--ui-border-soft)] px-4 pb-4 pt-3 sm:px-6 sm:pb-5">
+        <div className={cn(
+          'border-t border-[color:var(--ui-border-soft)]',
+          isMobile
+            ? 'absolute inset-x-0 bottom-0 z-20 bg-[color:var(--ui-surface-container-lowest)]/95 px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2 backdrop-blur'
+            : 'px-4 pb-4 pt-3 sm:px-6 sm:pb-5',
+        )}>
           <div className="w-full">
-            <div className="rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-low)]/85 p-2 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur">
-              <div className="mb-2 flex items-center">
+            <div className={cn(
+              'border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-low)]/85 backdrop-blur',
+              isMobile
+                ? 'rounded-[1.6rem] p-2 shadow-[0_14px_34px_rgba(0,0,0,0.34)]'
+                : 'rounded-2xl p-2 shadow-[0_18px_40px_rgba(0,0,0,0.28)]',
+            )}>
+              <div className={cn('flex items-center', isMobile ? 'mb-1' : 'mb-2')}>
                 <button
                   type="button"
                   onClick={() => setFiltersOpen(v => !v)}
@@ -2352,7 +2472,7 @@ export function Chat() {
                 </button>
               </div>
 
-          {isPersonalizationEnabled && (
+          {isPersonalizationEnabled && !isMobile && (
             <div className="space-y-2 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)]/80 p-3">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-medium text-[color:var(--ui-text)]">Override desta mensagem</p>
@@ -2564,7 +2684,7 @@ export function Chat() {
             </div>
           )}
 
-          <div className="flex items-end gap-2">
+          <div className={cn('flex items-end gap-2', isMobile && 'items-center')}>
             <textarea
               placeholder="Pergunte sobre seus documentos ou crie um lembrete..."
               value={input}
@@ -2572,13 +2692,19 @@ export function Chat() {
               onChange={event => setInput(event.target.value)}
               onKeyDown={handleKeyDown}
               disabled={isComposerBlocked}
-              className="max-h-36 min-h-[44px] flex-1 resize-none rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)] px-3 py-2 text-sm text-[color:var(--ui-text)] outline-none transition-colors placeholder:text-[color:var(--ui-text-meta)] focus:border-[color:var(--ui-accent)] focus:ring-2 focus:ring-[color:var(--ui-accent)]/20"
+              className={cn(
+                'max-h-36 flex-1 resize-none border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)] text-sm text-[color:var(--ui-text)] outline-none transition-colors placeholder:text-[color:var(--ui-text-meta)] focus:border-[color:var(--ui-accent)] focus:ring-2 focus:ring-[color:var(--ui-accent)]/20',
+                isMobile ? 'min-h-[42px] rounded-2xl px-3 py-2' : 'min-h-[44px] rounded-xl px-3 py-2',
+              )}
             />
             <Button
               onClick={isChatRequestActive ? pauseCurrentGeneration : handleSend}
               disabled={!isChatRequestActive && (!input.trim() || isComposerBlocked)}
               size="icon"
-              className="h-11 w-11 rounded-xl bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)]"
+              className={cn(
+                'bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)]',
+                isMobile ? 'h-10 w-10 rounded-full' : 'h-11 w-11 rounded-xl',
+              )}
               title={isChatRequestActive ? 'Pausar geracao' : 'Enviar mensagem'}
             >
               {isChatRequestActive ? (
@@ -2595,8 +2721,8 @@ export function Chat() {
         </div>
       </div>
 
-      {/* ── Painel de fontes — só aparece quando há fontes ────────────────── */}
-      {hasSources && (
+      {/* ── Painel de fontes — desktop ────────────────── */}
+      {hasSources && !isMobile && (
         <aside className="flex w-80 shrink-0 flex-col border-l border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface)]/96">
           <div className="flex items-center gap-2 border-b border-[color:var(--ui-border-soft)] px-5 py-4">
             <FileText className="h-4 w-4 text-[color:var(--ui-accent)]" />
@@ -2617,6 +2743,76 @@ export function Chat() {
           </div>
         </aside>
       )}
+
+      {/* ── Painel de fontes — mobile bottom sheet ────────────────── */}
+      {hasSources && isMobile && mobileSourcesOpen && (
+        <>
+          <button
+            type="button"
+            className="absolute inset-0 z-40 bg-black/45"
+            onClick={() => setMobileSourcesOpen(false)}
+            aria-label="Fechar painel de fontes"
+          />
+          <aside className="absolute inset-x-0 bottom-0 z-50 max-h-[70dvh] rounded-t-3xl border-t border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface)]">
+            <div className="flex items-center gap-2 border-b border-[color:var(--ui-border-soft)] px-4 py-3">
+              <FileText className="h-4 w-4 text-[color:var(--ui-accent)]" />
+              <p className="text-sm font-semibold text-[color:var(--ui-text)]">Fontes citadas</p>
+              <Badge
+                variant="secondary"
+                className="ml-auto border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[10px] text-[color:var(--ui-text-dim)]"
+              >
+                {activeSources.length}
+              </Badge>
+              <button
+                type="button"
+                onClick={() => setMobileSourcesOpen(false)}
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[color:var(--ui-text-meta)] hover:bg-[color:var(--ui-surface-2)] hover:text-[color:var(--ui-text)]"
+                title="Fechar fontes"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="overflow-y-auto px-4 py-4" style={{ maxHeight: 'calc(70dvh - 3.5rem)' }}>
+              <SourcePanel
+                sources={activeSources}
+                selected={selectedSource}
+                onSelect={source => setSelectedSource(prev => prev?.fonte_n === source.fonte_n ? null : source)}
+              />
+            </div>
+          </aside>
+        </>
+      )}
+
+      {isMobile ? (
+        <div className="pointer-events-none absolute bottom-[5.9rem] right-4 z-30 flex flex-col items-end gap-2">
+          {showNewChatBubble ? (
+            <button
+              type="button"
+              onClick={() => {
+                createNewSession()
+                setShowNewChatBubble(false)
+                setSidebarOpen(false)
+              }}
+              className="pointer-events-auto rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface)] px-3 py-2 text-xs font-medium text-[color:var(--ui-text)] shadow-[0_16px_34px_-20px_rgba(0,0,0,0.7)]"
+            >
+              Novo chat
+            </button>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => {
+              createNewSession()
+              setShowNewChatBubble(false)
+              setSidebarOpen(false)
+            }}
+            className="pointer-events-auto inline-flex h-12 w-12 items-center justify-center rounded-full bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] shadow-[0_18px_42px_-14px_rgba(59,130,246,0.65)]"
+            title="Criar nova conversa"
+            aria-label="Criar nova conversa"
+          >
+            <Plus className="h-5 w-5" />
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }
