@@ -7,16 +7,11 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
-import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { apiClient, type ArtifactFilterOptions, type ArtifactItem, type ArtifactTemplate, type DocItem } from '@/api/client'
 import { useCapabilities } from '@/features/CapabilitiesProvider'
 import { formatBytes, formatDate } from '@/lib/utils'
 
-const ARTIFACT_TYPES = [
-  { value: 'checklist', label: 'Checklist' },
-  { value: 'artifact', label: 'Artefato Livre' },
-] as const
 const MARKDOWN_FILE_RE = /\.(md|markdown|txt)$/i
 const ARTIFACT_SORT_OPTIONS = [
   { value: 'created_at', label: 'Mais recentes' },
