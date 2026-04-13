@@ -1,24 +1,81 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { FileText, BookOpen, CheckCircle2, Clock, ChevronRight, ChevronLeft, GraduationCap, Zap } from 'lucide-react'
+import {
+  BookOpen,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  FileText,
+  GraduationCap,
+  Sparkles,
+  Zap,
+  X,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { PageShell } from '@/components/ui/page-shell'
-import { apiClient, type DocItem, type ReadingStatus, type GapAnalysisResponse } from '@/api/client'
+import { apiClient, type DocItem, type GapAnalysisResponse, type ReadingStatus } from '@/api/client'
 import { cn } from '@/lib/utils'
 
-// ── Types ──────────────────────────────────────────────────────────────────────
+type ColumnConfig = {
+  key: ReadingStatus
+  label: string
+  dotClass: string
+  labelClass: string
+  badgeClass: string
+  columnClass: string
+}
 
-type Column = { key: ReadingStatus; label: string; icon: React.ComponentType<{ className?: string }>; color: string; bg: string }
-
-const COLUMNS: Column[] = [
-  { key: 'to_read',  label: 'Para Ler',   icon: Clock,        color: 'text-zinc-400',   bg: 'bg-zinc-800/50' },
-  { key: 'reading',  label: 'Lendo',      icon: BookOpen,     color: 'text-blue-400',   bg: 'bg-blue-950/30' },
-  { key: 'done',     label: 'Lido',       icon: CheckCircle2, color: 'text-emerald-400', bg: 'bg-emerald-950/30' },
+const COLUMNS: ColumnConfig[] = [
+  {
+    key: 'to_read',
+    label: 'Para Ler',
+    dotClass: 'bg-[#8b9199]',
+    labelClass: 'text-[#c1c7cf]',
+    badgeClass: 'bg-[#2a2a2a] text-[#aab2bc]',
+    columnClass: 'bg-[#171717]',
+  },
+  {
+    key: 'reading',
+    label: 'Lendo',
+    dotClass: 'bg-[#c5e3ff]',
+    labelClass: 'text-[#c5e3ff]',
+    badgeClass: 'bg-[#203142] text-[#c5e3ff]',
+    columnClass: 'bg-[#111519] ring-1 ring-[#90caf9]/30',
+  },
+  {
+    key: 'done',
+    label: 'Lido',
+    dotClass: 'bg-[#ffd9ae]',
+    labelClass: 'text-[#d7c3a7]',
+    badgeClass: 'bg-[#2f2921] text-[#ffd9ae]',
+    columnClass: 'bg-[#171717]',
+  },
 ]
 
-// ── Gap Analysis Modal ─────────────────────────────────────────────────────────
+function estimateReadMinutes(chunks: number) {
+  if (!Number.isFinite(chunks) || chunks <= 0) return 5
+  return Math.max(5, Math.round(chunks / 3))
+}
+
+function compactDocId(docId: string) {
+  if (!docId) return 'N/A'
+  return docId.length <= 10 ? docId.toUpperCase() : docId.slice(0, 10).toUpperCase()
+}
+
+function parseErrorMessage(error: unknown, fallback: string) {
+  if (!error || typeof error !== 'object') return fallback
+  const maybeResponse = (error as { response?: { data?: { detail?: unknown } } }).response
+  const detail = maybeResponse?.data?.detail
+  return typeof detail === 'string' && detail.trim() ? detail : fallback
+}
+
+function progressByStatus(status: ReadingStatus) {
+  if (status === 'done') return 100
+  if (status === 'reading') return 54
+  return 0
+}
 
 function GapAnalysisModal({ onClose }: { onClose: () => void }) {
   const [result, setResult] = useState<GapAnalysisResponse | null>(null)
@@ -26,75 +83,94 @@ function GapAnalysisModal({ onClose }: { onClose: () => void }) {
   const mutation = useMutation({
     mutationFn: () => apiClient.runGapAnalysis([]),
     onSuccess: data => setResult(data),
-    onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro na análise'),
+    onError: error => toast.error(parseErrorMessage(error, 'Erro na analise de gaps.')),
   })
 
-  const priColor = (p: string) =>
-    p === 'high' ? 'text-red-400 border-red-800/60 bg-red-950/20'
-    : p === 'low' ? 'text-zinc-500 border-zinc-800 bg-zinc-900'
-    : 'text-yellow-400 border-yellow-800/60 bg-yellow-950/20'
+  function priorityClasses(priority: string) {
+    if (priority === 'high') return 'border-[#7f2f33] bg-[#3b181b] text-[#ffb4ab]'
+    if (priority === 'low') return 'border-[#41474e] bg-[#202426] text-[#c1c7cf]'
+    return 'border-[#6f5a2a] bg-[#332b1c] text-[#ffd9ae]'
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl flex flex-col max-h-[85vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4 shrink-0">
+      <div className="flex max-h-[86vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-[#41474e] bg-[#131313] shadow-[0_24px_48px_rgba(0,0,0,0.48)]">
+        <header className="flex items-center justify-between border-b border-[#41474e]/45 px-6 py-4">
           <div className="flex items-center gap-2">
-            <Zap className="h-5 w-5 text-amber-400" />
-            <h2 className="font-semibold text-zinc-100">Análise de Gaps</h2>
+            <Zap className="h-5 w-5 text-[#ffd9ae]" />
+            <h2 className="font-headline text-lg font-bold text-[#e5e2e1]">Analise de Gaps</h2>
           </div>
-          <button onClick={onClose} className="text-zinc-500 hover:text-zinc-200 text-xl leading-none">×</button>
-        </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#8b9199] transition-colors hover:bg-[#2a2a2a] hover:text-[#e5e2e1]"
+            aria-label="Fechar analise de gaps"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </header>
 
-        <div className="overflow-y-auto flex-1 p-6 space-y-4">
+        <div className="flex-1 space-y-4 overflow-y-auto px-6 py-5">
           {!result && !mutation.isPending && (
-            <div className="text-center space-y-3">
-              <p className="text-sm text-zinc-400">
-                O agente analisa seus documentos, flashcards e tarefas para identificar tópicos que você ainda não cobriu.
+            <div className="rounded-xl bg-[#1c1b1b] p-5 text-center">
+              <p className="text-sm leading-relaxed text-[#c1c7cf]">
+                O agente verifica lacunas entre documentos, tarefas e revisoes para sugerir proximos estudos.
               </p>
-              <Button onClick={() => mutation.mutate()} className="gap-2">
-                <Zap className="h-4 w-4" /> Analisar agora
+              <Button
+                onClick={() => mutation.mutate()}
+                className="mt-4 h-10 rounded-lg border-0 bg-gradient-to-r from-[#c5e3ff] to-[#90caf9] text-[#03263b] hover:from-[#d6edff] hover:to-[#a6d4fb]"
+              >
+                Executar analise
               </Button>
             </div>
           )}
 
           {mutation.isPending && (
             <div className="space-y-3">
-              {[1, 2, 3].map(i => <Skeleton key={i} className="h-20 w-full" />)}
-              <p className="text-center text-xs text-zinc-500 animate-pulse">Analisando gaps de aprendizado...</p>
+              {[1, 2, 3].map(item => <Skeleton key={item} className="h-20 w-full rounded-xl bg-[#2a2a2a]" />)}
+              <p className="text-center text-xs uppercase tracking-[0.12em] text-[#8b9199]">Analisando lacunas...</p>
             </div>
           )}
 
           {result && (
-            <>
-              <p className="text-xs text-zinc-500">
-                {result.docs_analyzed} documento(s) analisado(s) · {result.gaps.length} gaps encontrado(s)
+            <div className="space-y-3">
+              <p className="text-xs text-[#8b9199]">
+                {result.docs_analyzed} documento(s) analisado(s) · {result.gaps.length} gap(s) identificado(s)
               </p>
-              {result.gaps.length === 0 && (
-                <div className="rounded-lg border border-emerald-800/40 bg-emerald-950/20 p-4 text-center">
-                  <CheckCircle2 className="mx-auto h-6 w-6 text-emerald-400 mb-2" />
-                  <p className="text-sm text-emerald-300 font-medium">Nenhum gap identificado!</p>
-                  <p className="text-xs text-zinc-500 mt-1">Seus documentos parecem bem cobertos por flashcards e tarefas.</p>
+
+              {result.gaps.length === 0 ? (
+                <div className="rounded-xl border border-[#386445] bg-[#1b2a21] p-4 text-center">
+                  <CheckCircle2 className="mx-auto mb-2 h-6 w-6 text-[#8ad6a0]" />
+                  <p className="text-sm font-semibold text-[#b6e6c7]">Nenhuma lacuna relevante encontrada.</p>
                 </div>
+              ) : (
+                result.gaps.map((gap, index) => (
+                  <article key={`${gap.topico}-${index}`} className={cn('rounded-xl border p-4', priorityClasses(gap.prioridade))}>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <h3 className="text-sm font-semibold text-[#e5e2e1]">{gap.topico}</h3>
+                      <span className="rounded-full border border-current/35 px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.08em]">
+                        {gap.prioridade}
+                      </span>
+                    </div>
+                    <p className="text-xs leading-relaxed text-[#c1c7cf]">{gap.descricao}</p>
+                    <p className="mt-2 border-t border-current/20 pt-2 text-xs text-[#aab2bc]">
+                      Sugestao: {gap.sugestao}
+                    </p>
+                  </article>
+                ))
               )}
-              {result.gaps.map((gap, i) => (
-                <div key={i} className={cn('rounded-lg border p-4 space-y-1.5', priColor(gap.prioridade))}>
-                  <div className="flex items-center justify-between gap-2">
-                    <p className="font-medium text-zinc-100 text-sm">{gap.topico}</p>
-                    <span className={cn('text-[10px] font-semibold uppercase rounded-full px-2 py-0.5 border', priColor(gap.prioridade))}>
-                      {gap.prioridade}
-                    </span>
-                  </div>
-                  <p className="text-xs text-zinc-400">{gap.descricao}</p>
-                  <p className="text-xs text-zinc-500 border-t border-zinc-800 pt-1.5">
-                    💡 {gap.sugestao}
-                  </p>
-                </div>
-              ))}
-              <Button variant="outline" size="sm" onClick={() => { setResult(null); mutation.reset() }}>
-                Analisar novamente
+
+              <Button
+                variant="outline"
+                onClick={() => {
+                  mutation.reset()
+                  setResult(null)
+                }}
+                className="border-[#41474e] bg-[#1c1b1b] text-[#e5e2e1] hover:border-[#90caf9]/50 hover:bg-[#252525]"
+              >
+                Reexecutar
               </Button>
-            </>
+            </div>
           )}
         </div>
       </div>
@@ -102,54 +178,91 @@ function GapAnalysisModal({ onClose }: { onClose: () => void }) {
   )
 }
 
-// ── Doc Card ──────────────────────────────────────────────────────────────────
-
-function DocCard({
+function BoardCard({
   doc,
   status,
   onMove,
+  disabled,
 }: {
   doc: DocItem
   status: ReadingStatus
-  onMove: (dir: 'prev' | 'next') => void
+  onMove: (direction: 'prev' | 'next') => void
+  disabled: boolean
 }) {
-  const colIdx = COLUMNS.findIndex(c => c.key === status)
+  const columnIndex = COLUMNS.findIndex(column => column.key === status)
+  const progress = progressByStatus(status)
+  const isReading = status === 'reading'
+  const isDone = status === 'done'
 
   return (
-    <div className="rounded-lg border border-zinc-700 bg-zinc-900 p-3 space-y-2 group">
-      <div className="flex items-start gap-2 min-w-0">
-        <FileText className="h-4 w-4 shrink-0 text-zinc-500 mt-0.5" />
-        <p className="text-sm font-medium text-zinc-100 leading-snug truncate flex-1" title={doc.file_name}>
-          {doc.file_name}
-        </p>
+    <article className={cn(
+      'group rounded-xl border-l-4 p-4 transition-all duration-200',
+      isReading
+        ? 'border-l-[#90caf9] bg-[#2a2a2a] shadow-[0_18px_30px_rgba(0,0,0,0.32)]'
+        : isDone
+          ? 'border-l-[#ffd9ae]/60 bg-[#1c1b1b] opacity-80'
+          : 'border-l-transparent bg-[#1c1b1b] hover:bg-[#262626]',
+    )}>
+      <div className="mb-3 flex items-start justify-between gap-3">
+        <span className="rounded-md bg-[#0e0e0e] px-2 py-1 text-[10px] font-mono text-[#8b9199]">
+          ID: {compactDocId(doc.doc_id)}
+        </span>
+        {isDone ? <CheckCircle2 className="h-4 w-4 text-[#ffd9ae]" /> : isReading ? <BookOpen className="h-4 w-4 text-[#c5e3ff]" /> : <FileText className="h-4 w-4 text-[#8b9199]" />}
       </div>
-      <p className="text-[10px] text-zinc-600">{doc.chunk_count} chunks</p>
-      <div className="flex items-center gap-1 pt-1">
+
+      <h4 className={cn('font-headline text-base font-bold leading-tight', isReading ? 'text-[#c5e3ff]' : 'text-[#e5e2e1]')}>
+        {doc.file_name}
+      </h4>
+
+      <div className="mt-3 space-y-2">
+        <div className="flex items-center gap-3 text-xs text-[#aab2bc]">
+          <span>{doc.chunk_count} chunks</span>
+          <span>·</span>
+          <span>{estimateReadMinutes(doc.chunk_count)} min</span>
+        </div>
+
+        {status !== 'to_read' && (
+          <div className="space-y-1">
+            <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.08em] text-[#8b9199]">
+              <span>Progresso</span>
+              <span>{progress}%</span>
+            </div>
+            <div className="h-1 overflow-hidden rounded-full bg-[#131313]">
+              <div
+                className={cn('h-full rounded-full', isDone ? 'bg-[#ffd9ae]' : 'bg-[#90caf9]')}
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      <div className="mt-4 flex items-center gap-1">
         <button
+          type="button"
           onClick={() => onMove('prev')}
-          disabled={colIdx === 0}
-          className="rounded p-1 text-zinc-600 hover:text-zinc-300 disabled:opacity-20 transition-colors"
+          disabled={disabled || columnIndex <= 0}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-[#8b9199] transition-colors hover:bg-[#353534] hover:text-[#e5e2e1] disabled:opacity-30"
           title="Mover para coluna anterior"
         >
           <ChevronLeft className="h-3.5 w-3.5" />
         </button>
         <button
+          type="button"
           onClick={() => onMove('next')}
-          disabled={colIdx === COLUMNS.length - 1}
-          className="rounded p-1 text-zinc-600 hover:text-zinc-300 disabled:opacity-20 transition-colors"
-          title="Mover para próxima coluna"
+          disabled={disabled || columnIndex >= COLUMNS.length - 1}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-[#8b9199] transition-colors hover:bg-[#353534] hover:text-[#e5e2e1] disabled:opacity-30"
+          title="Mover para proxima coluna"
         >
           <ChevronRight className="h-3.5 w-3.5" />
         </button>
       </div>
-    </div>
+    </article>
   )
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
-
 export function ReadingKanban() {
-  const qc = useQueryClient()
+  const queryClient = useQueryClient()
   const [gapOpen, setGapOpen] = useState(false)
 
   const { data: docs = [], isLoading: docsLoading } = useQuery<DocItem[]>({
@@ -162,129 +275,178 @@ export function ReadingKanban() {
     queryFn: apiClient.getReadingStatus,
   })
 
-  const moveMut = useMutation({
+  const moveMutation = useMutation({
     mutationFn: ({ docId, status }: { docId: string; status: ReadingStatus }) =>
       apiClient.updateReadingStatus(docId, status),
-    onSuccess: ({ doc_id, status }) => {
-      qc.setQueryData<Record<string, ReadingStatus>>(['reading-status'], old => ({
-        ...old,
-        [doc_id]: status,
-      }))
+    onMutate: async ({ docId, status }) => {
+      await queryClient.cancelQueries({ queryKey: ['reading-status'] })
+      const previous = queryClient.getQueryData<Record<string, ReadingStatus>>(['reading-status']) ?? {}
+      queryClient.setQueryData<Record<string, ReadingStatus>>(['reading-status'], {
+        ...previous,
+        [docId]: status,
+      })
+      return { previous }
     },
-    onError: () => toast.error('Erro ao mover documento'),
+    onError: (_error, _variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(['reading-status'], context.previous)
+      }
+      toast.error('Erro ao mover documento.')
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['reading-status'] })
+    },
   })
 
   const isLoading = docsLoading || statusLoading
 
-  // Distribui docs pelas colunas (default: to_read)
-  const byStatus: Record<ReadingStatus, DocItem[]> = { to_read: [], reading: [], done: [] }
-  for (const doc of docs) {
-    const s = statusMap[doc.doc_id] ?? 'to_read'
-    byStatus[s].push(doc)
-  }
+  const grouped = useMemo(() => {
+    const result: Record<ReadingStatus, DocItem[]> = {
+      to_read: [],
+      reading: [],
+      done: [],
+    }
 
-  function moveDoc(docId: string, currentStatus: ReadingStatus, dir: 'prev' | 'next') {
-    const colIdx = COLUMNS.findIndex(c => c.key === currentStatus)
-    const newIdx = dir === 'next' ? colIdx + 1 : colIdx - 1
-    if (newIdx < 0 || newIdx >= COLUMNS.length) return
-    moveMut.mutate({ docId, status: COLUMNS[newIdx].key })
-  }
+    for (const doc of docs) {
+      const status = statusMap[doc.doc_id] ?? 'to_read'
+      result[status].push(doc)
+    }
 
-  const counts = { to_read: byStatus.to_read.length, reading: byStatus.reading.length, done: byStatus.done.length }
+    return result
+  }, [docs, statusMap])
+
+  const counts = useMemo(() => ({
+    to_read: grouped.to_read.length,
+    reading: grouped.reading.length,
+    done: grouped.done.length,
+  }), [grouped.to_read.length, grouped.reading.length, grouped.done.length])
+
+  const totalDocs = docs.length
+  const donePercentage = totalDocs > 0 ? Math.round((counts.done / totalDocs) * 100) : 0
+
+  function moveDoc(docId: string, currentStatus: ReadingStatus, direction: 'prev' | 'next') {
+    const currentIndex = COLUMNS.findIndex(column => column.key === currentStatus)
+    const nextIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1
+    if (nextIndex < 0 || nextIndex >= COLUMNS.length) return
+
+    moveMutation.mutate({
+      docId,
+      status: COLUMNS[nextIndex].key,
+    })
+  }
 
   return (
     <>
-      <PageShell className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
+      <PageShell className="relative space-y-6 overflow-hidden">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_86%_10%,rgba(144,202,249,0.12),transparent_42%),radial-gradient(circle_at_14%_16%,rgba(201,139,94,0.08),transparent_48%)]" />
+
+        <header className="relative z-10 flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h1 className="text-2xl font-bold text-zinc-100">Kanban de Leitura</h1>
-            <p className="mt-0.5 text-sm text-zinc-500">
-              {isLoading ? 'Carregando...' : `${docs.length} documentos · ${counts.done} lidos`}
+            <h1 className="font-headline text-3xl font-extrabold tracking-tight text-[#90caf9]">Kanban de Leitura</h1>
+            <p className="mt-1 text-sm text-[#c1c7cf]">
+              {isLoading ? 'Carregando board...' : `${counts.done} de ${totalDocs} documentos concluidos · ${donePercentage}%`}
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setGapOpen(true)}
-            className="gap-2 border-amber-800/60 text-amber-400 hover:text-amber-300 hover:bg-amber-950/30"
-          >
-            <Zap className="h-4 w-4" /> Análise de Gaps
-          </Button>
-        </div>
 
-        {/* Progresso */}
-        {!isLoading && docs.length > 0 && (
-          <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-3 flex items-center gap-4">
-            <div className="flex-1 space-y-1">
-              <div className="flex justify-between text-xs text-zinc-500">
-                <span>{counts.done} de {docs.length} lidos</span>
-                <span>{Math.round((counts.done / docs.length) * 100)}%</span>
-              </div>
-              <div className="h-1.5 rounded-full bg-zinc-800">
-                <div
-                  className="h-1.5 rounded-full bg-emerald-500 transition-all"
-                  style={{ width: `${(counts.done / docs.length) * 100}%` }}
-                />
+          <Button
+            onClick={() => setGapOpen(true)}
+            className="h-10 gap-2 rounded-xl border-0 bg-gradient-to-r from-[#c5e3ff] to-[#90caf9] text-[#03263b] hover:from-[#d6edff] hover:to-[#a6d4fb]"
+          >
+            <Zap className="h-4 w-4" />
+            Analise de Gaps
+          </Button>
+        </header>
+
+        {!isLoading && totalDocs > 0 && (
+          <section className="relative z-10 rounded-2xl bg-[#1c1b1b] p-4">
+            <div className="mb-2 flex items-center justify-between text-xs text-[#aab2bc]">
+              <span className="inline-flex items-center gap-1">
+                <GraduationCap className="h-3.5 w-3.5 text-[#90caf9]" />
+                Progresso global
+              </span>
+              <span>{counts.done} / {totalDocs}</span>
+            </div>
+            <div className="h-1.5 overflow-hidden rounded-full bg-[#131313]">
+              <div className="h-full rounded-full bg-[#90caf9]" style={{ width: `${donePercentage}%` }} />
+            </div>
+          </section>
+        )}
+
+        <section className="relative z-10">
+          {isLoading ? (
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+              {COLUMNS.map(column => (
+                <div key={column.key} className="space-y-3 rounded-2xl bg-[#1c1b1b] p-4">
+                  <Skeleton className="h-6 w-36 rounded-lg bg-[#2a2a2a]" />
+                  {[1, 2].map(item => (
+                    <Skeleton key={item} className="h-36 w-full rounded-xl bg-[#2a2a2a]" />
+                  ))}
+                </div>
+              ))}
+            </div>
+          ) : totalDocs === 0 ? (
+            <div className="rounded-2xl bg-[#1c1b1b] p-10 text-center">
+              <FileText className="mx-auto mb-3 h-9 w-9 text-[#8b9199]" />
+              <p className="font-headline text-xl font-bold text-[#e5e2e1]">Nenhum documento disponivel</p>
+              <p className="mt-1 text-sm text-[#8b9199]">Adicione arquivos em Insercao para iniciar seu kanban de leitura.</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto pb-2">
+              <div className="flex min-w-[920px] gap-5">
+                {COLUMNS.map(column => {
+                  const columnDocs = grouped[column.key]
+                  return (
+                    <section
+                      key={column.key}
+                      className={cn('flex w-[300px] flex-col rounded-2xl p-4', column.columnClass)}
+                    >
+                      <header className="mb-4 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <span className={cn('h-1.5 w-1.5 rounded-full', column.dotClass)} />
+                          <h2 className={cn('font-headline text-xs font-bold uppercase tracking-[0.16em]', column.labelClass)}>
+                            {column.label}
+                          </h2>
+                        </div>
+                        <span className={cn('rounded-md px-2 py-1 text-[11px] font-mono', column.badgeClass)}>
+                          {columnDocs.length}
+                        </span>
+                      </header>
+
+                      <div className="flex-1 space-y-3 overflow-y-auto pr-1">
+                        {columnDocs.length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-[#41474e]/40 p-6 text-center text-xs text-[#8b9199]">
+                            Coluna vazia
+                          </div>
+                        ) : (
+                          columnDocs.map(doc => (
+                            <BoardCard
+                              key={doc.doc_id}
+                              doc={doc}
+                              status={column.key}
+                              disabled={moveMutation.isPending}
+                              onMove={direction => moveDoc(doc.doc_id, column.key, direction)}
+                            />
+                          ))
+                        )}
+                      </div>
+                    </section>
+                  )
+                })}
               </div>
             </div>
-            <GraduationCap className="h-5 w-5 text-zinc-600 shrink-0" />
-          </div>
-        )}
+          )}
+        </section>
 
-        {/* Kanban columns */}
-        {isLoading ? (
-          <div className="grid grid-cols-3 gap-4">
-            {COLUMNS.map(col => (
-              <div key={col.key} className="space-y-3">
-                <Skeleton className="h-8 w-full" />
-                {[1, 2].map(i => <Skeleton key={i} className="h-20 w-full" />)}
-              </div>
-            ))}
+        <div className="relative z-10 rounded-2xl bg-[#1c1b1b] p-4">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-[#ffd9ae] shadow-[0_0_8px_rgba(255,217,174,0.7)] animate-pulse" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#ffd9ae]">System intelligence ativo</span>
+            <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-[#8b9199]">
+              <Sparkles className="h-3 w-3 text-[#c5e3ff]" />
+              leitura sincronizada
+            </span>
           </div>
-        ) : docs.length === 0 ? (
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-8 text-center">
-            <FileText className="mx-auto h-8 w-8 text-zinc-600 mb-3" />
-            <p className="text-sm text-zinc-400 font-medium">Nenhum documento inserido ainda</p>
-            <p className="text-xs text-zinc-600 mt-1">Insira documentos na página de Inserção para gerenciar sua leitura aqui.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {COLUMNS.map(col => {
-              const Icon = col.icon
-              const colDocs = byStatus[col.key]
-              return (
-                <div key={col.key} className={cn('rounded-xl border border-zinc-800 p-4 space-y-3', col.bg)}>
-                  {/* Column header */}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <Icon className={cn('h-4 w-4', col.color)} />
-                      <span className={cn('text-sm font-semibold', col.color)}>{col.label}</span>
-                    </div>
-                    <span className="rounded-full bg-zinc-800 px-2 py-0.5 text-xs text-zinc-400">
-                      {colDocs.length}
-                    </span>
-                  </div>
-
-                  {/* Cards */}
-                  <div className="space-y-2 min-h-[80px]">
-                    {colDocs.map(doc => (
-                      <DocCard
-                        key={doc.doc_id}
-                        doc={doc}
-                        status={col.key}
-                        onMove={dir => moveDoc(doc.doc_id, col.key, dir)}
-                      />
-                    ))}
-                    {colDocs.length === 0 && (
-                      <p className="text-center text-xs text-zinc-700 py-4">Vazio</p>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
+        </div>
       </PageShell>
 
       {gapOpen && <GapAnalysisModal onClose={() => setGapOpen(false)} />}

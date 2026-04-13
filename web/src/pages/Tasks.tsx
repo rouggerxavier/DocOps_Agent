@@ -1,16 +1,28 @@
-import { useEffect, useState } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useMemo, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import {
-  Plus, Trash2, CheckCircle2, Circle, Clock, ChevronDown, ChevronUp,
-  Flag, AlertTriangle, ListTodo, Pencil, Check, X, CheckSquare, Square,
-  ScrollText,
+  AlertTriangle,
+  CalendarDays,
+  CheckCircle2,
+  CheckSquare,
+  Circle,
+  Clock3,
+  ListTodo,
+  Plus,
+  Save,
+  Sparkles,
+  Square,
+  Trash2,
+  X,
 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
 import { PageShell } from '@/components/ui/page-shell'
-import { apiClient, type TaskItem, type TaskChecklistItem, type TaskActivityLog } from '@/api/client'
+import { apiClient, type TaskActivityLog, type TaskChecklistItem, type TaskItem } from '@/api/client'
 import { cn } from '@/lib/utils'
+
+type FilterTab = 'all' | 'doing' | 'pending' | 'done'
 
 type BodyScrollLockState = {
   count: number
@@ -21,12 +33,32 @@ type ScrollLockWindow = Window & {
   __docopsBodyScrollLockState?: BodyScrollLockState
 }
 
+type TaskStatus = 'pending' | 'doing' | 'done'
+
+const STATUS_ORDER: Record<string, number> = {
+  doing: 0,
+  pending: 1,
+  done: 2,
+}
+
+const FILTER_ORDER: FilterTab[] = ['all', 'doing', 'pending', 'done']
+
+const FILTER_LABELS: Record<FilterTab, string> = {
+  all: 'Todas',
+  doing: 'Em andamento',
+  pending: 'Pendentes',
+  done: 'Concluidas',
+}
+
+const PRIORITY_LABELS: Record<string, string> = {
+  high: 'Alta',
+  normal: 'Media',
+  low: 'Baixa',
+}
+
 function acquireBodyScrollLock() {
   const scrollLockWindow = window as ScrollLockWindow
-  const state = scrollLockWindow.__docopsBodyScrollLockState ??= {
-    count: 0,
-    overflow: '',
-  }
+  const state = scrollLockWindow.__docopsBodyScrollLockState ??= { count: 0, overflow: '' }
 
   if (state.count === 0) {
     state.overflow = document.body.style.overflow
@@ -36,722 +68,606 @@ function acquireBodyScrollLock() {
   document.body.style.overflow = 'hidden'
 
   return () => {
-    const currentState = scrollLockWindow.__docopsBodyScrollLockState
-
-    if (!currentState) return
-
-    currentState.count = Math.max(0, currentState.count - 1)
-
-    if (currentState.count === 0) {
-      document.body.style.overflow = currentState.overflow
-      currentState.overflow = ''
+    const current = scrollLockWindow.__docopsBodyScrollLockState
+    if (!current) return
+    current.count = Math.max(0, current.count - 1)
+    if (current.count === 0) {
+      document.body.style.overflow = current.overflow
+      current.overflow = ''
     }
   }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-const PRIORITY_STYLES: Record<string, string> = {
-  high:   'text-red-400 border-red-800/50 bg-red-950/20',
-  normal: 'text-zinc-400 border-zinc-700 bg-zinc-900',
-  low:    'text-zinc-600 border-zinc-800 bg-zinc-900',
+function toLocalDatetimeInput(iso: string | null) {
+  if (!iso) return ''
+  const date = new Date(iso)
+  if (!Number.isFinite(date.getTime())) return ''
+  const tzOffset = date.getTimezoneOffset() * 60_000
+  return new Date(date.getTime() - tzOffset).toISOString().slice(0, 16)
 }
 
-const STATUS_ORDER: Record<string, number> = { doing: 0, pending: 1, done: 2 }
+function toIsoOrUndefined(localDatetime: string) {
+  if (!localDatetime) return undefined
+  const date = new Date(localDatetime)
+  if (!Number.isFinite(date.getTime())) return undefined
+  return date.toISOString()
+}
 
-function PriorityBadge({ priority }: { priority: string }) {
-  const labels: Record<string, string> = { high: 'Alta', normal: 'Normal', low: 'Baixa' }
+function isOverdue(task: TaskItem) {
+  if (!task.due_date || task.status === 'done') return false
+  return new Date(task.due_date).getTime() < Date.now()
+}
+
+function formatDueShort(dueDate: string | null) {
+  if (!dueDate) return 'Sem prazo'
+  const date = new Date(dueDate)
+  if (!Number.isFinite(date.getTime())) return 'Sem prazo'
+  return date.toLocaleDateString('pt-BR', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function nextStatus(status: string): TaskStatus {
+  if (status === 'pending') return 'doing'
+  if (status === 'doing') return 'done'
+  return 'pending'
+}
+
+function priorityBadgeClass(priority: string) {
+  if (priority === 'high') return 'border-[#7f2f33] bg-[#3b181b] text-[#ffb4ab]'
+  if (priority === 'normal') return 'border-[#2f4e6a] bg-[#142736] text-[#c5e3ff]'
+  return 'border-[#41474e] bg-[#202426] text-[#c1c7cf]'
+}
+
+function statusLabel(status: string) {
+  if (status === 'doing') return 'Em andamento'
+  if (status === 'done') return 'Concluida'
+  return 'Pendente'
+}
+
+function TaskPriorityBadge({ priority }: { priority: string }) {
   return (
-    <span className={cn(
-      'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium',
-      PRIORITY_STYLES[priority] ?? PRIORITY_STYLES.normal,
-    )}>
-      <Flag className="h-2.5 w-2.5" />
-      {labels[priority] ?? priority}
+    <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] font-bold uppercase tracking-[0.08em]', priorityBadgeClass(priority))}>
+      <span className={cn('h-1.5 w-1.5 rounded-full', priority === 'high' ? 'bg-[#ffb4ab]' : priority === 'normal' ? 'bg-[#c5e3ff]' : 'bg-[#8b9199]')} />
+      Prioridade {PRIORITY_LABELS[priority] ?? priority}
     </span>
   )
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const config: Record<string, { label: string; className: string }> = {
-    pending: { label: 'Pendente',     className: 'text-zinc-400 border-zinc-700 bg-zinc-900' },
-    doing:   { label: 'Em andamento', className: 'text-blue-400 border-blue-800/50 bg-blue-950/20' },
-    done:    { label: 'Concluída',    className: 'text-emerald-400 border-emerald-800/50 bg-emerald-950/20' },
-  }
-  const { label, className } = config[status] ?? config.pending
+function TaskCard({
+  task,
+  onOpen,
+  onToggleStatus,
+  onDelete,
+  busy,
+}: {
+  task: TaskItem
+  onOpen: () => void
+  onToggleStatus: () => void
+  onDelete: () => void
+  busy: boolean
+}) {
+  const overdue = isOverdue(task)
+  const done = task.status === 'done'
+  const progress = task.checklist_total > 0 ? `${task.checklist_done}/${task.checklist_total}` : null
+
   return (
-    <span className={cn(
-      'inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium',
-      className,
-    )}>
-      {label}
-    </span>
+    <article
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onOpen()
+        }
+      }}
+      className={cn(
+        'group cursor-pointer rounded-2xl bg-[#1c1b1b] p-5 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#90caf9]/50',
+        'hover:bg-[#2a2a2a] hover:shadow-[0_20px_32px_rgba(0,0,0,0.32)]',
+        done && 'opacity-75',
+      )}
+    >
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <TaskPriorityBadge priority={task.priority} />
+        <button
+          type="button"
+          onClick={event => {
+            event.stopPropagation()
+            onToggleStatus()
+          }}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#8b9199] transition-colors hover:bg-[#353534] hover:text-[#e5e2e1]"
+          aria-label="Alterar status"
+          disabled={busy}
+        >
+          {task.status === 'done' ? <CheckCircle2 className="h-4 w-4 text-[#8ad6a0]" /> : task.status === 'doing' ? <Clock3 className="h-4 w-4 text-[#c5e3ff]" /> : <Circle className="h-4 w-4" />}
+        </button>
+      </div>
+
+      <h3 className={cn('font-headline text-xl font-bold tracking-tight text-[#e5e2e1]', done && 'line-through decoration-[#596068]')}>
+        {task.title}
+      </h3>
+      {task.note ? <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-[#c1c7cf]">{task.note}</p> : null}
+
+      <div className="mt-5 space-y-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-lg bg-[#0e0e0e] px-2.5 py-1 text-[11px] font-medium text-[#c1c7cf]">{statusLabel(task.status)}</span>
+          {progress ? (
+            <span className="inline-flex items-center gap-1 rounded-lg bg-[#0e0e0e] px-2.5 py-1 text-[11px] font-medium text-[#c1c7cf]">
+              <CheckSquare className="h-3 w-3 text-[#90caf9]" />
+              {progress}
+            </span>
+          ) : null}
+        </div>
+
+        <div className="flex items-center justify-between border-t border-[#41474e]/20 pt-3">
+          <div className={cn('inline-flex items-center gap-1.5 text-xs font-semibold', overdue ? 'text-[#ffb4ab]' : 'text-[#aab2bc]')}>
+            {overdue ? <AlertTriangle className="h-3.5 w-3.5" /> : <CalendarDays className="h-3.5 w-3.5" />}
+            {formatDueShort(task.due_date)}
+          </div>
+          <button
+            type="button"
+            onClick={event => {
+              event.stopPropagation()
+              onDelete()
+            }}
+            className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-[#8b9199] transition-colors hover:bg-[#3b1f1f] hover:text-[#ef9d9d]"
+            disabled={busy}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Excluir
+          </button>
+        </div>
+      </div>
+    </article>
   )
 }
 
-// ── Task Drawer ───────────────────────────────────────────────────────────────
-
-function TaskDrawer({ task, onClose }: { task: TaskItem; onClose: () => void }) {
-  const qc = useQueryClient()
-  const [newItem, setNewItem] = useState('')
-  const [activityText, setActivityText] = useState('')
+function TaskDrawer({
+  task,
+  onClose,
+}: {
+  task: TaskItem
+  onClose: () => void
+}) {
+  const queryClient = useQueryClient()
+  const [title, setTitle] = useState(task.title)
+  const [note, setNote] = useState(task.note ?? '')
+  const [priority, setPriority] = useState(task.priority)
+  const [status, setStatus] = useState(task.status)
+  const [due, setDue] = useState(toLocalDatetimeInput(task.due_date))
+  const [newChecklist, setNewChecklist] = useState('')
+  const [newActivity, setNewActivity] = useState('')
 
   useEffect(() => acquireBodyScrollLock(), [])
 
-  const { data: checklist = [], isLoading: loadingChecklist } = useQuery<TaskChecklistItem[]>({
+  useEffect(() => {
+    setTitle(task.title)
+    setNote(task.note ?? '')
+    setPriority(task.priority)
+    setStatus(task.status)
+    setDue(toLocalDatetimeInput(task.due_date))
+  }, [task.id, task.title, task.note, task.priority, task.status, task.due_date])
+
+  const { data: checklist = [], isLoading: checklistLoading } = useQuery<TaskChecklistItem[]>({
     queryKey: ['task-checklist', task.id],
     queryFn: () => apiClient.listTaskChecklist(task.id),
   })
 
-  const { data: activities = [], isLoading: loadingActivities } = useQuery<TaskActivityLog[]>({
+  const { data: activities = [], isLoading: activitiesLoading } = useQuery<TaskActivityLog[]>({
     queryKey: ['task-activities', task.id],
     queryFn: () => apiClient.listTaskActivities(task.id),
   })
 
-  const addItemMut = useMutation({
-    mutationFn: (text: string) => apiClient.createChecklistItem(task.id, text),
+  const updateTaskMut = useMutation({
+    mutationFn: () =>
+      apiClient.updateTask(task.id, title.trim(), note.trim() || undefined, status, priority, toIsoOrUndefined(due)),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['task-checklist', task.id] })
-      qc.invalidateQueries({ queryKey: ['tasks'] })
-      setNewItem('')
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+      toast.success('Tarefa atualizada.')
     },
-    onError: () => toast.error('Erro ao adicionar item.'),
+    onError: () => toast.error('Erro ao atualizar tarefa.'),
   })
 
-  const toggleItemMut = useMutation({
+  const deleteTaskMut = useMutation({
+    mutationFn: () => apiClient.deleteTask(task.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+      toast.success('Tarefa excluida.')
+      onClose()
+    },
+    onError: () => toast.error('Erro ao excluir tarefa.'),
+  })
+
+  const addChecklistMut = useMutation({
+    mutationFn: (text: string) => apiClient.createChecklistItem(task.id, text),
+    onSuccess: () => {
+      setNewChecklist('')
+      queryClient.invalidateQueries({ queryKey: ['task-checklist', task.id] })
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+    },
+    onError: () => toast.error('Erro ao adicionar checklist.'),
+  })
+
+  const toggleChecklistMut = useMutation({
     mutationFn: ({ itemId, done }: { itemId: number; done: boolean }) =>
       apiClient.updateChecklistItem(task.id, itemId, { done }),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['task-checklist', task.id] })
-      qc.invalidateQueries({ queryKey: ['tasks'] })
+      queryClient.invalidateQueries({ queryKey: ['task-checklist', task.id] })
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
     },
+    onError: () => toast.error('Erro ao atualizar checklist.'),
   })
 
-  const deleteItemMut = useMutation({
+  const deleteChecklistMut = useMutation({
     mutationFn: (itemId: number) => apiClient.deleteChecklistItem(task.id, itemId),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['task-checklist', task.id] })
-      qc.invalidateQueries({ queryKey: ['tasks'] })
+      queryClient.invalidateQueries({ queryKey: ['task-checklist', task.id] })
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
     },
+    onError: () => toast.error('Erro ao excluir checklist.'),
   })
 
   const addActivityMut = useMutation({
     mutationFn: (text: string) => apiClient.createTaskActivity(task.id, text),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['task-activities', task.id] })
-      setActivityText('')
-      toast.success('Progresso registrado!')
+      setNewActivity('')
+      queryClient.invalidateQueries({ queryKey: ['task-activities', task.id] })
     },
-    onError: () => toast.error('Erro ao registrar progresso.'),
+    onError: () => toast.error('Erro ao registrar atividade.'),
   })
 
   const deleteActivityMut = useMutation({
-    mutationFn: (logId: number) => apiClient.deleteTaskActivity(task.id, logId),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['task-activities', task.id] }),
+    mutationFn: (activityId: number) => apiClient.deleteTaskActivity(task.id, activityId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['task-activities', task.id] }),
+    onError: () => toast.error('Erro ao excluir atividade.'),
   })
 
-  function submitItem() {
-    if (!newItem.trim()) return
-    addItemMut.mutate(newItem.trim())
-  }
-
-  function submitActivity() {
-    if (!activityText.trim()) return
-    addActivityMut.mutate(activityText.trim())
-  }
-
-  const doneCount = checklist.filter(i => i.done).length
-  const totalCount = checklist.length
-  const progressPct = totalCount > 0 ? Math.round((doneCount / totalCount) * 100) : 0
+  const doneChecklist = checklist.filter(item => item.done).length
+  const checklistProgress = checklist.length > 0 ? Math.round((doneChecklist / checklist.length) * 100) : 0
 
   return (
     <div className="fixed inset-0 z-50 flex">
-      {/* Overlay */}
-      <div className="flex-1 bg-black/50" onClick={onClose} />
-
-      {/* Panel */}
-      <div className="w-[420px] bg-zinc-950 border-l border-zinc-800 flex flex-col overflow-y-auto">
-
-        {/* Header */}
-        <div className="sticky top-0 z-10 flex items-start gap-3 p-4 border-b border-zinc-800 bg-zinc-950">
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] text-zinc-600 uppercase tracking-widest mb-1">Detalhe da Tarefa</p>
-            <h2 className="text-base font-semibold text-zinc-100 leading-snug">{task.title}</h2>
-            <div className="mt-2 flex gap-1.5 flex-wrap">
-              <PriorityBadge priority={task.priority} />
-              <StatusBadge status={task.status} />
-              {task.due_date && (
-                <span className="inline-flex items-center gap-1 text-[10px] text-zinc-600">
-                  <Clock className="h-2.5 w-2.5" />
-                  {new Date(task.due_date).toLocaleDateString('pt-BR', {
-                    day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
-                  })}
-                </span>
-              )}
-            </div>
+      <button type="button" className="flex-1 bg-black/60" onClick={onClose} aria-label="Fechar painel de tarefa" />
+      <aside className="flex h-full w-full max-w-[520px] flex-col overflow-y-auto bg-[#131313] shadow-[0_0_0_1px_rgba(65,71,78,0.35),-30px_0_48px_rgba(0,0,0,0.45)]">
+        <div className="sticky top-0 z-10 border-b border-[#41474e]/35 bg-[#131313]/95 px-5 py-4 backdrop-blur">
+          <div className="mb-3 flex items-center justify-between">
+            <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[#8b9199]">Detalhes da tarefa</p>
+            <button type="button" onClick={onClose} className="inline-flex h-8 w-8 items-center justify-center rounded-full text-[#8b9199] transition-colors hover:bg-[#2a2a2a] hover:text-[#e5e2e1]">
+              <X className="h-4 w-4" />
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="mt-0.5 shrink-0 rounded-lg p-1 text-zinc-600 hover:text-zinc-300 hover:bg-zinc-800 transition-colors"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-
-        {/* Checklist section */}
-        <div className="p-4 border-b border-zinc-800">
-          <div className="flex items-center gap-2 mb-3">
-            <CheckSquare className="h-4 w-4 text-blue-400" />
-            <span className="text-sm font-medium text-zinc-200">Checklist de Metas</span>
-            {totalCount > 0 && (
-              <span className="text-xs text-zinc-500">{doneCount}/{totalCount}</span>
-            )}
-          </div>
-
-          {/* Progress bar */}
-          {totalCount > 0 && (
-            <div className="mb-3">
-              <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
-                <div
-                  className={cn(
-                    'h-full rounded-full transition-all duration-300',
-                    progressPct === 100 ? 'bg-emerald-500' : 'bg-blue-500',
-                  )}
-                  style={{ width: `${progressPct}%` }}
-                />
-              </div>
-              <p className="mt-1 text-[10px] text-zinc-600">{progressPct}% concluído</p>
-            </div>
-          )}
-
-          {/* Items */}
-          {loadingChecklist ? (
-            <div className="space-y-2">
-              {[1, 2].map(i => <div key={i} className="h-8 rounded-lg bg-zinc-900 animate-pulse" />)}
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {checklist.map(item => (
-                <div
-                  key={item.id}
-                  className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-zinc-900 transition-colors"
-                >
-                  <button
-                    onClick={() => toggleItemMut.mutate({ itemId: item.id, done: !item.done })}
-                    className="shrink-0 text-zinc-500 hover:text-blue-400 transition-colors"
-                  >
-                    {item.done
-                      ? <CheckSquare className="h-4 w-4 text-emerald-500" />
-                      : <Square className="h-4 w-4" />
-                    }
-                  </button>
-                  <span className={cn(
-                    'flex-1 text-sm leading-snug',
-                    item.done ? 'line-through text-zinc-600' : 'text-zinc-200',
-                  )}>
-                    {item.text}
-                  </span>
-                  <button
-                    onClick={() => deleteItemMut.mutate(item.id)}
-                    className="shrink-0 opacity-0 group-hover:opacity-100 text-zinc-700 hover:text-red-400 transition-all"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))}
-              {checklist.length === 0 && (
-                <p className="text-xs text-zinc-700 py-2 px-2">Nenhuma meta adicionada ainda.</p>
-              )}
-            </div>
-          )}
-
-          {/* Add item */}
-          <div className="mt-2 flex gap-2">
-            <Input
-              value={newItem}
-              onChange={e => setNewItem(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && submitItem()}
-              placeholder="Adicionar meta..."
-              className="flex-1 h-8 text-xs bg-zinc-900 border-zinc-800 focus:border-zinc-600"
-            />
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={submitItem}
-              disabled={!newItem.trim() || addItemMut.isPending}
-              className="h-8 px-3 text-xs"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        </div>
-
-        {/* Activity log section */}
-        <div className="p-4">
-          <div className="flex items-center gap-2 mb-3">
-            <ScrollText className="h-4 w-4 text-purple-400" />
-            <span className="text-sm font-medium text-zinc-200">Diário de Progresso</span>
-          </div>
-
-          {/* Add activity */}
-          <div className="space-y-2 mb-4">
+          <div className="grid gap-2">
+            <Input value={title} onChange={event => setTitle(event.target.value)} className="border-[#41474e] bg-[#1c1b1b] text-[#e5e2e1]" placeholder="Titulo da tarefa" />
             <textarea
-              value={activityText}
-              onChange={e => setActivityText(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) submitActivity() }}
-              placeholder="O que você fez nessa tarefa? (Ctrl+Enter para registrar)"
+              value={note}
+              onChange={event => setNote(event.target.value)}
               rows={3}
-              className="w-full rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 outline-none resize-none focus:border-zinc-600 transition-colors"
+              className="w-full rounded-xl border border-[#41474e] bg-[#1c1b1b] px-3 py-2 text-sm text-[#e5e2e1] outline-none placeholder:text-[#8b9199] focus:border-[#90caf9]"
+              placeholder="Observacao (opcional)"
             />
-            <Button
-              size="sm"
-              onClick={submitActivity}
-              disabled={!activityText.trim() || addActivityMut.isPending}
-              className="w-full text-xs h-8"
-            >
-              Registrar progresso
-            </Button>
-          </div>
-
-          {/* Activity list */}
-          {loadingActivities ? (
-            <div className="space-y-2">
-              {[1, 2].map(i => <div key={i} className="h-14 rounded-lg bg-zinc-900 animate-pulse" />)}
-            </div>
-          ) : activities.length === 0 ? (
-            <p className="text-center text-xs text-zinc-700 py-4">Nenhum progresso registrado ainda.</p>
-          ) : (
-            <div className="space-y-2">
-              {activities.map(activity => (
-                <div
-                  key={activity.id}
-                  className="group relative rounded-lg border border-zinc-800/50 bg-zinc-900/50 px-3 py-2.5"
-                >
-                  <p className="text-xs text-zinc-300 leading-relaxed pr-6 whitespace-pre-wrap">{activity.text}</p>
-                  <p className="mt-1.5 text-[10px] text-zinc-700">
-                    {new Date(activity.created_at).toLocaleString('pt-BR', {
-                      day: '2-digit', month: 'short', year: 'numeric',
-                      hour: '2-digit', minute: '2-digit',
-                    })}
-                  </p>
-                  <button
-                    onClick={() => deleteActivityMut.mutate(activity.id)}
-                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 text-zinc-700 hover:text-red-400 transition-all"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ── Quick-add form ─────────────────────────────────────────────────────────────
-
-function QuickAddForm({ onAdd }: { onAdd: (title: string, priority: string, due: string) => void }) {
-  const [open, setOpen] = useState(false)
-  const [title, setTitle] = useState('')
-  const [priority, setPriority] = useState('normal')
-  const [due, setDue] = useState('')
-
-  function submit() {
-    if (!title.trim()) return
-    onAdd(title.trim(), priority, due)
-    setTitle('')
-    setPriority('normal')
-    setDue('')
-    setOpen(false)
-  }
-
-  return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className="flex w-full items-center gap-2 px-4 py-3 text-sm text-zinc-400 hover:text-zinc-100 transition-colors"
-      >
-        <Plus className="h-4 w-4 text-blue-400" />
-        <span>Adicionar tarefa...</span>
-        {open ? <ChevronUp className="ml-auto h-3.5 w-3.5" /> : <ChevronDown className="ml-auto h-3.5 w-3.5" />}
-      </button>
-
-      {open && (
-        <div className="border-t border-zinc-800 p-4 space-y-3">
-          <Input
-            autoFocus
-            value={title}
-            onChange={e => setTitle(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && submit()}
-            placeholder="Título da tarefa..."
-            className="bg-zinc-800 border-zinc-700 text-sm"
-          />
-          <div className="flex gap-2">
-            <div className="flex-1 space-y-1">
-              <label className="text-xs text-zinc-500">Prioridade</label>
-              <select
-                value={priority}
-                onChange={e => setPriority(e.target.value)}
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-200 outline-none"
-              >
-                <option value="low">Baixa</option>
-                <option value="normal">Normal</option>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <select value={priority} onChange={event => setPriority(event.target.value)} className="rounded-xl border border-[#41474e] bg-[#1c1b1b] px-3 py-2 text-sm text-[#e5e2e1] outline-none">
                 <option value="high">Alta</option>
+                <option value="normal">Media</option>
+                <option value="low">Baixa</option>
               </select>
+              <select value={status} onChange={event => setStatus(event.target.value)} className="rounded-xl border border-[#41474e] bg-[#1c1b1b] px-3 py-2 text-sm text-[#e5e2e1] outline-none">
+                <option value="pending">Pendente</option>
+                <option value="doing">Em andamento</option>
+                <option value="done">Concluida</option>
+              </select>
+              <Input type="datetime-local" value={due} onChange={event => setDue(event.target.value)} className="border-[#41474e] bg-[#1c1b1b] text-[#e5e2e1]" />
             </div>
-            <div className="flex-1 space-y-1">
-              <label className="text-xs text-zinc-500">Prazo (opcional)</label>
+            <div className="flex items-center gap-2">
+              <Button
+                onClick={() => updateTaskMut.mutate()}
+                disabled={!title.trim() || updateTaskMut.isPending}
+                className="h-9 gap-1.5 rounded-lg border-0 bg-gradient-to-r from-[#c5e3ff] to-[#90caf9] text-[#03263b] hover:from-[#d6edff] hover:to-[#a6d4fb]"
+              >
+                <Save className="h-3.5 w-3.5" />
+                Salvar
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => deleteTaskMut.mutate()}
+                disabled={deleteTaskMut.isPending}
+                className="h-9 border-[#7f2f33]/60 bg-[#2a1517] text-[#ffb4ab] hover:border-[#a0454a] hover:bg-[#3a1b1e]"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Excluir
+              </Button>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-5 p-5">
+          <section className="rounded-2xl bg-[#1c1b1b] p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-sm font-semibold text-[#e5e2e1]">Checklist</p>
+              <span className="text-xs text-[#8b9199]">{doneChecklist}/{checklist.length}</span>
+            </div>
+            <div className="mb-3 h-1.5 overflow-hidden rounded-full bg-[#0e0e0e]">
+              <div className="h-full rounded-full bg-[#90caf9]" style={{ width: `${checklistProgress}%` }} />
+            </div>
+
+            <div className="mb-3 flex gap-2">
               <Input
-                type="datetime-local"
-                value={due}
-                onChange={e => setDue(e.target.value)}
-                className="h-8 text-xs bg-zinc-800 border-zinc-700"
+                value={newChecklist}
+                onChange={event => setNewChecklist(event.target.value)}
+                onKeyDown={event => { if (event.key === 'Enter' && newChecklist.trim()) addChecklistMut.mutate(newChecklist.trim()) }}
+                placeholder="Adicionar item..."
+                className="h-9 border-[#41474e] bg-[#131313] text-[#e5e2e1]"
               />
+              <Button
+                size="sm"
+                onClick={() => newChecklist.trim() && addChecklistMut.mutate(newChecklist.trim())}
+                disabled={!newChecklist.trim() || addChecklistMut.isPending}
+                className="h-9 rounded-lg border-0 bg-[#2a2a2a] px-3 text-[#e5e2e1] hover:bg-[#353534]"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </Button>
             </div>
-          </div>
-          <div className="flex gap-2 justify-end">
-            <Button variant="ghost" size="sm" onClick={() => setOpen(false)} className="text-xs">Cancelar</Button>
-            <Button size="sm" onClick={submit} disabled={!title.trim()} className="text-xs">Adicionar</Button>
-          </div>
+
+            {checklistLoading ? (
+              <div className="space-y-2">
+                {[1, 2].map(item => <div key={item} className="h-8 animate-pulse rounded-lg bg-[#2a2a2a]" />)}
+              </div>
+            ) : checklist.length === 0 ? (
+              <p className="text-xs text-[#8b9199]">Sem itens no checklist.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {checklist.map(item => (
+                  <div key={item.id} className="group flex items-center gap-2 rounded-lg bg-[#131313] px-2 py-1.5">
+                    <button type="button" onClick={() => toggleChecklistMut.mutate({ itemId: item.id, done: !item.done })} className="text-[#8b9199] hover:text-[#c5e3ff]">
+                      {item.done ? <CheckSquare className="h-4 w-4 text-[#8ad6a0]" /> : <Square className="h-4 w-4" />}
+                    </button>
+                    <span className={cn('flex-1 text-sm', item.done ? 'text-[#8b9199] line-through' : 'text-[#e5e2e1]')}>{item.text}</span>
+                    <button type="button" onClick={() => deleteChecklistMut.mutate(item.id)} className="opacity-0 text-[#8b9199] transition-opacity hover:text-[#ef9d9d] group-hover:opacity-100">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-2xl bg-[#1c1b1b] p-4">
+            <p className="mb-3 text-sm font-semibold text-[#e5e2e1]">Diario de progresso</p>
+            <div className="mb-3 space-y-2">
+              <textarea
+                value={newActivity}
+                onChange={event => setNewActivity(event.target.value)}
+                rows={3}
+                className="w-full rounded-xl border border-[#41474e] bg-[#131313] px-3 py-2 text-sm text-[#e5e2e1] outline-none placeholder:text-[#8b9199] focus:border-[#90caf9]"
+                placeholder="Registre o que foi feito nesta tarefa..."
+              />
+              <Button
+                onClick={() => newActivity.trim() && addActivityMut.mutate(newActivity.trim())}
+                disabled={!newActivity.trim() || addActivityMut.isPending}
+                className="h-9 rounded-lg border-0 bg-[#2a2a2a] text-[#e5e2e1] hover:bg-[#353534]"
+              >
+                Registrar atividade
+              </Button>
+            </div>
+
+            {activitiesLoading ? (
+              <div className="space-y-2">
+                {[1, 2].map(item => <div key={item} className="h-14 animate-pulse rounded-lg bg-[#2a2a2a]" />)}
+              </div>
+            ) : activities.length === 0 ? (
+              <p className="text-xs text-[#8b9199]">Nenhuma atividade registrada.</p>
+            ) : (
+              <div className="space-y-2">
+                {activities.map(activity => (
+                  <div key={activity.id} className="group rounded-lg bg-[#131313] px-3 py-2">
+                    <p className="text-xs leading-relaxed text-[#c1c7cf] whitespace-pre-wrap">{activity.text}</p>
+                    <div className="mt-1.5 flex items-center justify-between">
+                      <span className="text-[10px] text-[#8b9199]">
+                        {new Date(activity.created_at).toLocaleString('pt-BR', {
+                          day: '2-digit',
+                          month: 'short',
+                          year: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                      <button type="button" onClick={() => deleteActivityMut.mutate(activity.id)} className="opacity-0 text-[#8b9199] transition-opacity hover:text-[#ef9d9d] group-hover:opacity-100">
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
         </div>
-      )}
+      </aside>
     </div>
   )
 }
-
-// ── Task row ──────────────────────────────────────────────────────────────────
-
-function TaskRow({
-  task,
-  onStatusChange,
-  onEdit,
-  onDelete,
-  onOpenDrawer,
-}: {
-  task: TaskItem
-  onStatusChange: (id: number, status: string) => void
-  onEdit: (id: number, title: string, priority: string, due_date: string, status: string) => void
-  onDelete: (id: number) => void
-  onOpenDrawer: (id: number) => void
-}) {
-  const [editing, setEditing] = useState(false)
-  const [editTitle, setEditTitle] = useState(task.title)
-  const [editPriority, setEditPriority] = useState(task.priority)
-  const [editStatus, setEditStatus] = useState(task.status)
-  const [editDue, setEditDue] = useState(
-    task.due_date ? new Date(task.due_date).toISOString().slice(0, 16) : '',
-  )
-
-  const isDone = task.status === 'done'
-  const isDoing = task.status === 'doing'
-  const isOverdue = task.due_date && !isDone && new Date(task.due_date) < new Date()
-  const nextStatus = isDone ? 'pending' : isDoing ? 'done' : 'doing'
-
-  function saveEdit() {
-    if (!editTitle.trim()) return
-    onEdit(task.id, editTitle.trim(), editPriority, editDue, editStatus)
-    setEditing(false)
-  }
-
-  function cancelEdit() {
-    setEditTitle(task.title)
-    setEditPriority(task.priority)
-    setEditStatus(task.status)
-    setEditDue(task.due_date ? new Date(task.due_date).toISOString().slice(0, 16) : '')
-    setEditing(false)
-  }
-
-  if (editing) {
-    return (
-      <div className="rounded-xl border border-blue-800/50 bg-zinc-900 px-4 py-3 space-y-3">
-        <Input
-          autoFocus
-          value={editTitle}
-          onChange={e => setEditTitle(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') cancelEdit() }}
-          className="bg-zinc-800 border-zinc-700 text-sm"
-        />
-        <div className="flex gap-2">
-          <select
-            value={editPriority}
-            onChange={e => setEditPriority(e.target.value)}
-            className="flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-200 outline-none"
-          >
-            <option value="low">Baixa</option>
-            <option value="normal">Normal</option>
-            <option value="high">Alta</option>
-          </select>
-          <select
-            value={editStatus}
-            onChange={e => setEditStatus(e.target.value)}
-            className="flex-1 rounded-lg border border-zinc-700 bg-zinc-800 px-2.5 py-1.5 text-xs text-zinc-200 outline-none"
-          >
-            <option value="pending">Pendente</option>
-            <option value="doing">Em andamento</option>
-            <option value="done">Concluída</option>
-          </select>
-          <Input
-            type="datetime-local"
-            value={editDue}
-            onChange={e => setEditDue(e.target.value)}
-            className="flex-1 h-8 text-xs bg-zinc-800 border-zinc-700"
-          />
-        </div>
-        <div className="flex gap-2 justify-end">
-          <button onClick={cancelEdit} className="flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500 hover:text-zinc-300">
-            <X className="h-3 w-3" /> Cancelar
-          </button>
-          <button onClick={saveEdit} className="flex items-center gap-1 rounded-lg border border-emerald-800/50 bg-emerald-950/20 px-2.5 py-1.5 text-xs text-emerald-400 hover:bg-emerald-950/40">
-            <Check className="h-3 w-3" /> Salvar
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className={cn(
-      'group flex items-start gap-3 rounded-xl border px-4 py-3 transition-all',
-      isDone
-        ? 'border-zinc-800/50 bg-zinc-900/40 opacity-60'
-        : 'border-zinc-800 bg-zinc-900 hover:border-zinc-700',
-    )}>
-      {/* Status toggle */}
-      <button
-        onClick={() => onStatusChange(task.id, nextStatus)}
-        className="mt-0.5 shrink-0 text-zinc-500 hover:text-blue-400 transition-colors"
-      >
-        {isDone
-          ? <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-          : isDoing
-            ? <Clock className="h-5 w-5 text-blue-400 animate-pulse" />
-            : <Circle className="h-5 w-5" />
-        }
-      </button>
-
-      {/* Content */}
-      <div className="flex-1 min-w-0">
-        <button
-          onClick={() => onOpenDrawer(task.id)}
-          className={cn(
-            'text-left text-sm font-medium leading-snug hover:underline decoration-zinc-600 underline-offset-2 transition-colors',
-            isDone ? 'line-through text-zinc-500' : 'text-zinc-100 hover:text-zinc-50',
-          )}
-        >
-          {task.title}
-        </button>
-        {task.note && (
-          <p className="mt-0.5 text-xs text-zinc-600 truncate">{task.note}</p>
-        )}
-        <div className="mt-1.5 flex items-center gap-2 flex-wrap">
-          <PriorityBadge priority={task.priority} />
-          {task.due_date && (
-            <span className={cn(
-              'inline-flex items-center gap-1 text-[10px]',
-              isOverdue ? 'text-red-400' : 'text-zinc-600',
-            )}>
-              {isOverdue && <AlertTriangle className="h-2.5 w-2.5" />}
-              <Clock className="h-2.5 w-2.5" />
-              {new Date(task.due_date).toLocaleDateString('pt-BR', {
-                day: '2-digit', month: 'short',
-                hour: '2-digit', minute: '2-digit',
-              })}
-            </span>
-          )}
-          {isDoing && (
-            <span className="inline-flex items-center gap-1 rounded-full border border-blue-800/50 bg-blue-950/20 px-1.5 py-0.5 text-[10px] text-blue-400">
-              Em andamento
-            </span>
-          )}
-          {/* Checklist progress badge */}
-          {task.checklist_total > 0 && (
-            <span className={cn(
-              'inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[10px] font-medium',
-              task.checklist_done === task.checklist_total
-                ? 'text-emerald-400 border-emerald-800/50 bg-emerald-950/20'
-                : 'text-zinc-400 border-zinc-700 bg-zinc-900',
-            )}>
-              <CheckSquare className="h-2.5 w-2.5" />
-              {task.checklist_done}/{task.checklist_total}
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Edit + Delete */}
-      <div className="mt-0.5 flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-all">
-        <button
-          onClick={() => setEditing(true)}
-          className="text-zinc-600 hover:text-blue-400 transition-colors"
-        >
-          <Pencil className="h-3.5 w-3.5" />
-        </button>
-        <button
-          onClick={() => onDelete(task.id)}
-          className="text-zinc-600 hover:text-red-400 transition-colors"
-        >
-          <Trash2 className="h-3.5 w-3.5" />
-        </button>
-      </div>
-    </div>
-  )
-}
-
-// ── Main ──────────────────────────────────────────────────────────────────────
-
-type FilterTab = 'all' | 'pending' | 'doing' | 'done'
 
 export function Tasks() {
-  const qc = useQueryClient()
+  const queryClient = useQueryClient()
   const [filter, setFilter] = useState<FilterTab>('all')
   const [drawerTaskId, setDrawerTaskId] = useState<number | null>(null)
+  const [quickTitle, setQuickTitle] = useState('')
+  const [quickPriority, setQuickPriority] = useState('normal')
+  const [quickDue, setQuickDue] = useState('')
 
   const { data: tasks = [], isLoading } = useQuery<TaskItem[]>({
     queryKey: ['tasks'],
     queryFn: () => apiClient.listTasks(),
   })
 
-  const drawerTask = drawerTaskId != null ? tasks.find(t => t.id === drawerTaskId) ?? null : null
-
-  const createMut = useMutation({
-    mutationFn: ({ title, priority, due_date }: { title: string; priority: string; due_date?: string }) =>
-      apiClient.createTask(title, undefined, priority, due_date ? new Date(due_date).toISOString() : undefined),
+  const createTaskMut = useMutation({
+    mutationFn: ({ title, priority, dueDate }: { title: string; priority: string; dueDate: string }) =>
+      apiClient.createTask(title, undefined, priority, toIsoOrUndefined(dueDate)),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tasks'] })
-      toast.success('Tarefa criada!')
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+      setQuickTitle('')
+      setQuickPriority('normal')
+      setQuickDue('')
+      toast.success('Tarefa criada.')
     },
     onError: () => toast.error('Erro ao criar tarefa.'),
   })
 
-  const updateMut = useMutation({
-    mutationFn: ({ id, status }: { id: number; status: string }) => {
-      const task = tasks.find(t => t.id === id)!
+  const toggleStatusMut = useMutation({
+    mutationFn: ({ id, status }: { id: number; status: TaskStatus }) => {
+      const task = tasks.find(item => item.id === id)
+      if (!task) throw new Error('Tarefa nao encontrada')
       return apiClient.updateTask(id, task.title, task.note ?? undefined, status, task.priority, task.due_date ?? undefined)
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['tasks'] }),
-    onError: () => toast.error('Erro ao atualizar tarefa.'),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['tasks'] }),
+    onError: () => toast.error('Erro ao atualizar status da tarefa.'),
   })
 
-  const editMut = useMutation({
-    mutationFn: ({ id, title, priority, due_date, status }: { id: number; title: string; priority: string; due_date: string; status: string }) => {
-      const task = tasks.find(t => t.id === id)!
-      return apiClient.updateTask(id, title, task.note ?? undefined, status, priority, due_date ? new Date(due_date).toISOString() : undefined)
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tasks'] })
-      toast.success('Tarefa atualizada.')
-    },
-    onError: () => toast.error('Erro ao atualizar tarefa.'),
-  })
-
-  const deleteMut = useMutation({
+  const deleteTaskMut = useMutation({
     mutationFn: (id: number) => apiClient.deleteTask(id),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['tasks'] })
-      toast.success('Tarefa excluída.')
+    onSuccess: (_, id) => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+      if (drawerTaskId === id) setDrawerTaskId(null)
+      toast.success('Tarefa excluida.')
     },
     onError: () => toast.error('Erro ao excluir tarefa.'),
   })
 
-  const filtered = tasks
-    .filter(t => filter === 'all' || t.status === filter)
-    .sort((a, b) => {
-      if (a.status !== b.status) return (STATUS_ORDER[a.status] ?? 9) - (STATUS_ORDER[b.status] ?? 9)
-      const pa = a.priority === 'high' ? 0 : a.priority === 'normal' ? 1 : 2
-      const pb = b.priority === 'high' ? 0 : b.priority === 'normal' ? 1 : 2
-      return pa - pb
-    })
-
-  const counts = {
+  const counts = useMemo(() => ({
     all: tasks.length,
-    pending: tasks.filter(t => t.status === 'pending').length,
-    doing: tasks.filter(t => t.status === 'doing').length,
-    done: tasks.filter(t => t.status === 'done').length,
-  }
+    doing: tasks.filter(task => task.status === 'doing').length,
+    pending: tasks.filter(task => task.status === 'pending').length,
+    done: tasks.filter(task => task.status === 'done').length,
+  }), [tasks])
 
-  const tabs: { key: FilterTab; label: string }[] = [
-    { key: 'all', label: `Todas (${counts.all})` },
-    { key: 'doing', label: `Em andamento (${counts.doing})` },
-    { key: 'pending', label: `Pendentes (${counts.pending})` },
-    { key: 'done', label: `Concluídas (${counts.done})` },
-  ]
+  const filteredTasks = useMemo(() => {
+    return tasks
+      .filter(task => filter === 'all' || task.status === filter)
+      .sort((a, b) => {
+        const statusDiff = (STATUS_ORDER[a.status] ?? 99) - (STATUS_ORDER[b.status] ?? 99)
+        if (statusDiff !== 0) return statusDiff
+        const priorityA = a.priority === 'high' ? 0 : a.priority === 'normal' ? 1 : 2
+        const priorityB = b.priority === 'high' ? 0 : b.priority === 'normal' ? 1 : 2
+        if (priorityA !== priorityB) return priorityA - priorityB
+        return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+      })
+  }, [tasks, filter])
+
+  const activeTask = drawerTaskId == null ? null : tasks.find(task => task.id === drawerTaskId) ?? null
+  const deletePendingId = deleteTaskMut.isPending ? deleteTaskMut.variables : null
+
+  function submitQuickTask() {
+    if (!quickTitle.trim()) return
+    createTaskMut.mutate({
+      title: quickTitle.trim(),
+      priority: quickPriority,
+      dueDate: quickDue,
+    })
+  }
 
   return (
     <>
-      <PageShell className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-zinc-100">Tarefas</h1>
-            <p className="mt-0.5 text-sm text-zinc-500">
-              {isLoading
-                ? 'Carregando...'
-                : `${counts.doing > 0 ? `${counts.doing} em andamento · ` : ''}${counts.pending} pendentes`}
-            </p>
+      <PageShell className="relative space-y-6 overflow-hidden">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_82%_8%,rgba(144,202,249,0.16),transparent_44%),radial-gradient(circle_at_12%_18%,rgba(201,139,94,0.08),transparent_52%)]" />
+
+        <header className="relative z-10 space-y-1">
+          <h1 className="font-headline text-4xl font-extrabold tracking-tight text-[#e5e2e1]">Tarefas</h1>
+          <p className="text-base text-[#c1c7cf]">Gerencie suas entregas e prazos com foco editorial.</p>
+        </header>
+
+        <section className="relative z-10 rounded-2xl bg-[#1c1b1b] p-2 shadow-[0_20px_36px_rgba(0,0,0,0.35)]">
+          <div className="grid gap-2 md:grid-cols-[1fr_auto_auto_auto]">
+            <div className="flex items-center gap-2 rounded-xl bg-[#0e0e0e] px-3">
+              <Plus className="h-4 w-4 text-[#90caf9]" />
+              <input
+                value={quickTitle}
+                onChange={event => setQuickTitle(event.target.value)}
+                onKeyDown={event => { if (event.key === 'Enter') submitQuickTask() }}
+                placeholder="Adicionar nova tarefa rapida..."
+                className="h-11 w-full bg-transparent text-sm text-[#e5e2e1] outline-none placeholder:text-[#8b9199]"
+              />
+            </div>
+            <select value={quickPriority} onChange={event => setQuickPriority(event.target.value)} className="h-11 rounded-xl border border-[#41474e] bg-[#131313] px-3 text-sm text-[#e5e2e1] outline-none">
+              <option value="high">Alta</option>
+              <option value="normal">Media</option>
+              <option value="low">Baixa</option>
+            </select>
+            <Input type="datetime-local" value={quickDue} onChange={event => setQuickDue(event.target.value)} className="h-11 border-[#41474e] bg-[#131313] text-[#e5e2e1]" />
+            <Button
+              onClick={submitQuickTask}
+              disabled={!quickTitle.trim() || createTaskMut.isPending}
+              className="h-11 rounded-xl border-0 bg-gradient-to-r from-[#c5e3ff] to-[#90caf9] px-5 text-[#03263b] hover:from-[#d6edff] hover:to-[#a6d4fb]"
+            >
+              Criar
+            </Button>
           </div>
-        </div>
+        </section>
 
-        {/* Quick add */}
-        <QuickAddForm
-          onAdd={(title, priority, due) =>
-            createMut.mutate({ title, priority, due_date: due || undefined })
-          }
-        />
-
-        {/* Tabs */}
-        <div className="flex gap-1 border-b border-zinc-800">
-          {tabs.map(tab => (
+        <section className="relative z-10 flex flex-wrap gap-2">
+          {FILTER_ORDER.map(item => (
             <button
-              key={tab.key}
-              onClick={() => setFilter(tab.key)}
+              key={item}
+              type="button"
+              onClick={() => setFilter(item)}
               className={cn(
-                'px-3 py-2 text-xs font-medium transition-colors',
-                filter === tab.key
-                  ? 'border-b-2 border-blue-500 text-blue-400'
-                  : 'text-zinc-500 hover:text-zinc-300',
+                'rounded-full px-5 py-2 text-sm font-semibold transition-colors',
+                filter === item
+                  ? 'bg-[#c5e3ff] text-[#00344f]'
+                  : 'bg-[#2a2a2a] text-[#c1c7cf] hover:bg-[#3a3939] hover:text-[#e5e2e1]',
               )}
             >
-              {tab.label}
+              {FILTER_LABELS[item]} ({counts[item]})
             </button>
           ))}
-        </div>
+        </section>
 
-        {/* Task list */}
-        {isLoading && (
-          <div className="space-y-2">
-            {[1, 2, 3].map(i => <div key={i} className="h-16 rounded-xl bg-zinc-900 animate-pulse" />)}
+        <section className="relative z-10">
+          {isLoading ? (
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+              {[1, 2, 3, 4].map(item => <div key={item} className="h-52 animate-pulse rounded-2xl bg-[#2a2a2a]" />)}
+            </div>
+          ) : filteredTasks.length === 0 ? (
+            <div className="flex min-h-[280px] flex-col items-center justify-center rounded-3xl bg-[#151515] px-6 text-center">
+              <ListTodo className="mb-3 h-10 w-10 text-[#5f6770]" />
+              <p className="font-headline text-2xl font-bold text-[#e5e2e1]">Tudo limpo por aqui</p>
+              <p className="mt-1 max-w-md text-sm text-[#8b9199]">
+                Nao encontramos tarefas para o filtro selecionado. Crie uma nova entrega para iniciar o proximo ciclo.
+              </p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+              {filteredTasks.map(task => (
+                <TaskCard
+                  key={task.id}
+                  task={task}
+                  onOpen={() => setDrawerTaskId(task.id)}
+                  onToggleStatus={() => toggleStatusMut.mutate({ id: task.id, status: nextStatus(task.status) })}
+                  onDelete={() => deleteTaskMut.mutate(task.id)}
+                  busy={deletePendingId === task.id || toggleStatusMut.isPending}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+
+        <div className="relative z-10 rounded-2xl bg-[#1c1b1b] p-4">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-[#ffd9ae] shadow-[0_0_8px_rgba(255,217,174,0.7)] animate-pulse" />
+            <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-[#ffd9ae]">Painel operacional ativo</span>
+            <span className="ml-auto inline-flex items-center gap-1 text-[11px] text-[#8b9199]">
+              <Sparkles className="h-3 w-3 text-[#c5e3ff]" />
+              /api/tasks conectado
+            </span>
           </div>
-        )}
-
-        {!isLoading && filtered.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-16 text-center">
-            <ListTodo className="h-10 w-10 text-zinc-800 mb-3" />
-            <p className="text-sm text-zinc-600">
-              {filter === 'all' ? 'Nenhuma tarefa ainda.' : `Nenhuma tarefa ${filter === 'done' ? 'concluída' : filter === 'doing' ? 'em andamento' : 'pendente'}.`}
-            </p>
-          </div>
-        )}
-
-        <div className="space-y-2">
-          {filtered.map(task => (
-            <TaskRow
-              key={task.id}
-              task={task}
-              onStatusChange={(id, status) => updateMut.mutate({ id, status })}
-              onEdit={(id, title, priority, due_date, status) => editMut.mutate({ id, title, priority, due_date, status })}
-              onDelete={id => deleteMut.mutate(id)}
-              onOpenDrawer={id => setDrawerTaskId(id)}
-            />
-          ))}
         </div>
       </PageShell>
 
-      {/* Task drawer */}
-      {drawerTask && (
+      {activeTask && (
         <TaskDrawer
-          task={drawerTask}
+          task={activeTask}
           onClose={() => setDrawerTaskId(null)}
         />
       )}
