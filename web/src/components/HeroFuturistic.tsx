@@ -54,7 +54,7 @@ function PostProcessing({ animated }: { animated: boolean }) {
     const uvY = uv().y as any
     const scanWidth = float(0.05)
     const scanLine = smoothstep(0, scanWidth, abs(uvY.sub(scanPos) as any))
-    const glowOverlay = vec3(0.94, 0.56, 0.29).mul(oneMinus(scanLine)).mul(0.3)
+    const glowOverlay = vec3(0.58, 0.77, 0.99).mul(oneMinus(scanLine)).mul(0.3)
 
     const withScanEffect = mix(
       scenePassColor,
@@ -146,7 +146,7 @@ function Scene({ animated, interactive }: { animated: boolean; interactive: bool
 function HeroFallback({ mode }: { mode: 'still' | 'gradient' }) {
   return (
     <div className="absolute inset-0 overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(90%_72%_at_72%_18%,rgba(201,139,94,0.2),transparent_56%),radial-gradient(62%_52%_at_24%_24%,rgba(244,240,232,0.1),transparent_72%),linear-gradient(160deg,rgba(21,24,27,0.96),rgba(12,14,16,1))]" />
+      <div className="absolute inset-0 bg-[radial-gradient(90%_72%_at_72%_18%,rgba(147,197,253,0.2),transparent_56%),radial-gradient(62%_52%_at_24%_24%,rgba(244,240,232,0.1),transparent_72%),linear-gradient(160deg,rgba(21,24,27,0.96),rgba(12,14,16,1))]" />
       {mode === 'still' ? (
         <img
           src={TEXTUREMAP.src}
@@ -155,7 +155,7 @@ function HeroFallback({ mode }: { mode: 'still' | 'gradient' }) {
           className="absolute inset-0 h-full w-full object-contain px-4 py-6 opacity-72 mix-blend-screen sm:px-12 sm:py-14"
         />
       ) : null}
-      <div className="absolute inset-x-[14%] top-1/2 h-px -translate-y-1/2 bg-[linear-gradient(90deg,transparent,rgba(201,139,94,0.95),transparent)] opacity-85" />
+      <div className="absolute inset-x-[14%] top-1/2 h-px -translate-y-1/2 bg-[linear-gradient(90deg,transparent,rgba(147,197,253,0.95),transparent)] opacity-85" />
       <div className="absolute inset-0 bg-[radial-gradient(72%_56%_at_50%_52%,transparent_42%,rgba(0,0,0,0.48)_100%)]" />
     </div>
   )
@@ -164,7 +164,7 @@ function HeroFallback({ mode }: { mode: 'still' | 'gradient' }) {
 function HeroBaseLayer({ mode }: { mode: 'still' | 'gradient' }) {
   return (
     <div className="absolute inset-0 overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(90%_72%_at_72%_18%,rgba(201,139,94,0.16),transparent_56%),radial-gradient(62%_52%_at_24%_24%,rgba(244,240,232,0.08),transparent_72%),linear-gradient(160deg,rgba(21,24,27,0.96),rgba(12,14,16,1))]" />
+      <div className="absolute inset-0 bg-[radial-gradient(90%_72%_at_72%_18%,rgba(147,197,253,0.16),transparent_56%),radial-gradient(62%_52%_at_24%_24%,rgba(244,240,232,0.08),transparent_72%),linear-gradient(160deg,rgba(21,24,27,0.96),rgba(12,14,16,1))]" />
       {mode === 'still' ? (
         <img
           src={TEXTUREMAP.src}
@@ -173,7 +173,7 @@ function HeroBaseLayer({ mode }: { mode: 'still' | 'gradient' }) {
           className="absolute inset-0 h-full w-full object-contain px-5 py-7 opacity-28 mix-blend-screen sm:px-10 sm:py-12"
         />
       ) : null}
-      <div className="absolute inset-x-[12%] top-1/2 h-px -translate-y-1/2 bg-[linear-gradient(90deg,transparent,rgba(201,139,94,0.65),transparent)] opacity-70" />
+      <div className="absolute inset-x-[12%] top-1/2 h-px -translate-y-1/2 bg-[linear-gradient(90deg,transparent,rgba(147,197,253,0.65),transparent)] opacity-70" />
       <div className="absolute inset-0 bg-[radial-gradient(72%_56%_at_50%_52%,transparent_40%,rgba(0,0,0,0.42)_100%)]" />
     </div>
   )
