@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { api, apiClient, type DocItem } from '@/api/client'
 import { cn } from '@/lib/utils'
+import { PageShell } from '@/components/ui/page-shell'
 
 function parseErrorMessage(error: unknown, fallback: string) {
   const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
@@ -17,10 +18,10 @@ function parseErrorMessage(error: unknown, fallback: string) {
 
 function fileAccent(fileName: string) {
   const lower = fileName.toLowerCase()
-  if (lower.endsWith('.pdf')) return 'text-[#90caf9]'
-  if (lower.endsWith('.docx') || lower.endsWith('.doc')) return 'text-[#ffd9ae]'
-  if (lower.endsWith('.xlsx') || lower.endsWith('.csv')) return 'text-[#b4c9de]'
-  return 'text-[#c1c7cf]'
+  if (lower.endsWith('.pdf')) return 'text-[color:var(--ui-accent)]'
+  if (lower.endsWith('.docx') || lower.endsWith('.doc')) return 'text-amber-300'
+  if (lower.endsWith('.xlsx') || lower.endsWith('.csv')) return 'text-emerald-400'
+  return 'text-[color:var(--ui-text-dim)]'
 }
 
 function formatChunkCount(count: number) {
@@ -199,50 +200,118 @@ export function Docs() {
 
   return (
     <>
-      <div className="relative space-y-8">
-        <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_82%_10%,rgba(144,202,249,0.12),transparent_42%),radial-gradient(circle_at_14%_16%,rgba(201,139,94,0.08),transparent_48%)]" />
-        <header className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
-          <div><h1 className="font-headline text-4xl font-extrabold tracking-tight text-[#e5e2e1]">Documentos Indexados</h1><p className="text-sm text-[#c1c7cf]">Gerencie e opere sobre seus documentos</p></div>
-          <div className="relative w-full lg:w-96"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8b9199]" /><Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar artefatos..." className="h-11 border-[#41474e] bg-[#0e0e0e] pl-10 text-[#e5e2e1]" /></div>
+      <PageShell>
+        <header className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h1 className="font-headline text-4xl font-extrabold tracking-tight text-[color:var(--ui-text)]">Documentos Indexados</h1>
+            <p className="mt-2 text-sm text-[color:var(--ui-text-dim)]">Gerencie e opere sobre seus documentos</p>
+          </div>
+          <div className="relative w-full lg:w-96">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[color:var(--ui-text-meta)]" />
+            <Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar artefatos..." className="h-11 border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] pl-10 text-[color:var(--ui-text)]" />
+          </div>
         </header>
 
         <div className="grid grid-cols-1 gap-8 xl:grid-cols-12">
-          <section className="space-y-5 xl:col-span-4">
-            <article className="rounded-2xl bg-[#1c1b1b] p-6">
-              <div className="mb-5 flex items-start justify-between"><div><p className="font-headline text-3xl font-extrabold text-[#e5e2e1]">{formatChunkCount(totalChunks)}</p><p className="text-xs uppercase tracking-[0.14em] text-[#8b9199]">Total chunks</p></div><div className="rounded-xl bg-[#203142] p-3"><Database className="h-5 w-5 text-[#c5e3ff]" /></div></div>
-              <div className="space-y-1.5"><div className="flex items-center justify-between text-xs text-[#aab2bc]"><span>Storage usage</span><span>{usage}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-[#0e0e0e]"><div className="h-full rounded-full bg-[#90caf9]" style={{ width: `${usage}%` }} /></div></div>
+          <section className="space-y-6 xl:col-span-4">
+            <article className="rounded-[1.15rem] border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] p-5">
+              <div className="mb-5 flex items-start justify-between">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.16em] text-[color:var(--ui-text-meta)]">Total Chunks</p>
+                  <p className="mt-2 font-headline text-4xl font-bold leading-none text-[color:var(--ui-text)]">{formatChunkCount(totalChunks)}</p>
+                </div>
+                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[color:var(--ui-accent-soft)]">
+                  <Database className="h-5 w-5 text-[color:var(--ui-accent)]" />
+                </div>
+              </div>
+              <p className="mt-3 text-xs text-[color:var(--ui-text-dim)]">Base indexada para consulta</p>
+              <div className="mt-4 space-y-1.5">
+                <div className="flex items-center justify-between text-xs text-[color:var(--ui-text-dim)]">
+                  <span>Storage usage</span><span>{usage}%</span>
+                </div>
+                <div className="h-1.5 overflow-hidden rounded-full bg-[color:var(--ui-surface-3)]">
+                  <div className="h-full rounded-full bg-[color:var(--ui-accent)]" style={{ width: `${usage}%` }} />
+                </div>
+              </div>
             </article>
-            <article className="rounded-2xl bg-[#0f0f0f] p-5"><h3 className="font-headline text-sm font-bold text-[#e5e2e1]">Status do agente</h3><div className="mt-3 flex items-center gap-2 text-sm text-[#c1c7cf]"><span className="h-2 w-2 rounded-full bg-[#ffd9ae] shadow-[0_0_8px_rgba(255,217,174,0.6)] animate-pulse" />Pronto para novas operacoes</div></article>
+
+            <article className="rounded-[1.15rem] border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] p-5">
+              <h3 className="font-headline text-sm font-bold text-[color:var(--ui-text)]">Status do agente</h3>
+              <div className="mt-4 flex items-center gap-2 text-sm text-[color:var(--ui-text-dim)]">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-amber-300 shadow-[0_0_8px_rgba(252,211,77,0.5)]" />
+                Pronto para novas operações
+              </div>
+            </article>
           </section>
 
           <section className="xl:col-span-8">
-            {error ? <div className="rounded-xl border border-[#7f2f33] bg-[#3b181b] px-4 py-3 text-sm text-[#ffb4ab]">Erro ao carregar documentos.</div> : null}
-            {isLoading ? <div className="space-y-3">{[1, 2, 3].map(item => <Skeleton key={item} className="h-28 w-full rounded-2xl bg-[#2a2a2a]" />)}</div> : null}
-            {!isLoading && filtered.length === 0 && !error ? <div className="rounded-2xl bg-[#1c1b1b] p-10 text-center"><FileText className="mx-auto mb-3 h-10 w-10 text-[#8b9199]" /><p className="font-headline text-xl font-bold text-[#e5e2e1]">{normalized ? 'Nenhum documento encontrado' : 'Nenhum documento indexado'}</p></div> : null}
-            {!isLoading && filtered.length > 0 ? (
+            {error ? (
+              <div className="rounded-xl border border-rose-500/35 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+                Erro ao carregar documentos.
+              </div>
+            ) : null}
+            {isLoading ? (
               <div className="space-y-3">
-                {filtered.map(doc => (
-                  <article key={doc.doc_id} className="group flex flex-col gap-4 rounded-2xl bg-[#1c1b1b] p-4 transition-all hover:bg-[#2a2a2a] sm:flex-row sm:items-center">
-                    <div className={cn('flex h-16 w-14 shrink-0 items-center justify-center rounded-xl bg-[#0e0e0e]', fileAccent(doc.file_name))}><FileText className="h-6 w-6" /></div>
-                    <div className="min-w-0 flex-1"><h3 className="truncate font-headline text-lg font-bold tracking-tight text-[#e5e2e1]">{doc.file_name}</h3><p className="mt-1 text-xs text-[#aab2bc]">{formatChunkCount(doc.chunk_count)} chunks indexados</p></div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Button variant="outline" size="sm" onClick={() => setViewDoc(doc)} className="h-8 border-[#41474e] bg-[#131313] text-[#c1c7cf]"><Eye className="h-3.5 w-3.5" /></Button>
-                      <Button size="sm" onClick={() => setOpsDoc(doc.file_name)} className="h-8 rounded-lg border-0 bg-[#203142] text-[#c5e3ff]"><Zap className="mr-1 h-3.5 w-3.5" />Ops</Button>
-                      {docs.length > 1 ? <Button variant="outline" size="sm" onClick={() => setCompareDoc(doc.file_name)} className="h-8 border-[#41474e] bg-[#131313] text-[#c1c7cf]"><GitCompare className="h-3.5 w-3.5" /></Button> : null}
-                      <Button variant="outline" size="sm" onClick={() => { if (window.confirm(`Remover "${doc.file_name}"?`)) deleteMut.mutate(doc.doc_id) }} disabled={deleteMut.isPending} className="h-8 border-[#7f2f33]/40 bg-[#2a1517] text-[#ffb4ab]"><Trash2 className="h-3.5 w-3.5" /></Button>
+                {[1, 2, 3].map(item => <Skeleton key={item} className="h-16 w-full rounded-xl" />)}
+              </div>
+            ) : null}
+            {!isLoading && filtered.length === 0 && !error ? (
+              <div className="rounded-[1.15rem] border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] p-10 text-center">
+                <FileText className="mx-auto mb-3 h-10 w-10 text-[color:var(--ui-text-meta)]" />
+                <p className="font-headline text-xl font-bold text-[color:var(--ui-text)]">
+                  {normalized ? 'Nenhum documento encontrado' : 'Nenhum documento indexado'}
+                </p>
+              </div>
+            ) : null}
+            {!isLoading && filtered.length > 0 ? (
+              <div className="overflow-hidden rounded-[1.15rem] border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)]">
+                <div className="flex items-center justify-between px-5 py-4">
+                  <p className="app-kicker">Biblioteca de Ativos</p>
+                </div>
+                <div className="space-y-2 px-5 pb-5">
+                  {filtered.map(doc => (
+                    <div
+                      key={doc.doc_id}
+                      className="group flex items-center justify-between gap-4 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] px-4 py-3 transition-colors hover:border-[color:var(--ui-border-strong)] hover:bg-[color:var(--ui-surface-3)]"
+                    >
+                      <div className="min-w-0 flex items-center gap-3">
+                        <div className={cn('flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[color:var(--ui-accent-soft)]', fileAccent(doc.file_name))}>
+                          <FileText className="h-4 w-4" />
+                        </div>
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold text-[color:var(--ui-text)]">{doc.file_name}</p>
+                          <p className="text-xs text-[color:var(--ui-text-meta)]">{formatChunkCount(doc.chunk_count)} chunks indexados</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <Button variant="outline" size="sm" onClick={() => setViewDoc(doc)} className="h-8 border-[color:var(--ui-border-soft)] bg-transparent text-[color:var(--ui-text-dim)] hover:text-[color:var(--ui-text)]">
+                          <Eye className="h-3.5 w-3.5" />
+                        </Button>
+                        <Button size="sm" onClick={() => setOpsDoc(doc.file_name)} className="h-8 rounded-lg border-0 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)] hover:bg-[color:var(--ui-surface-3)]">
+                          <Zap className="mr-1 h-3.5 w-3.5" />Ops
+                        </Button>
+                        {docs.length > 1 ? (
+                          <Button variant="outline" size="sm" onClick={() => setCompareDoc(doc.file_name)} className="h-8 border-[color:var(--ui-border-soft)] bg-transparent text-[color:var(--ui-text-dim)] hover:text-[color:var(--ui-text)]">
+                            <GitCompare className="h-3.5 w-3.5" />
+                          </Button>
+                        ) : null}
+                        <Button variant="outline" size="sm" onClick={() => { if (window.confirm(`Remover "${doc.file_name}"?`)) deleteMut.mutate(doc.doc_id) }} disabled={deleteMut.isPending} className="h-8 border-rose-500/30 bg-rose-500/10 text-rose-300 hover:bg-rose-500/20">
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </div>
-                  </article>
-                ))}
+                  ))}
+                </div>
               </div>
             ) : null}
           </section>
         </div>
+      </PageShell>
 
-        <button type="button" onClick={() => navigate('/ingest')} className="fixed bottom-6 right-6 z-40 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#c5e3ff] to-[#90caf9] px-5 py-3 font-headline text-sm font-bold text-[#03263b]">
-          <FileText className="h-4 w-4" />
-          Novo artefato
-        </button>
-      </div>
+      <button type="button" onClick={() => navigate('/ingest')} className="fixed bottom-6 right-6 z-40 inline-flex items-center gap-2 rounded-xl bg-[color:var(--ui-accent)] px-5 py-3 font-headline text-sm font-bold text-[color:var(--ui-bg)] shadow-2xl transition-all active:scale-95">
+        <FileText className="h-4 w-4" />
+        Novo artefato
+      </button>
 
       {compareDoc ? <CompareDialog doc1={compareDoc} docs={docs} onClose={() => setCompareDoc(null)} /> : null}
       {opsDoc ? <SmartOpsDialog doc={opsDoc} onClose={() => setOpsDoc(null)} /> : null}
