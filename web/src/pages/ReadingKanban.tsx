@@ -389,48 +389,46 @@ export function ReadingKanban() {
               <p className="mt-1 text-sm text-[color:var(--ui-text-meta)]">Adicione arquivos em Insercao para iniciar seu kanban de leitura.</p>
             </div>
           ) : (
-            <div className="overflow-x-auto pb-2">
-              <div className="flex min-w-[920px] gap-5">
-                {COLUMNS.map(column => {
-                  const columnDocs = grouped[column.key]
-                  return (
-                    <section
-                      key={column.key}
-                      className={cn('flex w-[300px] flex-col rounded-2xl p-4', column.columnClass)}
-                    >
-                      <header className="mb-4 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className={cn('h-1.5 w-1.5 rounded-full', column.dotClass)} />
-                          <h2 className={cn('font-headline text-xs font-bold uppercase tracking-[0.16em]', column.labelClass)}>
-                            {column.label}
-                          </h2>
-                        </div>
-                        <span className={cn('rounded-md px-2 py-1 text-[11px] font-mono', column.badgeClass)}>
-                          {columnDocs.length}
-                        </span>
-                      </header>
-
-                      <div className="flex-1 space-y-3 overflow-y-auto pr-1">
-                        {columnDocs.length === 0 ? (
-                          <div className="rounded-xl border border-dashed border-[color:var(--ui-border)]/70 p-6 text-center text-xs text-[color:var(--ui-text-meta)]">
-                            Coluna vazia
-                          </div>
-                        ) : (
-                          columnDocs.map(doc => (
-                            <BoardCard
-                              key={doc.doc_id}
-                              doc={doc}
-                              status={column.key}
-                              disabled={moveMutation.isPending}
-                              onMove={direction => moveDoc(doc.doc_id, column.key, direction)}
-                            />
-                          ))
-                        )}
+            <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
+              {COLUMNS.map(column => {
+                const columnDocs = grouped[column.key]
+                return (
+                  <section
+                    key={column.key}
+                    className={cn('flex min-w-0 flex-col rounded-2xl p-4', column.columnClass)}
+                  >
+                    <header className="mb-4 flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className={cn('h-1.5 w-1.5 rounded-full', column.dotClass)} />
+                        <h2 className={cn('font-headline text-xs font-bold uppercase tracking-[0.16em]', column.labelClass)}>
+                          {column.label}
+                        </h2>
                       </div>
-                    </section>
-                  )
-                })}
-              </div>
+                      <span className={cn('rounded-md px-2 py-1 text-[11px] font-mono', column.badgeClass)}>
+                        {columnDocs.length}
+                      </span>
+                    </header>
+
+                    <div className="flex-1 space-y-3 overflow-y-auto pr-1">
+                      {columnDocs.length === 0 ? (
+                        <div className="rounded-xl border border-dashed border-[color:var(--ui-border)]/70 p-6 text-center text-xs text-[color:var(--ui-text-meta)]">
+                          Coluna vazia
+                        </div>
+                      ) : (
+                        columnDocs.map(doc => (
+                          <BoardCard
+                            key={doc.doc_id}
+                            doc={doc}
+                            status={column.key}
+                            disabled={moveMutation.isPending}
+                            onMove={direction => moveDoc(doc.doc_id, column.key, direction)}
+                          />
+                        ))
+                      )}
+                    </div>
+                  </section>
+                )
+              })}
             </div>
           )}
         </section>
