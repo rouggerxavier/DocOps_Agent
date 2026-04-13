@@ -322,6 +322,10 @@ def test_chat_propagates_correlation_id_to_worker_thread(monkeypatch):
         }
 
     monkeypatch.setattr("docops.api.routes.chat._run_chat", _fake_run)
+    monkeypatch.setattr(
+        "docops.api.routes.chat._apply_low_confidence_guardrail",
+        lambda answer, quality_signal: (answer, False),
+    )
 
     resp = auth_client.post(
         "/api/chat",
@@ -514,6 +518,10 @@ def test_chat_stream_handles_many_small_chunks_without_breaking_sequence(monkeyp
     monkeypatch.setattr(
         "docops.api.routes.chat._run_chat",
         lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+    monkeypatch.setattr(
+        "docops.api.routes.chat._apply_low_confidence_guardrail",
+        lambda answer, quality_signal: (answer, False),
     )
 
     resp = auth_client.post("/api/chat/stream", json={"message": "hello", "session_id": "s-jitter"})
