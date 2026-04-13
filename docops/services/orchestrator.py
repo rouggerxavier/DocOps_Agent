@@ -19,6 +19,7 @@ Fluxo no chat.py:
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -496,6 +497,7 @@ def _build_flashcard_confirmation_answer(entities: dict, docs: list) -> dict:
     doc_hint = entities.get("doc_hint") or entities.get("deck_hint") or ""
     if docs:
         sample = "\n".join(f"- {doc.file_name}" for doc in docs[:5])
+        note_title = getattr(note, "title", title) or title
         return {
             "answer": (
                 "Posso gerar flashcards, mas preciso saber se você quer um documento específico "
@@ -1339,25 +1341,143 @@ def _exec_cascade_study_plan(entities: dict, user_id: int, db: Session) -> dict:
 # Cascade: Criar Nota
 # ---------------------------------------------------------------------------
 
+_NOTE_COMMAND_PREFIX_RE = re.compile(
+    r"^\s*(?:crie|criar|gere|gerar|faca|faça|anota|anote)\s+"
+    r"(?:uma\s+)?(?:nota|anotacao|anotação)(?:\s+sobre|\s+de)?\s*:?\s*",
+    re.IGNORECASE,
+)
+
+_NOTE_LITERAL_HINTS = (
+    "literalmente",
+    "texto literal",
+    "copie exatamente",
+    "salva exatamente",
+    "salve exatamente",
+    "sem alterar",
+)
+
+
+def _clean_note_seed_text(text: str) -> str:
+    cleaned = (text or "").strip()
+    cleaned = _NOTE_COMMAND_PREFIX_RE.sub("", cleaned).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" .:-")
+    return cleaned
+
+
+def _should_auto_expand_note(content_raw: str, original_message: str, seed_text: str) -> bool:
+    if not seed_text:
+        return True
+
+    low_full = f"{content_raw}\n{original_message}".lower()
+    if any(hint in low_full for hint in _NOTE_LITERAL_HINTS):
+        return False
+
+    if "\n" in content_raw and (
+        re.search(r"(^|\n)\s*#", content_raw)
+        or re.search(r"(^|\n)\s*[-*]\s+", content_raw)
+        or len(content_raw.strip()) > 300
+    ):
+        return False
+
+    return len(seed_text) <= 320
+
+
+def _build_note_fallback(topic: str, seed_text: str) -> str:
+    merged = f"{topic} {seed_text}".lower()
+    is_neural = any(token in merged for token in ("rede neural", "redes neurais", "neural network", "deep learning", "mlp"))
+
+    if is_neural:
+        return (
+            "## Visao geral\n"
+            "Redes neurais sao modelos inspirados no cerebro, compostos por camadas de neuronios artificiais. "
+            "Cada camada transforma os dados de entrada e passa o resultado para a proxima camada.\n\n"
+            "## Arquitetura e camadas\n"
+            "Uma arquitetura tipica tem: camada de entrada, uma ou mais camadas ocultas e camada de saida. "
+            "A escolha do numero de camadas e neuronios define a capacidade do modelo.\n\n"
+            "## Camadas ocultas\n"
+            "As camadas ocultas extraem representacoes intermediarias. Com funcoes de ativacao nao lineares "
+            "(ReLU, tanh, sigmoid), o modelo consegue aprender padroes complexos.\n\n"
+            "## Fluxo de treinamento\n"
+            "No forward pass, os dados atravessam as camadas ate a previsao. "
+            "No backpropagation, o erro e propagado para tras e os pesos sao atualizados por gradiente descendente.\n\n"
+            "## Hiperparametros e boas praticas\n"
+            "- taxa de aprendizado\n"
+            "- tamanho do batch\n"
+            "- numero de epocas\n"
+            "- regularizacao (dropout, weight decay)\n\n"
+            "## Observacao\n"
+            f"Contexto pedido: {seed_text or topic}"
+        )
+
+    return (
+        "## Tema\n"
+        f"{topic or seed_text}\n\n"
+        "## Resumo\n"
+        f"{seed_text or topic}\n\n"
+        "## Pontos principais\n"
+        "- Definicao\n"
+        "- Componentes\n"
+        "- Funcionamento\n"
+        "- Aplicacoes\n"
+    )
+
+
+def _generate_note_markdown(topic: str, seed_text: str) -> str | None:
+    if not os.getenv("GEMINI_API_KEY"):
+        return None
+
+    try:
+        from docops.config import config
+        from google import genai
+
+        client = genai.Client(api_key=config.gemini_api_key)
+        model = getattr(config, "gemini_model_cheap", None) or config.gemini_model
+        prompt = (
+            "Voce cria notas em markdown, em portugues brasileiro, para estudo.\n"
+            "Retorne apenas o conteudo da nota (sem bloco de codigo).\n"
+            "A nota deve ser clara, didatica e objetiva, com secoes e bullets quando fizer sentido.\n"
+            "Tema principal: "
+            f"{topic or seed_text}\n"
+            "Pedido do usuario: "
+            f"{seed_text}\n"
+            "Se o tema for redes neurais, explique arquitetura, camadas, camadas ocultas, "
+            "forward pass, backpropagation e hiperparametros de forma pratica."
+        )
+
+        response = client.models.generate_content(model=model, contents=prompt)
+        text = (response.text or "").strip()
+        if len(text) < 80:
+            return None
+        return text
+    except Exception as exc:
+        logger.info("Orchestrator: geracao de nota expandida falhou - %s: %s", type(exc).__name__, exc)
+        return None
+
+
 def _exec_cascade_create_note(entities: dict, user_id: int, db: Session, original_message: str) -> dict:
     """Cria uma nota com o conteúdo fornecido pelo usuário."""
     from docops.db import crud
 
-    topic = entities.get("topic") or entities.get("task_title") or "Nota"
-    content_raw = entities.get("content") or ""
+    topic_raw = (entities.get("topic") or entities.get("task_title") or "Nota").strip()
+    content_raw = (entities.get("content") or "").strip()
 
     # Se o usuário não forneceu conteúdo, usa a mensagem original como corpo
-    if not content_raw:
-        content_raw = original_message
+    seed_text = _clean_note_seed_text(content_raw or original_message) or topic_raw
+    topic = _clean_note_seed_text(topic_raw) or "Nota"
+    title = f"Nota: {topic[:140]}"
 
-    title = f"Nota: {topic}"
+    if _should_auto_expand_note(content_raw, original_message, seed_text):
+        content_final = _generate_note_markdown(topic, seed_text) or _build_note_fallback(topic, seed_text)
+    else:
+        content_final = content_raw or original_message
     try:
         note = crud.create_note_record(
             db,
             user_id=user_id,
             title=title,
-            content=content_raw,
+            content=content_final,
         )
+        note_title = getattr(note, "title", title) or title
         return {
             "answer": (
                 f"📝 Nota criada: **{note.title}**\n\n"
@@ -1366,7 +1486,7 @@ def _exec_cascade_create_note(entities: dict, user_id: int, db: Session, origina
             "intent": "cascade_create_note",
             "active_context": {
                 "active_note_id": getattr(note, "id", None),
-                "active_note_title": note.title,
+                "active_note_title": note_title,
                 "active_intent": "cascade_create_note",
                 "last_action": "cascade_create_note",
             },
