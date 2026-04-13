@@ -572,7 +572,6 @@ function StudySession({
   const isLast = idx === cards.length - 1
   const activeDiff = correctedDiff ?? card.difficulty
   const diffLabel = DIFFICULTY_LABELS[activeDiff] ?? 'Média'
-  const diffStyle = DIFFICULTY_STYLES[activeDiff] ?? DIFFICULTY_STYLES.media
 
   function advanceCard() {
     setRevealed(false)
