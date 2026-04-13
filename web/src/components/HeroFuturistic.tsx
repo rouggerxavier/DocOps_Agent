@@ -202,19 +202,40 @@ export function HeroFuturistic({
   interactive = true,
   fallbackMode = 'still',
 }: HeroFuturisticProps) {
-  // Delay Canvas mount until after the browser's first paint so Chrome's GPU
-  // process is fully active. Without this, WebGPU init races with GPU process
-  // scheduling — the renderer silently stalls until DevTools opens (which
-  // forces the GPU process into "active" mode as a side effect).
+  const containerRef = useRef<HTMLDivElement | null>(null)
   const [canvasReady, setCanvasReady] = useState(false)
 
   useEffect(() => {
-    const id = setTimeout(() => setCanvasReady(true), 0)
-    return () => clearTimeout(id)
+    const node = containerRef.current
+    if (!node) {
+      return
+    }
+
+    const syncCanvasReadiness = () => {
+      const rect = node.getBoundingClientRect()
+      const sized = rect.width >= 16 && rect.height >= 16
+      setCanvasReady(sized)
+    }
+
+    syncCanvasReadiness()
+
+    if (typeof ResizeObserver === 'undefined') {
+      return
+    }
+
+    const observer = new ResizeObserver(() => {
+      requestAnimationFrame(syncCanvasReadiness)
+    })
+    observer.observe(node)
+
+    return () => {
+      observer.disconnect()
+    }
   }, [])
 
   return (
     <div
+      ref={containerRef}
       className={cn(
         'relative isolate min-h-[260px] overflow-hidden rounded-[2rem] border border-[color:var(--ui-border)] bg-[color:var(--ui-surface)] shadow-[0_24px_80px_rgba(0,0,0,0.38)] sm:min-h-[360px]',
         className
@@ -225,8 +246,9 @@ export function HeroFuturistic({
         <WebGPUErrorBoundary fallback={<HeroFallback mode={fallbackMode} />}>
           <Canvas
             flat
+            frameloop="always"
             dpr={[1, 1.5]}
-            className="relative z-10"
+            className="relative z-10 h-full w-full"
             camera={{ position: [0, 0, 1.6], fov: 32 }}
             gl={async (props) => {
               const renderer = new THREE.WebGPURenderer({ ...props, antialias: true } as any)

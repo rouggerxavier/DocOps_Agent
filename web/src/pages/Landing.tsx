@@ -65,9 +65,9 @@ export function Landing() {
               
               <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.08, ease: EASE }} className="relative group h-full min-h-[400px]">
                 <div className="absolute -inset-4 bg-primary/10 rounded-[2rem] blur-3xl"></div>
-                <div className="relative w-full h-[400px] sm:h-[500px] lg:h-[620px] bg-surface-container-lowest rounded-[2rem] border border-outline-variant/20 flex items-center justify-center overflow-hidden">
-                  <HeroFuturistic className="w-full h-full" interactive fallbackMode="still" />
-                  <div className="absolute inset-0 bg-gradient-to-tr from-primary/5 to-transparent pointer-events-none"></div>
+                <div className="relative w-full h-[400px] sm:h-[500px] lg:h-[620px]">
+                  <HeroFuturistic className="absolute inset-0" interactive fallbackMode="still" />
+                  <div className="absolute inset-0 bg-gradient-to-tr from-primary/5 to-transparent pointer-events-none rounded-[2rem]"></div>
                 </div>
               </motion.div>
             </div>
