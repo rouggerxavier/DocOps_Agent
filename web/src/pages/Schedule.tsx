@@ -455,14 +455,16 @@ function WeekView({
   }
 
   return (
-    <div className="flex flex-1 flex-col overflow-hidden">
+    <div className="relative flex flex-1 flex-col overflow-hidden">
+      {/* Fade hint de scroll à direita — visível apenas no mobile */}
+      <div className="pointer-events-none absolute right-0 top-0 z-30 h-full w-8 bg-gradient-to-l from-[color:var(--ui-bg)]/70 to-transparent sm:hidden" />
       {/* Header dias — scroll horizontal sincronizado */}
       <div className="overflow-x-auto border-b border-[color:var(--ui-border-soft)]/70 bg-[color:var(--ui-bg)]" style={{ scrollbarWidth: 'none' }}>
-        <div className="flex" style={{ minWidth: 'max(100%, 560px)' }}>
-          <div className="flex h-16 w-[60px] shrink-0 items-center justify-center border-r border-[color:var(--ui-border-soft)]/60 text-[10px] font-semibold tracking-[0.12em] text-[color:var(--ui-text-meta)]">
-            GMT-3
+        <div className="flex" style={{ minWidth: 'max(100%, 680px)' }}>
+          <div className="flex h-16 w-[44px] shrink-0 items-center justify-center border-r border-[color:var(--ui-border-soft)]/60 text-[10px] font-semibold tracking-[0.12em] text-[color:var(--ui-text-meta)] sm:w-[60px]">
+            <span className="hidden sm:inline">GMT-3</span>
           </div>
-          <div className="grid flex-1 h-16" style={{ gridTemplateColumns: 'repeat(7, minmax(70px, 1fr))' }}>
+          <div className="grid flex-1 h-16" style={{ gridTemplateColumns: 'repeat(7, minmax(90px, 1fr))' }}>
         {weekDays.map((day, i) => {
           const key = toDateKey(day)
           const isSelected = key === selectedDate
@@ -518,8 +520,8 @@ function WeekView({
 
       {/* Body — scroll vertical + horizontal sincronizado */}
       <div className="flex flex-1 overflow-x-auto overflow-y-auto">
-        <div className="flex" style={{ minWidth: 'max(100%, 560px)' }}>
-        <div className="w-[60px] shrink-0 border-r border-[color:var(--ui-border-soft)]/50 bg-[color:var(--ui-bg)]">
+        <div className="flex" style={{ minWidth: 'max(100%, 680px)' }}>
+        <div className="w-[44px] shrink-0 border-r border-[color:var(--ui-border-soft)]/50 bg-[color:var(--ui-bg)] sm:w-[60px]">
           {hours.map(h => (
             <div
               key={h}
@@ -551,7 +553,7 @@ function WeekView({
                 ...(!isSelected && !isTodayDay ? timeGridStyle : {}),
               }}
               className={cn(
-                'relative min-w-[70px] flex-1 cursor-pointer border-r border-[color:var(--ui-border-soft)]/40 transition-colors',
+                'relative min-w-[90px] flex-1 cursor-pointer border-r border-[color:var(--ui-border-soft)]/40 transition-colors',
                 isSelected && 'bg-[color:var(--ui-accent-soft)]/26',
                 isTodayDay && !isSelected && 'bg-[color:var(--ui-surface-1)]/45',
                 isWeekend && !isSelected && !isTodayDay && 'bg-[color:var(--ui-bg)]/65'
@@ -883,26 +885,25 @@ export function Schedule() {
     <div className="relative flex h-[calc(100vh-4rem)] flex-col gap-0 overflow-hidden rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-bg)] shadow-[0_24px_60px_rgba(0,0,0,0.42)] md:flex-row">
       {/* ── COLUNA ESQUERDA: Calendário ─────────────────────────────────────── */}
       <div className={`${mobilePanel === 'calendar' ? 'flex' : 'hidden'} md:flex flex-1 flex-col overflow-hidden`}>
-        {/* Header do calendário */}
-        <div className="flex items-center justify-between border-b border-[color:var(--ui-border-soft)]/70 bg-[color:var(--ui-bg)] px-3 py-3 sm:px-6 sm:py-4">
+        {/* Header do calendário — mobile: 2 linhas, desktop: 1 linha */}
+        <div className="flex flex-col gap-2 border-b border-[color:var(--ui-border-soft)]/70 bg-[color:var(--ui-bg)] px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:px-6 sm:py-4">
+          {/* Linha 1: ícone + título */}
           <div className="flex items-center gap-2 sm:gap-4">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[color:var(--ui-accent-soft)] sm:h-9 sm:w-9">
               <Calendar className="h-4 w-4 text-[color:var(--ui-accent)]" />
             </div>
-            <div>
-              <h1 className="font-headline text-base font-bold text-[color:var(--ui-text)] sm:text-xl">
-                {view === 'week' ? weekLabel : `${MONTH_NAMES[monthCursor.getMonth()]} ${monthCursor.getFullYear()}`}
-              </h1>
-              <p className="app-kicker mt-0.5 hidden sm:block">Calendário pessoal</p>
-            </div>
+            <h1 className="font-headline text-sm font-bold text-[color:var(--ui-text)] sm:text-xl">
+              {view === 'week' ? weekLabel : `${MONTH_NAMES[monthCursor.getMonth()]} ${monthCursor.getFullYear()}`}
+            </h1>
           </div>
+          {/* Linha 2 (mobile) / mesma linha (desktop): controles */}
           <div className="flex items-center gap-1.5 sm:gap-2">
             {/* Toggle view */}
             <div className="flex rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] p-0.5">
               <button
                 onClick={() => setView('month')}
                 className={cn(
-                  'rounded-md px-3 py-1.5 text-xs font-semibold transition-colors',
+                  'rounded-md px-2.5 py-1 text-xs font-semibold transition-colors sm:px-3 sm:py-1.5',
                   view === 'month' ? 'bg-[color:var(--ui-surface-2)] text-[color:var(--ui-accent)]' : 'text-[color:var(--ui-text-meta)] hover:text-[color:var(--ui-text)]'
                 )}
               >
@@ -911,7 +912,7 @@ export function Schedule() {
               <button
                 onClick={() => setView('week')}
                 className={cn(
-                  'rounded-md px-3 py-1.5 text-xs font-semibold transition-colors',
+                  'rounded-md px-2.5 py-1 text-xs font-semibold transition-colors sm:px-3 sm:py-1.5',
                   view === 'week' ? 'bg-[color:var(--ui-surface-2)] text-[color:var(--ui-accent)]' : 'text-[color:var(--ui-text-meta)] hover:text-[color:var(--ui-text)]'
                 )}
               >
@@ -924,7 +925,7 @@ export function Schedule() {
                 if (view === 'week') prevWeek()
                 else setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth() - 1, 1))
               }}
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)]"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)] sm:h-9 sm:w-9"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -934,7 +935,7 @@ export function Schedule() {
                 setMonthCursor(startOfMonth(now))
                 setSelectedDate(toDateKey(now))
               }}
-              className="rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] px-2.5 py-1.5 text-xs font-semibold text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)] sm:px-3"
+              className="rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] px-2.5 py-1 text-xs font-semibold text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)] sm:py-1.5 sm:px-3"
             >
               Hoje
             </button>
@@ -943,7 +944,7 @@ export function Schedule() {
                 if (view === 'week') nextWeek()
                 else setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 1))
               }}
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)]"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)] sm:h-9 sm:w-9"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
