@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Upload, FolderOpen, CheckCircle, X, FileText, Loader2, Layers, ChevronDown, ClipboardPaste, Camera } from 'lucide-react'
+import { Camera, CheckCircle, ChevronDown, ClipboardPaste, FileText, FolderOpen, Layers, Loader2, Upload, X } from 'lucide-react'
 import { toast } from 'sonner'
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { PageShell } from '@/components/ui/page-shell'
@@ -24,27 +23,24 @@ async function buildPreview(file: File): Promise<TabularPreview | null> {
     const text = await file.text()
     const lines = text.split(/\r?\n/).filter(Boolean).slice(0, 21)
     const rows = lines.map(line => line.split(',').map(cell => cell.trim()))
-    const headers = rows[0] ?? []
-    return { fileName: file.name, headers, rows: rows.slice(1, 11) }
+    return { fileName: file.name, headers: rows[0] ?? [], rows: rows.slice(1, 11) }
   }
 
   const buffer = await file.arrayBuffer()
   const workbook = XLSX.read(buffer, { type: 'array' })
   const firstSheetName = workbook.SheetNames[0]
   const sheet = workbook.Sheets[firstSheetName]
-  const matrix: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false })
+  const matrix: unknown[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false })
   const normalized = matrix
     .map(row => row.map(cell => (cell == null ? '' : String(cell))))
     .filter(row => row.some(cell => String(cell).trim() !== ''))
-  const headers = normalized[0] ?? []
   return {
     fileName: `${file.name} (${firstSheetName})`,
-    headers,
+    headers: normalized[0] ?? [],
     rows: normalized.slice(1, 11),
   }
 }
 
-// Fake progress stages for visual feedback during ingestion
 const INGEST_STAGES = [
   { label: 'Carregando arquivos...', pct: 15 },
   { label: 'Dividindo em chunks...', pct: 40 },
@@ -65,6 +61,7 @@ function useIngestProgress(isLoading: boolean) {
       setPct(0)
       return
     }
+
     setStageIdx(0)
     setPct(5)
     let idx = 0
@@ -72,45 +69,39 @@ function useIngestProgress(isLoading: boolean) {
       idx = Math.min(idx + 1, INGEST_STAGES.length - 1)
       setStageIdx(idx)
       setPct(INGEST_STAGES[idx].pct)
-      if (idx >= INGEST_STAGES.length - 1) {
-        if (timerRef.current) clearInterval(timerRef.current)
+      if (idx >= INGEST_STAGES.length - 1 && timerRef.current) {
+        clearInterval(timerRef.current)
       }
     }, 900)
-    return () => { if (timerRef.current) clearInterval(timerRef.current) }
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
   }, [isLoading])
 
   return { stageLabel: INGEST_STAGES[stageIdx]?.label ?? '', pct }
 }
 
 export function Ingest() {
-  const qc = useQueryClient()
+  const queryClient = useQueryClient()
 
-  // Upload tab state
+  const [tab, setTab] = useState<'upload' | 'path' | 'clip' | 'photo'>('upload')
   const [dragOver, setDragOver] = useState(false)
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [previewIndex, setPreviewIndex] = useState<number | null>(null)
   const [preview, setPreview] = useState<TabularPreview | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // Path tab state
   const [serverPath, setServerPath] = useState('')
-
-  // Advanced
-  const [chunkSize, setChunkSize] = useState('')
-  const [chunkOverlap, setChunkOverlap] = useState('')
-  const [advancedOpen, setAdvancedOpen] = useState(false)
-
-  // Clip tab state
   const [clipText, setClipText] = useState('')
   const [clipTitle, setClipTitle] = useState('')
-
-  // Photo tab state
   const [photoFile, setPhotoFile] = useState<File | null>(null)
   const [photoTitle, setPhotoTitle] = useState('')
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
 
-  // Active tab
-  const [tab, setTab] = useState<'upload' | 'path' | 'clip' | 'photo'>('upload')
+  const [chunkSize, setChunkSize] = useState('')
+  const [chunkOverlap, setChunkOverlap] = useState('')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
 
   const [result, setResult] = useState<IngestResponse | null>(null)
 
@@ -118,36 +109,32 @@ export function Ingest() {
     mutationFn: () =>
       apiClient.ingestUpload(
         selectedFiles,
-        chunkSize ? parseInt(chunkSize) : 0,
-        chunkOverlap ? parseInt(chunkOverlap) : 0
+        chunkSize ? Number.parseInt(chunkSize, 10) : 0,
+        chunkOverlap ? Number.parseInt(chunkOverlap, 10) : 0,
       ),
     onSuccess: data => {
       setResult(data)
       setSelectedFiles([])
-      qc.invalidateQueries({ queryKey: ['docs'] })
+      queryClient.invalidateQueries({ queryKey: ['docs'] })
       toast.success(`${data.chunks_indexed} chunks indexados com sucesso!`)
     },
-    onError: (err: any) => {
-      toast.error(err?.response?.data?.detail ?? 'Erro ao inserir arquivos')
-    },
+    onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao inserir arquivos'),
   })
 
   const pathMutation = useMutation({
     mutationFn: () =>
       apiClient.ingestPath(
         serverPath,
-        chunkSize ? parseInt(chunkSize) : 0,
-        chunkOverlap ? parseInt(chunkOverlap) : 0
+        chunkSize ? Number.parseInt(chunkSize, 10) : 0,
+        chunkOverlap ? Number.parseInt(chunkOverlap, 10) : 0,
       ),
     onSuccess: data => {
       setResult(data)
       setServerPath('')
-      qc.invalidateQueries({ queryKey: ['docs'] })
+      queryClient.invalidateQueries({ queryKey: ['docs'] })
       toast.success(`${data.chunks_indexed} chunks indexados com sucesso!`)
     },
-    onError: (err: any) => {
-      toast.error(err?.response?.data?.detail ?? 'Erro ao inserir caminho')
-    },
+    onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao inserir caminho'),
   })
 
   const clipMutation = useMutation({
@@ -156,12 +143,10 @@ export function Ingest() {
       setResult(data)
       setClipText('')
       setClipTitle('')
-      qc.invalidateQueries({ queryKey: ['docs'] })
+      queryClient.invalidateQueries({ queryKey: ['docs'] })
       toast.success(`${data.chunks_indexed} chunks indexados com sucesso!`)
     },
-    onError: (err: any) => {
-      toast.error(err?.response?.data?.detail ?? 'Erro ao inserir texto')
-    },
+    onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao inserir texto'),
   })
 
   const photoMutation = useMutation({
@@ -171,30 +156,29 @@ export function Ingest() {
       setPhotoFile(null)
       setPhotoTitle('')
       setPhotoPreview(null)
-      qc.invalidateQueries({ queryKey: ['docs'] })
+      queryClient.invalidateQueries({ queryKey: ['docs'] })
       toast.success(`${data.chunks_indexed} chunks indexados com sucesso!`)
     },
-    onError: (err: any) => {
-      toast.error(err?.response?.data?.detail ?? 'Erro ao processar foto')
-    },
+    onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao processar foto'),
   })
 
   const isLoading = uploadMutation.isPending || pathMutation.isPending || clipMutation.isPending || photoMutation.isPending
   const { stageLabel, pct } = useIngestProgress(isLoading)
+  const totalSizeKb = selectedFiles.reduce((acc, file) => acc + file.size, 0) / 1024
 
-  function handleDrop(e: React.DragEvent) {
-    e.preventDefault()
+  function handleDrop(event: React.DragEvent) {
+    event.preventDefault()
     setDragOver(false)
-    const files = Array.from(e.dataTransfer.files).filter(f =>
-      /\.(pdf|txt|md|markdown|csv|xlsx|xls|ods)$/i.test(f.name)
+    const files = Array.from(event.dataTransfer.files).filter(file =>
+      /\.(pdf|txt|md|markdown|csv|xlsx|xls|ods)$/i.test(file.name),
     )
     setSelectedFiles(prev => [...prev, ...files])
   }
 
-  function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
-    if (e.target.files) {
-      setSelectedFiles(prev => [...prev, ...Array.from(e.target.files!)])
-    }
+  function handleFileInput(event: React.ChangeEvent<HTMLInputElement>) {
+    const { files } = event.currentTarget
+    if (!files) return
+    setSelectedFiles(prev => [...prev, ...Array.from(files)])
   }
 
   useEffect(() => {
@@ -204,8 +188,8 @@ export function Ingest() {
       return
     }
     if (previewIndex === null || previewIndex >= selectedFiles.length) {
-      const firstTabularIdx = selectedFiles.findIndex(f => /\.(csv|xlsx|xls|ods)$/i.test(f.name))
-      setPreviewIndex(firstTabularIdx >= 0 ? firstTabularIdx : null)
+      const firstTabular = selectedFiles.findIndex(file => /\.(csv|xlsx|xls|ods)$/i.test(file.name))
+      setPreviewIndex(firstTabular >= 0 ? firstTabular : null)
     }
   }, [selectedFiles, previewIndex])
 
@@ -217,134 +201,75 @@ export function Ingest() {
     }
     let cancelled = false
     buildPreview(selected)
-      .then(data => {
-        if (cancelled) return
-        setPreview(data)
-      })
-      .catch(() => {
-        if (cancelled) return
-        setPreview(null)
-      })
-    return () => {
-      cancelled = true
-    }
+      .then(data => { if (!cancelled) setPreview(data) })
+      .catch(() => { if (!cancelled) setPreview(null) })
+    return () => { cancelled = true }
   }, [previewIndex, selectedFiles])
 
   return (
-    <PageShell>
-      <div>
-        <h1 className="text-2xl font-bold text-zinc-100">Inserção de Documentos</h1>
-        <p className="mt-1 text-sm text-zinc-400">
-          Indexe PDFs, Markdown, texto e planilhas (CSV/XLSX/XLS/ODS) no Chroma
-        </p>
-      </div>
+    <PageShell className="relative space-y-8 overflow-hidden">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_84%_10%,rgba(144,202,249,0.12),transparent_40%),radial-gradient(circle_at_14%_16%,rgba(201,139,94,0.08),transparent_46%)]" />
 
-      {/* Tab switcher */}
-      <div className="flex rounded-lg border border-zinc-800 bg-zinc-900 p-1 w-fit">
+      <header className="relative z-10 space-y-2">
+        <h1 className="font-headline text-4xl font-extrabold tracking-tight text-[color:var(--ui-text)]">Insercao de Documentos</h1>
+        <p className="max-w-2xl text-sm text-[color:var(--ui-text-dim)]">
+          Alimente o cerebro do DocOps Agent com novos conhecimentos. Os documentos sao processados e indexados para consulta imediata.
+        </p>
+      </header>
+
+      <div className="relative z-10 flex w-fit gap-1 rounded-xl bg-[#0e0e0e] p-1">
         {([
           { key: 'upload', label: 'Upload' },
           { key: 'path', label: 'Caminho' },
           { key: 'clip', label: 'Clip de Texto' },
           { key: 'photo', label: 'Foto / OCR' },
-        ] as const).map(t => (
+        ] as const).map(item => (
           <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
+            key={item.key}
+            onClick={() => setTab(item.key)}
             className={cn(
-              'rounded-md px-4 py-1.5 text-sm font-medium transition-colors',
-              tab === t.key
-                ? 'bg-zinc-700 text-zinc-100'
-                : 'text-zinc-400 hover:text-zinc-200'
+              'rounded-lg px-4 py-2 text-sm font-medium transition-colors',
+              tab === item.key ? 'bg-[#2a2a2a] text-[#c5e3ff]' : 'text-[#8b9199] hover:bg-[#1c1b1b] hover:text-[#e5e2e1]',
             )}
           >
-            {t.label}
+            {item.label}
           </button>
         ))}
       </div>
 
-      {/* Upload tab */}
       {tab === 'upload' && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Upload className="h-5 w-5 text-blue-400" />
-              Upload de Arquivos
-            </CardTitle>
-            <CardDescription>
-              Arraste arquivos ou clique para selecionar. Suporta PDF, TXT, MD, CSV, XLSX, XLS e ODS
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* Drop zone */}
-            <div
-              onDragOver={e => { e.preventDefault(); setDragOver(true) }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={handleDrop}
-              onClick={() => fileInputRef.current?.click()}
-              className={cn(
-                'cursor-pointer rounded-xl border-2 border-dashed p-12 text-center transition-colors',
-                dragOver
-                  ? 'border-blue-500 bg-blue-500/10'
-                  : 'border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800/50'
-              )}
-            >
-              <Upload className="mx-auto mb-3 h-10 w-10 text-zinc-500" />
-              <p className="text-sm font-medium text-zinc-300">
-                Arraste arquivos aqui ou clique para selecionar
-              </p>
-              <p className="mt-1 text-xs text-zinc-500">PDF, TXT, MD, MARKDOWN, CSV, XLSX</p>
-              <p className="mt-1 text-xs text-zinc-500">XLS, ODS</p>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept=".pdf,.txt,.md,.markdown,.csv,.xlsx,.xls,.ods"
-                className="hidden"
-                onChange={handleFileInput}
-              />
+        <section className="relative z-10 grid grid-cols-12 gap-6">
+          <div className="col-span-12 lg:col-span-8">
+            <div className="rounded-xl bg-[#1c1b1b] p-1">
+              <div
+                onDragOver={event => { event.preventDefault(); setDragOver(true) }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+                onClick={() => fileInputRef.current?.click()}
+                className={cn('cursor-pointer rounded-lg border-2 border-dashed px-6 py-16 text-center transition-colors', dragOver ? 'border-[#90caf9]/80 bg-[#203142]/30' : 'border-[#41474e]/40 bg-[#131313] hover:border-[#90caf9]/50')}
+              >
+                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-[#2a2a2a]"><Upload className="h-8 w-8 text-[#c5e3ff]" /></div>
+                <p className="text-lg font-semibold text-[#e5e2e1]">Arraste arquivos aqui ou clique para selecionar</p>
+                <p className="mt-2 text-xs text-[#8b9199]">PDF, TXT, MD, CSV, XLSX, XLS, ODS</p>
+                <input ref={fileInputRef} type="file" multiple accept=".pdf,.txt,.md,.markdown,.csv,.xlsx,.xls,.ods" className="hidden" onChange={handleFileInput} />
+              </div>
             </div>
 
-            {/* Selected files */}
             {selectedFiles.length > 0 && (
-              <div className="space-y-2">
-                <p className="text-sm font-medium text-zinc-300">
-                  {selectedFiles.length} arquivo(s) selecionado(s):
-                </p>
-                {selectedFiles.map((f, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center justify-between rounded-lg bg-zinc-800 px-3 py-2"
-                  >
-                    <div className="flex items-center gap-2">
-                      <FileText className="h-4 w-4 text-blue-400" />
-                      <span className="text-sm text-zinc-200">{f.name}</span>
-                      <span className="text-xs text-zinc-500">
-                        ({(f.size / 1024).toFixed(1)} KB)
-                      </span>
-                      {/\.(csv|xlsx|xls|ods)$/i.test(f.name) && (
-                        <button
-                          onClick={e => {
-                            e.stopPropagation()
-                            setPreviewIndex(i)
-                          }}
-                          className={cn(
-                            'rounded border px-2 py-0.5 text-[10px] transition-colors',
-                            previewIndex === i
-                              ? 'border-blue-500 bg-blue-500/10 text-blue-300'
-                              : 'border-zinc-600 text-zinc-400 hover:border-zinc-500'
-                          )}
-                        >
+              <div className="mt-4 space-y-2">
+                {selectedFiles.map((file, index) => (
+                  <div key={`${file.name}-${index}`} className="flex items-center justify-between rounded-lg bg-[#1c1b1b] px-3 py-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <FileText className="h-4 w-4 shrink-0 text-[#90caf9]" />
+                      <span className="truncate text-sm text-[#e5e2e1]">{file.name}</span>
+                      <span className="text-xs text-[#8b9199]">({(file.size / 1024).toFixed(1)} KB)</span>
+                      {/\.(csv|xlsx|xls|ods)$/i.test(file.name) && (
+                        <button onClick={event => { event.stopPropagation(); setPreviewIndex(index) }} className={cn('rounded border px-2 py-0.5 text-[10px]', previewIndex === index ? 'border-[#90caf9] bg-[#203142]/50 text-[#c5e3ff]' : 'border-[#41474e] text-[#8b9199]')}>
                           Preview
                         </button>
                       )}
                     </div>
-                    <button
-                      onClick={e => {
-                        e.stopPropagation()
-                        setSelectedFiles(prev => prev.filter((_, j) => j !== i))
-                      }}
-                      className="text-zinc-500 hover:text-red-400"
-                    >
+                    <button onClick={event => { event.stopPropagation(); setSelectedFiles(prev => prev.filter((_, idx) => idx !== index)) }} className="text-[#8b9199] hover:text-[#ffb4ab]">
                       <X className="h-4 w-4" />
                     </button>
                   </div>
@@ -353,29 +278,19 @@ export function Ingest() {
             )}
 
             {preview && (
-              <div className="rounded-xl border border-zinc-700 bg-zinc-950 p-3">
-                <p className="mb-2 text-sm font-medium text-zinc-200">
-                  Pré-visualização tabular: {preview.fileName}
-                </p>
+              <div className="mt-4 overflow-hidden rounded-xl border border-[#41474e] bg-[#0f0f0f]">
+                <p className="border-b border-[#41474e]/40 px-3 py-2 text-sm font-medium text-[#e5e2e1]">Pre-visualizacao tabular: {preview.fileName}</p>
                 <div className="overflow-auto">
                   <table className="min-w-full border-collapse text-xs">
                     <thead>
                       <tr>
-                        {preview.headers.map((header, idx) => (
-                          <th key={`${header}-${idx}`} className="border border-zinc-700 bg-zinc-900 px-2 py-1 text-left text-zinc-300">
-                            {header || `col_${idx + 1}`}
-                          </th>
-                        ))}
+                        {preview.headers.map((header, idx) => <th key={`${header}-${idx}`} className="border border-[#2a2a2a] bg-[#1c1b1b] px-2 py-1 text-left text-[#c1c7cf]">{header || `col_${idx + 1}`}</th>)}
                       </tr>
                     </thead>
                     <tbody>
                       {preview.rows.map((row, rowIdx) => (
                         <tr key={rowIdx}>
-                          {preview.headers.map((_, colIdx) => (
-                            <td key={`${rowIdx}-${colIdx}`} className="border border-zinc-800 px-2 py-1 text-zinc-400">
-                              {row[colIdx] ?? ''}
-                            </td>
-                          ))}
+                          {preview.headers.map((_, colIdx) => <td key={`${rowIdx}-${colIdx}`} className="border border-[#2a2a2a] px-2 py-1 text-[#aab2bc]">{row[colIdx] ?? ''}</td>)}
                         </tr>
                       ))}
                     </tbody>
@@ -383,296 +298,120 @@ export function Ingest() {
                 </div>
               </div>
             )}
+          </div>
+
+          <div className="col-span-12 space-y-5 lg:col-span-4">
+            <div className="rounded-xl bg-[#1c1b1b] p-5">
+              <h3 className="mb-4 text-xs font-bold uppercase tracking-[0.14em] text-[#c5e3ff]/80">Informacao de indexacao</h3>
+              <div className="space-y-3 text-sm">
+                <div className="flex items-center justify-between"><span className="text-[#8b9199]">Arquivos selecionados</span><span className="font-mono text-[#e5e2e1]">{selectedFiles.length}</span></div>
+                <div className="flex items-center justify-between"><span className="text-[#8b9199]">Tamanho total</span><span className="font-mono text-[#e5e2e1]">{totalSizeKb.toFixed(1)} KB</span></div>
+              </div>
+            </div>
 
             {isLoading && (
-              <div className="rounded-xl border border-zinc-700 bg-zinc-900/60 p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
-                  <span className="text-sm text-zinc-300">{stageLabel}</span>
-                  <span className="ml-auto text-xs font-mono text-zinc-500">{pct}%</span>
-                </div>
-                <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-blue-600 transition-all duration-700"
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-                <p className="text-xs text-zinc-600">
-                  Isso pode levar alguns segundos dependendo do tamanho dos arquivos.
-                </p>
+              <div className="rounded-xl border border-[#41474e] bg-[#1c1b1b] p-4 space-y-3">
+                <div className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin text-[#90caf9]" /><span className="text-sm text-[#c1c7cf]">{stageLabel}</span><span className="ml-auto text-xs font-mono text-[#8b9199]">{pct}%</span></div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-[#0e0e0e]"><div className="h-full rounded-full bg-[#90caf9] transition-all duration-700" style={{ width: `${pct}%` }} /></div>
               </div>
             )}
-            <Button
-              onClick={() => uploadMutation.mutate()}
-              disabled={selectedFiles.length === 0 || isLoading}
-              className={cn('w-full', (selectedFiles.length === 0 || isLoading) && 'opacity-50 cursor-not-allowed')}
-            >
-              {isLoading ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Indexando...</>
-              ) : (
-                <><Layers className="mr-2 h-4 w-4" />Indexar Arquivos</>
-              )}
+
+            <Button onClick={() => uploadMutation.mutate()} disabled={selectedFiles.length === 0 || isLoading} className="h-12 w-full rounded-xl border-0 bg-gradient-to-r from-[#c5e3ff] to-[#90caf9] text-[#03263b] disabled:opacity-40">
+              {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Layers className="mr-2 h-4 w-4" />}
+              {isLoading ? 'Indexando...' : 'Indexar Arquivos'}
             </Button>
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       )}
 
-      {/* Path tab */}
       {tab === 'path' && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <FolderOpen className="h-5 w-5 text-blue-400" />
-              Caminho do Servidor
-            </CardTitle>
-            <CardDescription>
-              Informe o caminho absoluto ou relativo de uma pasta ou arquivo no servidor.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-                Caminho
-              </label>
-              <Input
-                placeholder="Ex: /home/user/docs ou ./docs"
-                value={serverPath}
-                onChange={e => setServerPath(e.target.value)}
-              />
-            </div>
-            {isLoading && (
-              <div className="rounded-xl border border-zinc-700 bg-zinc-900/60 p-4 space-y-3">
-                <div className="flex items-center gap-2">
-                  <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
-                  <span className="text-sm text-zinc-300">{stageLabel}</span>
-                  <span className="ml-auto text-xs font-mono text-zinc-500">{pct}%</span>
-                </div>
-                <div className="h-1.5 w-full rounded-full bg-zinc-800 overflow-hidden">
-                  <div
-                    className="h-full rounded-full bg-blue-600 transition-all duration-700"
-                    style={{ width: `${pct}%` }}
-                  />
-                </div>
-              </div>
-            )}
-            <Button
-              onClick={() => pathMutation.mutate()}
-              disabled={!serverPath.trim() || isLoading}
-              className="w-full"
-            >
-              {isLoading ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Indexando...</>
-              ) : (
-                <><Layers className="mr-2 h-4 w-4" />Indexar Caminho</>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
+        <section className="relative z-10 rounded-xl bg-[#1c1b1b] p-6 space-y-4">
+          <Input placeholder="Ex: /home/user/docs ou ./docs" value={serverPath} onChange={event => setServerPath(event.target.value)} className="h-11 border-[#41474e] bg-[#131313] text-[#e5e2e1]" />
+          <Button onClick={() => pathMutation.mutate()} disabled={!serverPath.trim() || isLoading} className="h-11 w-full rounded-lg border-0 bg-[#203142] text-[#c5e3ff]">
+            {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FolderOpen className="mr-2 h-4 w-4" />}
+            {isLoading ? 'Indexando...' : 'Indexar Caminho'}
+          </Button>
+        </section>
       )}
 
-      {/* Clip tab */}
       {tab === 'clip' && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ClipboardPaste className="h-5 w-5 text-blue-400" />
-              Clip de Texto
-            </CardTitle>
-            <CardDescription>
-              Cole texto da área de transferência, URLs ou anotações rápidas para indexar.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-                Título (opcional)
-              </label>
-              <Input
-                placeholder="Ex: Anotações da aula, Trecho do artigo..."
-                value={clipTitle}
-                onChange={e => setClipTitle(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-                Texto
-              </label>
-              <textarea
-                value={clipText}
-                onChange={e => setClipText(e.target.value)}
-                placeholder="Cole ou digite o texto aqui (mínimo 10 caracteres)..."
-                rows={8}
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-600 outline-none focus:border-zinc-500 resize-y"
-              />
-              <p className="mt-1 text-xs text-zinc-600">{clipText.length} caracteres</p>
-            </div>
-            <Button
-              onClick={() => clipMutation.mutate()}
-              disabled={clipText.trim().length < 10 || isLoading}
-              className="w-full"
-            >
-              {clipMutation.isPending ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Indexando...</>
-              ) : (
-                <><ClipboardPaste className="mr-2 h-4 w-4" />Indexar Texto</>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
+        <section className="relative z-10 rounded-xl bg-[#1c1b1b] p-6 space-y-4">
+          <Input placeholder="Titulo (opcional)" value={clipTitle} onChange={event => setClipTitle(event.target.value)} className="h-11 border-[#41474e] bg-[#131313] text-[#e5e2e1]" />
+          <textarea value={clipText} onChange={event => setClipText(event.target.value)} placeholder="Cole texto para indexar..." rows={8} className="w-full rounded-lg border border-[#41474e] bg-[#131313] px-3 py-2 text-sm text-[#e5e2e1] outline-none" />
+          <p className="text-xs text-[#8b9199]">{clipText.length} caracteres</p>
+          <Button onClick={() => clipMutation.mutate()} disabled={clipText.trim().length < 10 || isLoading} className="h-11 w-full rounded-lg border-0 bg-[#203142] text-[#c5e3ff]">
+            {clipMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <ClipboardPaste className="mr-2 h-4 w-4" />}
+            {clipMutation.isPending ? 'Indexando...' : 'Indexar Texto'}
+          </Button>
+        </section>
       )}
 
-      {/* Photo tab */}
       {tab === 'photo' && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Camera className="h-5 w-5 text-blue-400" />
-              Foto / OCR
-            </CardTitle>
-            <CardDescription>
-              Envie uma foto e o texto será extraído automaticamente via IA (Gemini Vision).
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-                Título (opcional)
-              </label>
-              <Input
-                placeholder="Ex: Página do livro, Quadro branco..."
-                value={photoTitle}
-                onChange={e => setPhotoTitle(e.target.value)}
-              />
-            </div>
-            <div>
-              <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-                Imagem
-              </label>
-              <div
-                onClick={() => document.getElementById('photo-input')?.click()}
-                className={cn(
-                  'cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition-colors',
-                  photoFile
-                    ? 'border-blue-500/50 bg-blue-500/5'
-                    : 'border-zinc-700 hover:border-zinc-500 hover:bg-zinc-800/50'
-                )}
-              >
-                {photoPreview ? (
-                  <div className="space-y-3">
-                    <img
-                      src={photoPreview}
-                      alt="Preview"
-                      className="mx-auto max-h-48 rounded-lg object-contain"
-                    />
-                    <p className="text-xs text-zinc-400">{photoFile?.name}</p>
-                    <p className="text-[10px] text-zinc-600">Clique para trocar</p>
-                  </div>
-                ) : (
-                  <>
-                    <Camera className="mx-auto mb-3 h-10 w-10 text-zinc-500" />
-                    <p className="text-sm font-medium text-zinc-300">
-                      Clique para selecionar uma imagem
-                    </p>
-                    <p className="mt-1 text-xs text-zinc-500">JPG, PNG, WebP, HEIC</p>
-                  </>
-                )}
-                <input
-                  id="photo-input"
-                  type="file"
-                  accept=".jpg,.jpeg,.png,.webp,.heic"
-                  className="hidden"
-                  onChange={e => {
-                    const file = e.target.files?.[0] ?? null
-                    setPhotoFile(file)
-                    if (file) {
-                      const reader = new FileReader()
-                      reader.onload = ev => setPhotoPreview(ev.target?.result as string)
-                      reader.readAsDataURL(file)
-                    } else {
-                      setPhotoPreview(null)
-                    }
-                  }}
-                />
-              </div>
-            </div>
-            <Button
-              onClick={() => photoMutation.mutate()}
-              disabled={!photoFile || isLoading}
-              className="w-full"
-            >
-              {photoMutation.isPending ? (
-                <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Extraindo texto...</>
-              ) : (
-                <><Camera className="mr-2 h-4 w-4" />Extrair e Indexar</>
-              )}
-            </Button>
-          </CardContent>
-        </Card>
+        <section className="relative z-10 rounded-xl bg-[#1c1b1b] p-6 space-y-4">
+          <Input placeholder="Titulo (opcional)" value={photoTitle} onChange={event => setPhotoTitle(event.target.value)} className="h-11 border-[#41474e] bg-[#131313] text-[#e5e2e1]" />
+          <div onClick={() => document.getElementById('photo-input')?.click()} className={cn('cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition-colors', photoFile ? 'border-[#90caf9]/60 bg-[#203142]/25' : 'border-[#41474e] hover:border-[#90caf9]/45')}>
+            {photoPreview ? <img src={photoPreview} alt="Preview" className="mx-auto max-h-52 rounded-lg object-contain" /> : <Camera className="mx-auto h-9 w-9 text-[#8b9199]" />}
+            <input
+              id="photo-input"
+              type="file"
+              accept=".jpg,.jpeg,.png,.webp,.heic"
+              className="hidden"
+              onChange={event => {
+                const file = event.target.files?.[0] ?? null
+                setPhotoFile(file)
+                if (!file) { setPhotoPreview(null); return }
+                const reader = new FileReader()
+                reader.onload = ev => setPhotoPreview(ev.target?.result as string)
+                reader.readAsDataURL(file)
+              }}
+            />
+          </div>
+          <Button onClick={() => photoMutation.mutate()} disabled={!photoFile || isLoading} className="h-11 w-full rounded-lg border-0 bg-[#203142] text-[#c5e3ff]">
+            {photoMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Camera className="mr-2 h-4 w-4" />}
+            {photoMutation.isPending ? 'Extraindo texto...' : 'Extrair e Indexar'}
+          </Button>
+        </section>
       )}
 
-      {/* Advanced settings — colapsável */}
-      <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 overflow-hidden">
-        <button
-          onClick={() => setAdvancedOpen(v => !v)}
-          className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-zinc-800/40 transition-colors"
-        >
-          <span className="text-sm font-medium text-zinc-400">Configurações Avançadas</span>
-          <ChevronDown className={cn('h-4 w-4 text-zinc-500 transition-transform', advancedOpen && 'rotate-180')} />
+      <section className="relative z-10 overflow-hidden rounded-xl border border-[#41474e]/30 bg-[#0f0f0f]">
+        <button onClick={() => setAdvancedOpen(v => !v)} className="flex w-full items-center justify-between px-4 py-3 hover:bg-[#1c1b1b]">
+          <span className="text-sm font-medium text-[#c1c7cf]">Configuracoes Avancadas</span>
+          <ChevronDown className={cn('h-4 w-4 text-[#8b9199] transition-transform', advancedOpen && 'rotate-180')} />
         </button>
         {advancedOpen && (
-          <div className="border-t border-zinc-800/60 px-4 pb-4 pt-3 grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 border-t border-[#41474e]/30 px-4 pb-4 pt-3 sm:grid-cols-2">
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-zinc-400">
-                Chunk Size (padrão: 900)
-              </label>
-              <Input
-                type="number"
-                placeholder="900"
-                value={chunkSize}
-                onChange={e => setChunkSize(e.target.value)}
-              />
+              <label className="mb-1.5 block text-xs font-medium text-[#8b9199]">Chunk Size</label>
+              <Input type="number" placeholder="900" value={chunkSize} onChange={event => setChunkSize(event.target.value)} className="h-10 border-[#41474e] bg-[#131313] text-[#e5e2e1]" />
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-zinc-400">
-                Chunk Overlap (padrão: 150)
-              </label>
-              <Input
-                type="number"
-                placeholder="150"
-                value={chunkOverlap}
-                onChange={e => setChunkOverlap(e.target.value)}
-              />
+              <label className="mb-1.5 block text-xs font-medium text-[#8b9199]">Chunk Overlap</label>
+              <Input type="number" placeholder="150" value={chunkOverlap} onChange={event => setChunkOverlap(event.target.value)} className="h-10 border-[#41474e] bg-[#131313] text-[#e5e2e1]" />
             </div>
           </div>
         )}
-      </div>
+      </section>
 
-      {/* Result */}
       {result && (
-        <Card className="border-green-800 bg-green-950/30">
-          <CardContent className="py-4">
-            <div className="flex items-start gap-3">
-              <CheckCircle className="mt-0.5 h-5 w-5 shrink-0 text-green-400" />
-              <div>
-                <p className="font-medium text-green-300">Inserção concluída!</p>
-                <p className="mt-1 text-sm text-green-500">
-                  {result.files_loaded} documento(s) carregado(s),{' '}
-                  {result.chunks_indexed} chunks indexados.
-                </p>
-                {result.file_names.length > 0 && (
-                  <ul className="mt-2 space-y-1">
-                    {result.file_names.map(f => (
-                      <li key={f} className="flex items-center gap-2 text-xs text-green-600">
-                        <FileText className="h-3 w-3" />
-                        {f}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
+        <section className="relative z-10 rounded-xl border border-[#386445] bg-[#1b2a21] p-4">
+          <div className="flex items-start gap-3">
+            <CheckCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#8ad6a0]" />
+            <div>
+              <p className="font-medium text-[#b6e6c7]">Insercao concluida</p>
+              <p className="mt-1 text-sm text-[#9cc9aa]">{result.files_loaded} documento(s), {result.chunks_indexed} chunks indexados.</p>
+              {result.file_names.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {result.file_names.map(name => (
+                    <li key={name} className="flex items-center gap-2 text-xs text-[#9cc9aa]">
+                      <FileText className="h-3 w-3" />
+                      {name}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
-          </CardContent>
-        </Card>
+          </div>
+        </section>
       )}
     </PageShell>
   )

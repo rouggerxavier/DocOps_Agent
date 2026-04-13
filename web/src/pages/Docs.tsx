@@ -1,84 +1,65 @@
-import { useState, useEffect } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { BookOpen, Brain, CalendarDays, CheckSquare, Eye, FileText, GitCompare, GraduationCap, Loader2, Search, Trash2, Zap } from 'lucide-react'
-import { toast } from 'sonner'
+import { useEffect, useMemo, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
 import ReactMarkdown from 'react-markdown'
-import { Card, CardContent } from '@/components/ui/card'
+import { toast } from 'sonner'
+import { Brain, Database, Eye, FileText, GitCompare, GraduationCap, Loader2, Search, Trash2, X, Zap } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
-import { PageHeader, PageShell } from '@/components/ui/page-shell'
 import { api, apiClient, type DocItem } from '@/api/client'
+import { cn } from '@/lib/utils'
 
-function CompareDialog({
-  doc1,
-  allDocs,
-  onClose,
-}: {
-  doc1: string
-  allDocs: DocItem[]
-  onClose: () => void
-}) {
+function parseErrorMessage(error: unknown, fallback: string) {
+  const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  return typeof detail === 'string' && detail.trim() ? detail : fallback
+}
+
+function fileAccent(fileName: string) {
+  const lower = fileName.toLowerCase()
+  if (lower.endsWith('.pdf')) return 'text-[#90caf9]'
+  if (lower.endsWith('.docx') || lower.endsWith('.doc')) return 'text-[#ffd9ae]'
+  if (lower.endsWith('.xlsx') || lower.endsWith('.csv')) return 'text-[#b4c9de]'
+  return 'text-[#c1c7cf]'
+}
+
+function formatChunkCount(count: number) {
+  if (count < 1000) return String(count)
+  const value = count >= 1_000_000 ? `${(count / 1_000_000).toFixed(1)}M` : `${(count / 1000).toFixed(1)}k`
+  return value.replace('.0', '')
+}
+
+function CompareDialog({ doc1, docs, onClose }: { doc1: string; docs: DocItem[]; onClose: () => void }) {
   const [doc2, setDoc2] = useState('')
   const [result, setResult] = useState('')
-
-  const mutation = useMutation({
+  const compareMut = useMutation({
     mutationFn: () => apiClient.compare(doc1, doc2, false),
     onSuccess: data => setResult(data.answer),
-    onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao comparar'),
+    onError: error => toast.error(parseErrorMessage(error, 'Erro ao comparar documentos.')),
   })
-
-  const others = allDocs.filter(d => d.file_name !== doc1)
+  const options = docs.filter(doc => doc.file_name !== doc1)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
-          <h2 className="font-semibold text-zinc-100">Comparar: {doc1}</h2>
-          <Button variant="ghost" size="sm" onClick={onClose}>✕</Button>
+      <div className="max-h-[86vh] w-full max-w-2xl overflow-hidden rounded-2xl border border-[#41474e] bg-[#131313]">
+        <div className="flex items-center justify-between border-b border-[#41474e]/45 px-5 py-4">
+          <p className="truncate font-headline text-lg font-bold text-[#e5e2e1]">Comparar: {doc1}</p>
+          <button type="button" onClick={onClose} className="rounded-full p-1 text-[#8b9199] hover:bg-[#2a2a2a]"><X className="h-4 w-4" /></button>
         </div>
-        <div className="p-6 space-y-4">
-          {!result && (
+        <div className="space-y-4 p-5">
+          {!result ? (
             <>
-              <div>
-                <label className="mb-1.5 block text-sm font-medium text-zinc-300">
-                  Comparar com:
-                </label>
-                <select
-                  value={doc2}
-                  onChange={e => setDoc2(e.target.value)}
-                  className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100"
-                >
-                  <option value="">Selecione um documento</option>
-                  {others.map(d => (
-                    <option key={d.file_name} value={d.file_name}>
-                      {d.file_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <Button
-                onClick={() => mutation.mutate()}
-                disabled={!doc2 || mutation.isPending}
-                className="w-full"
-              >
-                {mutation.isPending ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Comparando...
-                  </>
-                ) : (
-                  <>
-                    <GitCompare className="mr-2 h-4 w-4" />
-                    Comparar
-                  </>
-                )}
+              <select value={doc2} onChange={event => setDoc2(event.target.value)} className="h-11 w-full rounded-xl border border-[#41474e] bg-[#1c1b1b] px-3 text-sm text-[#e5e2e1]">
+                <option value="">Selecione um documento</option>
+                {options.map(doc => <option key={doc.doc_id} value={doc.file_name}>{doc.file_name}</option>)}
+              </select>
+              <Button onClick={() => compareMut.mutate()} disabled={!doc2 || compareMut.isPending} className="h-10 w-full rounded-lg border-0 bg-gradient-to-r from-[#c5e3ff] to-[#90caf9] text-[#03263b]">
+                {compareMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <GitCompare className="h-4 w-4" />}
+                <span>{compareMut.isPending ? 'Comparando...' : 'Comparar'}</span>
               </Button>
             </>
-          )}
-          {result && (
-            <div className="prose prose-invert prose-sm max-w-none max-h-96 overflow-y-auto">
+          ) : (
+            <div className="prose prose-invert prose-sm max-h-[52vh] max-w-none overflow-y-auto rounded-xl bg-[#1c1b1b] p-4">
               <ReactMarkdown>{result}</ReactMarkdown>
             </div>
           )}
@@ -88,322 +69,72 @@ function CompareDialog({
   )
 }
 
-function SmartDigestDialog({ doc, onClose }: { doc: string; onClose: () => void }) {
+function SmartOpsDialog({ doc, onClose }: { doc: string; onClose: () => void }) {
   const qc = useQueryClient()
-  const [tab, setTab] = useState<'digest' | 'plan'>('digest')
-
-  // Digest state
-  const [genFlashcards, setGenFlashcards] = useState(true)
-  const [extractTasks, setExtractTasks] = useState(true)
-  const [scheduleReviews, setScheduleReviews] = useState(false)
-  const [numCards, setNumCards] = useState(10)
-  const [digestResult, setDigestResult] = useState<{
-    summary: string; deck_id: number | null; tasks_created: number
-    task_titles: string[]; reviews_scheduled: number
-  } | null>(null)
-
-  // Study plan state
+  const [result, setResult] = useState('')
   const [hoursPerDay, setHoursPerDay] = useState(2)
   const [deadlineDate, setDeadlineDate] = useState(() => {
-    const d = new Date(); d.setDate(d.getDate() + 14)
-    return d.toISOString().split('T')[0]
+    const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().split('T')[0]
   })
-  const [planGenFlashcards, setPlanGenFlashcards] = useState(true)
-  const [planNumCards, setPlanNumCards] = useState(15)
-  const [planResult, setPlanResult] = useState<{
-    plan_text: string; tasks_created: number; reminders_created: number
-    sessions_count: number; deck_id: number | null; titulo: string
-  } | null>(null)
-
-  const digestMutation = useMutation({
-    mutationFn: () =>
-      apiClient.digestDocument(doc, { generateFlashcards: genFlashcards, extractTasks, numCards, maxTasks: 8, scheduleReviews }),
+  const digestMut = useMutation({
+    mutationFn: () => apiClient.digestDocument(doc, { generateFlashcards: true, extractTasks: true, numCards: 10, maxTasks: 8, scheduleReviews: false }),
     onSuccess: data => {
-      setDigestResult(data)
-      if (data.deck_id) qc.invalidateQueries({ queryKey: ['flashcard-decks'] })
-      if (data.tasks_created > 0) qc.invalidateQueries({ queryKey: ['tasks'] })
-      toast.success('Smart Digest concluído!')
+      setResult(data.summary)
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      qc.invalidateQueries({ queryKey: ['flashcard-decks'] })
+      toast.success('Smart Digest concluido.')
     },
-    onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro no Smart Digest'),
+    onError: error => toast.error(parseErrorMessage(error, 'Erro no Smart Digest.')),
   })
-
-  const planMutation = useMutation({
-    mutationFn: () =>
-      apiClient.createStudyPlanFromDoc(doc, hoursPerDay, deadlineDate, planGenFlashcards, planNumCards),
+  const planMut = useMutation({
+    mutationFn: () => apiClient.createStudyPlanFromDoc(doc, hoursPerDay, deadlineDate, true, 15),
     onSuccess: data => {
-      setPlanResult(data)
-      if (data.deck_id) qc.invalidateQueries({ queryKey: ['flashcard-decks'] })
-      if (data.tasks_created > 0) qc.invalidateQueries({ queryKey: ['tasks'] })
+      setResult(data.plan_text)
+      qc.invalidateQueries({ queryKey: ['tasks'] })
       qc.invalidateQueries({ queryKey: ['reminders'] })
-      toast.success('Plano de estudos criado!')
+      qc.invalidateQueries({ queryKey: ['flashcard-decks'] })
+      toast.success('Plano de estudos criado.')
     },
-    onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao criar plano'),
+    onError: error => toast.error(parseErrorMessage(error, 'Erro ao criar plano de estudos.')),
   })
-
-  const isProcessing = digestMutation.isPending || planMutation.isPending
+  const isPending = digestMut.isPending || planMut.isPending
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-      <div className="w-full max-w-2xl rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4 shrink-0">
-          <div className="flex items-center gap-2">
-            <Zap className="h-5 w-5 text-amber-400" />
-            <h2 className="font-semibold text-zinc-100 truncate max-w-xs">{doc}</h2>
-          </div>
-          <Button variant="ghost" size="sm" onClick={onClose}>✕</Button>
+      <div className="max-h-[86vh] w-full max-w-2xl overflow-hidden rounded-2xl border border-[#41474e] bg-[#131313]">
+        <div className="flex items-center justify-between border-b border-[#41474e]/45 px-5 py-4">
+          <p className="truncate font-headline text-lg font-bold text-[#e5e2e1]">{doc}</p>
+          <button type="button" onClick={onClose} className="rounded-full p-1 text-[#8b9199] hover:bg-[#2a2a2a]"><X className="h-4 w-4" /></button>
         </div>
-
-        {/* Tab bar */}
-        {!isProcessing && !digestResult && !planResult && (
-          <div className="flex border-b border-zinc-800 shrink-0">
-            <button
-              onClick={() => setTab('digest')}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
-                tab === 'digest'
-                  ? 'border-b-2 border-amber-500 text-amber-400 bg-amber-500/5'
-                  : 'text-zinc-500 hover:text-zinc-300'
-              }`}
-            >
-              <Zap className="h-4 w-4" /> Smart Digest
-            </button>
-            <button
-              onClick={() => setTab('plan')}
-              className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors ${
-                tab === 'plan'
-                  ? 'border-b-2 border-emerald-500 text-emerald-400 bg-emerald-500/5'
-                  : 'text-zinc-500 hover:text-zinc-300'
-              }`}
-            >
-              <GraduationCap className="h-4 w-4" /> Plano de Estudos
-            </button>
-          </div>
-        )}
-
-        <div className="p-6 space-y-4 overflow-y-auto flex-1">
-
-          {/* ── SMART DIGEST TAB ── */}
-          {tab === 'digest' && !digestResult && !digestMutation.isPending && (
+        <div className="space-y-3 p-5">
+          {!result && (
             <>
-              <p className="text-sm text-zinc-400">
-                Gera resumo analítico, cria flashcards e extrai tarefas do documento em uma operação.
-              </p>
-              <div className="space-y-3">
-                <label className="flex items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 cursor-pointer hover:border-zinc-600 transition-colors">
-                  <input type="checkbox" checked={genFlashcards} onChange={e => setGenFlashcards(e.target.checked)} className="h-4 w-4 accent-blue-500" />
-                  <div>
-                    <p className="text-sm font-medium text-zinc-200">Gerar Flashcards</p>
-                    <p className="text-xs text-zinc-500">Cria um deck de flashcards para revisão espaçada</p>
-                  </div>
-                </label>
-                {genFlashcards && (
-                  <div className="ml-7 flex items-center gap-3">
-                    <span className="text-xs text-zinc-400 shrink-0">Quantidade de cards:</span>
-                    <input type="range" min={5} max={30} step={5} value={numCards} onChange={e => setNumCards(Number(e.target.value))} className="flex-1" />
-                    <span className="text-xs font-medium text-blue-400 w-8 text-right">{numCards}</span>
-                  </div>
-                )}
-                <label className="flex items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 cursor-pointer hover:border-zinc-600 transition-colors">
-                  <input type="checkbox" checked={extractTasks} onChange={e => setExtractTasks(e.target.checked)} className="h-4 w-4 accent-emerald-500" />
-                  <div>
-                    <p className="text-sm font-medium text-zinc-200">Extrair Tarefas</p>
-                    <p className="text-xs text-zinc-500">Identifica ações, exercícios e entregas no documento</p>
-                  </div>
-                </label>
-                {genFlashcards && (
-                  <label className="flex items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 cursor-pointer hover:border-zinc-600 transition-colors">
-                    <input type="checkbox" checked={scheduleReviews} onChange={e => setScheduleReviews(e.target.checked)} className="h-4 w-4 accent-purple-500" />
-                    <div>
-                      <p className="text-sm font-medium text-zinc-200">Agendar Revisões SRS</p>
-                      <p className="text-xs text-zinc-500">Cria lembretes de revisão espaçada no calendário (+1d, +3d, +7d)</p>
-                    </div>
-                  </label>
-                )}
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Button onClick={() => digestMut.mutate()} disabled={isPending} className="h-10 rounded-lg border-0 bg-gradient-to-r from-[#ffd9ae] to-[#f6b868] text-[#402300]">
+                  <Brain className="h-4 w-4" />
+                  Smart Digest
+                </Button>
+                <Button onClick={() => planMut.mutate()} disabled={isPending || !deadlineDate} className="h-10 rounded-lg border-0 bg-gradient-to-r from-[#8ad6a0] to-[#6bbf84] text-[#0f2a19]">
+                  <GraduationCap className="h-4 w-4" />
+                  Plano de Estudos
+                </Button>
               </div>
-              <Button onClick={() => digestMutation.mutate()} className="w-full bg-amber-600 hover:bg-amber-700 text-white">
-                <Zap className="mr-2 h-4 w-4" />
-                Executar Smart Digest
-              </Button>
+              <div className="rounded-xl bg-[#1c1b1b] p-3">
+                <p className="mb-1 text-xs text-[#aab2bc]">Horas por dia: {hoursPerDay}h</p>
+                <input type="range" min={0.5} max={8} step={0.5} value={hoursPerDay} onChange={event => setHoursPerDay(Number(event.target.value))} className="w-full accent-[#8ad6a0]" />
+              </div>
+              <input type="date" value={deadlineDate} min={new Date(Date.now() + 86400000).toISOString().split('T')[0]} onChange={event => setDeadlineDate(event.target.value)} className="h-11 w-full rounded-xl border border-[#41474e] bg-[#1c1b1b] px-3 text-sm text-[#e5e2e1]" />
             </>
           )}
-
-          {/* ── PLANO DE ESTUDOS TAB ── */}
-          {tab === 'plan' && !planResult && !planMutation.isPending && (
-            <>
-              <p className="text-sm text-zinc-400">
-                Gera um plano de estudos personalizado com sessões diárias no calendário, tarefas por tópico e flashcards.
-              </p>
-              <div className="space-y-4">
-                {/* Horas por dia */}
-                <div className="rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm font-medium text-zinc-200">Horas de estudo por dia</p>
-                    <span className="text-sm font-bold text-emerald-400">{hoursPerDay}h</span>
-                  </div>
-                  <input
-                    type="range" min={0.5} max={8} step={0.5}
-                    value={hoursPerDay}
-                    onChange={e => setHoursPerDay(Number(e.target.value))}
-                    className="w-full accent-emerald-500"
-                  />
-                  <div className="flex justify-between text-xs text-zinc-600 mt-1">
-                    <span>30min</span><span>4h</span><span>8h</span>
-                  </div>
-                </div>
-
-                {/* Prazo */}
-                <div className="rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3">
-                  <div className="flex items-center gap-2 mb-2">
-                    <CalendarDays className="h-4 w-4 text-zinc-400" />
-                    <p className="text-sm font-medium text-zinc-200">Data limite para concluir</p>
-                  </div>
-                  <input
-                    type="date"
-                    value={deadlineDate}
-                    min={new Date(Date.now() + 86400000).toISOString().split('T')[0]}
-                    onChange={e => setDeadlineDate(e.target.value)}
-                    className="w-full rounded-md border border-zinc-600 bg-zinc-700 px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                  />
-                  {deadlineDate && (() => {
-                    const days = Math.ceil((new Date(deadlineDate).getTime() - Date.now()) / 86400000)
-                    const total = Math.round(days * hoursPerDay)
-                    return (
-                      <p className="text-xs text-zinc-500 mt-1.5">
-                        {days} dias · ~{total}h no total · {Math.round(total / Math.max(1, days * hoursPerDay * 0.1))} sessões estimadas
-                      </p>
-                    )
-                  })()}
-                </div>
-
-                {/* Flashcards */}
-                <label className="flex items-center gap-3 rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-3 cursor-pointer hover:border-zinc-600 transition-colors">
-                  <input type="checkbox" checked={planGenFlashcards} onChange={e => setPlanGenFlashcards(e.target.checked)} className="h-4 w-4 accent-blue-500" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-zinc-200">Gerar Flashcards</p>
-                    <p className="text-xs text-zinc-500">Cria deck + revisões SRS após o prazo do plano</p>
-                  </div>
-                </label>
-                {planGenFlashcards && (
-                  <div className="ml-7 flex items-center gap-3">
-                    <span className="text-xs text-zinc-400 shrink-0">Cards:</span>
-                    <input type="range" min={5} max={30} step={5} value={planNumCards} onChange={e => setPlanNumCards(Number(e.target.value))} className="flex-1" />
-                    <span className="text-xs font-medium text-blue-400 w-8 text-right">{planNumCards}</span>
-                  </div>
-                )}
-              </div>
-              <Button
-                onClick={() => planMutation.mutate()}
-                disabled={!deadlineDate}
-                className="w-full bg-emerald-700 hover:bg-emerald-600 text-white"
-              >
-                <GraduationCap className="mr-2 h-4 w-4" />
-                Criar Plano de Estudos
-              </Button>
-            </>
-          )}
-
-          {/* ── LOADING ── */}
-          {digestMutation.isPending && (
-            <div className="flex flex-col items-center justify-center gap-3 py-10">
-              <Brain className="h-8 w-8 animate-pulse text-amber-400" />
-              <span className="text-sm text-zinc-400">Analisando documento...</span>
-              <span className="text-xs text-zinc-600">Gerando resumo, flashcards e extraindo tarefas</span>
+          {isPending && (
+            <div className="flex flex-col items-center gap-2 py-6 text-[#c1c7cf]">
+              <Loader2 className="h-8 w-8 animate-spin" />
+              Processando...
             </div>
           )}
-          {planMutation.isPending && (
-            <div className="flex flex-col items-center justify-center gap-3 py-10">
-              <GraduationCap className="h-8 w-8 animate-pulse text-emerald-400" />
-              <span className="text-sm text-zinc-400">Criando plano de estudos...</span>
-              <span className="text-xs text-zinc-600">Gerando tópicos, sessões e tarefas com IA</span>
-            </div>
-          )}
-
-          {/* ── DIGEST RESULT ── */}
-          {digestResult && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                {digestResult.deck_id && (
-                  <div className="rounded-lg border border-blue-800 bg-blue-950/30 p-3">
-                    <p className="text-xs text-blue-400 font-medium mb-1">Flashcards criados</p>
-                    <p className="text-lg font-bold text-blue-300">{numCards} cards</p>
-                    <a href="/flashcards" className="text-xs text-blue-500 hover:underline">Ver em Flashcards →</a>
-                  </div>
-                )}
-                {digestResult.tasks_created > 0 && (
-                  <div className="rounded-lg border border-emerald-800 bg-emerald-950/30 p-3">
-                    <p className="text-xs text-emerald-400 font-medium mb-1">Tarefas extraídas</p>
-                    <p className="text-lg font-bold text-emerald-300">{digestResult.tasks_created} tarefas</p>
-                    <a href="/tasks" className="text-xs text-emerald-500 hover:underline">Ver em Tarefas →</a>
-                  </div>
-                )}
-                {digestResult.reviews_scheduled > 0 && (
-                  <div className="rounded-lg border border-purple-800 bg-purple-950/30 p-3">
-                    <p className="text-xs text-purple-400 font-medium mb-1">Revisões SRS agendadas</p>
-                    <p className="text-lg font-bold text-purple-300">{digestResult.reviews_scheduled} lembretes</p>
-                    <a href="/schedule" className="text-xs text-purple-500 hover:underline">Ver Calendário →</a>
-                  </div>
-                )}
-              </div>
-              {digestResult.task_titles.length > 0 && (
-                <div>
-                  <p className="text-xs font-medium text-zinc-400 mb-2 flex items-center gap-1">
-                    <CheckSquare className="h-3 w-3" /> Tarefas criadas:
-                  </p>
-                  <ul className="space-y-1">
-                    {digestResult.task_titles.map((t, i) => (
-                      <li key={i} className="text-xs text-zinc-300 flex items-start gap-2">
-                        <span className="text-emerald-500 mt-0.5">✓</span>{t}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              <div>
-                <p className="text-xs font-medium text-zinc-400 mb-2 flex items-center gap-1">
-                  <BookOpen className="h-3 w-3" /> Resumo:
-                </p>
-                <div className="prose prose-invert prose-xs max-w-none max-h-60 overflow-y-auto rounded-lg bg-zinc-800 p-3">
-                  <ReactMarkdown>{digestResult.summary}</ReactMarkdown>
-                </div>
-              </div>
-              <Button variant="outline" size="sm" onClick={() => { setDigestResult(null); digestMutation.reset() }} className="w-full">
-                Fazer novamente
-              </Button>
-            </div>
-          )}
-
-          {/* ── STUDY PLAN RESULT ── */}
-          {planResult && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-3 gap-3">
-                <div className="rounded-lg border border-emerald-800 bg-emerald-950/30 p-3">
-                  <p className="text-xs text-emerald-400 font-medium mb-1">Tarefas criadas</p>
-                  <p className="text-lg font-bold text-emerald-300">{planResult.tasks_created}</p>
-                  <a href="/tasks" className="text-xs text-emerald-500 hover:underline">Ver Tarefas →</a>
-                </div>
-                <div className="rounded-lg border border-blue-800 bg-blue-950/30 p-3">
-                  <p className="text-xs text-blue-400 font-medium mb-1">Sessões no calendário</p>
-                  <p className="text-lg font-bold text-blue-300">{planResult.sessions_count}</p>
-                  <a href="/schedule" className="text-xs text-blue-500 hover:underline">Ver Calendário →</a>
-                </div>
-                {planResult.deck_id && (
-                  <div className="rounded-lg border border-purple-800 bg-purple-950/30 p-3">
-                    <p className="text-xs text-purple-400 font-medium mb-1">Flashcards + SRS</p>
-                    <p className="text-lg font-bold text-purple-300">{planNumCards} cards</p>
-                    <a href="/flashcards" className="text-xs text-purple-500 hover:underline">Ver Flashcards →</a>
-                  </div>
-                )}
-              </div>
-              <div>
-                <p className="text-xs font-medium text-zinc-400 mb-2 flex items-center gap-1">
-                  <GraduationCap className="h-3 w-3" /> Plano:
-                </p>
-                <div className="prose prose-invert prose-xs max-w-none max-h-72 overflow-y-auto rounded-lg bg-zinc-800 p-3">
-                  <ReactMarkdown>{planResult.plan_text}</ReactMarkdown>
-                </div>
-              </div>
-              <Button variant="outline" size="sm" onClick={() => { setPlanResult(null); planMutation.reset() }} className="w-full">
-                Criar outro plano
-              </Button>
+          {result && (
+            <div className="prose prose-invert prose-sm max-h-[52vh] max-w-none overflow-y-auto rounded-xl bg-[#1c1b1b] p-4">
+              <ReactMarkdown>{result}</ReactMarkdown>
             </div>
           )}
         </div>
@@ -412,231 +143,110 @@ function SmartDigestDialog({ doc, onClose }: { doc: string; onClose: () => void 
   )
 }
 
-function PdfViewerModal({ doc, onClose }: { doc: DocItem; onClose: () => void }) {
+function FileViewerModal({ doc, onClose }: { doc: DocItem; onClose: () => void }) {
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [markdownText, setMarkdownText] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
   const isMarkdown = doc.file_name.toLowerCase().endsWith('.md')
 
   useEffect(() => {
     let objectUrl: string | null = null
-    setLoading(true)
-    setError(null)
-    setBlobUrl(null)
-    setMarkdownText(null)
-
+    setBlobUrl(null); setMarkdownText(null); setLoading(true)
     if (isMarkdown) {
-      api.get(`/api/docs/${doc.doc_id}/file`, { responseType: 'text' })
-        .then(res => setMarkdownText(res.data))
-        .catch(() => setError('Não foi possível carregar o arquivo.'))
-        .finally(() => setLoading(false))
+      api.get(`/api/docs/${doc.doc_id}/file`, { responseType: 'text' }).then(response => setMarkdownText(response.data)).finally(() => setLoading(false))
     } else {
-      api.get(`/api/docs/${doc.doc_id}/file`, { responseType: 'blob' })
-        .then(res => {
-          objectUrl = URL.createObjectURL(res.data)
-          setBlobUrl(objectUrl)
-        })
-        .catch(() => setError('Não foi possível carregar o arquivo.'))
-        .finally(() => setLoading(false))
+      api.get(`/api/docs/${doc.doc_id}/file`, { responseType: 'blob' }).then(response => {
+        objectUrl = URL.createObjectURL(response.data); setBlobUrl(objectUrl)
+      }).finally(() => setLoading(false))
     }
-
-    return () => {
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-    }
+    return () => { if (objectUrl) URL.revokeObjectURL(objectUrl) }
   }, [doc.doc_id, isMarkdown])
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-zinc-950">
-      <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-3 shrink-0">
-        <div className="flex items-center gap-2">
-          <Eye className="h-4 w-4 text-blue-400" />
-          <span className="text-sm font-medium text-zinc-100 truncate max-w-lg">{doc.file_name}</span>
-        </div>
-        <Button variant="ghost" size="sm" onClick={onClose}>✕ Fechar</Button>
-      </div>
+    <div className="fixed inset-0 z-50 flex flex-col bg-[#0e0e0e]">
+      <header className="flex items-center justify-between border-b border-[#41474e]/45 px-5 py-3">
+        <p className="truncate text-sm font-medium text-[#e5e2e1]">{doc.file_name}</p>
+        <Button variant="ghost" size="sm" onClick={onClose} className="text-[#c1c7cf]">Fechar</Button>
+      </header>
       <div className="flex-1 overflow-hidden">
-        {loading && (
-          <div className="flex h-full items-center justify-center">
-            <Loader2 className="h-8 w-8 animate-spin text-zinc-500" />
-          </div>
-        )}
-        {error && (
-          <div className="flex h-full items-center justify-center text-red-400 text-sm">{error}</div>
-        )}
-        {markdownText !== null && !loading && (
-          <div className="h-full overflow-y-auto px-8 py-6">
-            <div className="mx-auto max-w-3xl prose prose-invert prose-sm">
-              <ReactMarkdown>{markdownText}</ReactMarkdown>
-            </div>
-          </div>
-        )}
-        {blobUrl && !loading && (
-          <iframe
-            src={blobUrl}
-            className="h-full w-full border-0"
-            title={doc.file_name}
-          />
-        )}
+        {loading ? <div className="flex h-full items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-[#8b9199]" /></div> : null}
+        {!loading && markdownText !== null ? <div className="h-full overflow-y-auto px-8 py-6"><div className="prose prose-invert prose-sm mx-auto max-w-4xl"><ReactMarkdown>{markdownText}</ReactMarkdown></div></div> : null}
+        {!loading && blobUrl ? <iframe src={blobUrl} title={doc.file_name} className="h-full w-full border-0" /> : null}
       </div>
     </div>
   )
 }
 
 export function Docs() {
+  const navigate = useNavigate()
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
   const [compareDoc, setCompareDoc] = useState<string | null>(null)
-  const [digestDoc, setDigestDoc] = useState<string | null>(null)
+  const [opsDoc, setOpsDoc] = useState<string | null>(null)
   const [viewDoc, setViewDoc] = useState<DocItem | null>(null)
 
-  const { data: docs, isLoading, error } = useQuery<DocItem[]>({
-    queryKey: ['docs'],
-    queryFn: apiClient.listDocs,
-    retry: 1,
-  })
-
+  const { data: docs = [], isLoading, error } = useQuery<DocItem[]>({ queryKey: ['docs'], queryFn: apiClient.listDocs, retry: 1 })
   const deleteMut = useMutation({
     mutationFn: (docId: string) => apiClient.deleteDoc(docId),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['docs'] })
-      toast.success('Documento removido.')
-    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['docs'] }); toast.success('Documento removido.') },
     onError: () => toast.error('Erro ao remover documento.'),
   })
 
-  const filtered = docs?.filter(d =>
-    d.file_name.toLowerCase().includes(search.toLowerCase())
-  )
+  const normalized = search.trim().toLowerCase()
+  const filtered = useMemo(() => docs.filter(doc => doc.file_name.toLowerCase().includes(normalized)), [docs, normalized])
+  const totalChunks = useMemo(() => docs.reduce((acc, doc) => acc + doc.chunk_count, 0), [docs])
+  const usage = totalChunks > 0 ? Math.min(100, Math.round((totalChunks / 1600) * 100)) : 0
 
   return (
-    <PageShell>
-      <PageHeader
-        title="Documentos Indexados"
-        subtitle="Gerencie e opere sobre seus documentos"
-      />
+    <>
+      <div className="relative space-y-8">
+        <div className="pointer-events-none absolute inset-0 -z-10 bg-[radial-gradient(circle_at_82%_10%,rgba(144,202,249,0.12),transparent_42%),radial-gradient(circle_at_14%_16%,rgba(201,139,94,0.08),transparent_48%)]" />
+        <header className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div><h1 className="font-headline text-4xl font-extrabold tracking-tight text-[#e5e2e1]">Documentos Indexados</h1><p className="text-sm text-[#c1c7cf]">Gerencie e opere sobre seus documentos</p></div>
+          <div className="relative w-full lg:w-96"><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8b9199]" /><Input value={search} onChange={event => setSearch(event.target.value)} placeholder="Buscar artefatos..." className="h-11 border-[#41474e] bg-[#0e0e0e] pl-10 text-[#e5e2e1]" /></div>
+        </header>
 
-      {/* Search */}
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-        <Input
-          placeholder="Buscar documento..."
-          className="pl-10"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-        />
+        <div className="grid grid-cols-1 gap-8 xl:grid-cols-12">
+          <section className="space-y-5 xl:col-span-4">
+            <article className="rounded-2xl bg-[#1c1b1b] p-6">
+              <div className="mb-5 flex items-start justify-between"><div><p className="font-headline text-3xl font-extrabold text-[#e5e2e1]">{formatChunkCount(totalChunks)}</p><p className="text-xs uppercase tracking-[0.14em] text-[#8b9199]">Total chunks</p></div><div className="rounded-xl bg-[#203142] p-3"><Database className="h-5 w-5 text-[#c5e3ff]" /></div></div>
+              <div className="space-y-1.5"><div className="flex items-center justify-between text-xs text-[#aab2bc]"><span>Storage usage</span><span>{usage}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-[#0e0e0e]"><div className="h-full rounded-full bg-[#90caf9]" style={{ width: `${usage}%` }} /></div></div>
+            </article>
+            <article className="rounded-2xl bg-[#0f0f0f] p-5"><h3 className="font-headline text-sm font-bold text-[#e5e2e1]">Status do agente</h3><div className="mt-3 flex items-center gap-2 text-sm text-[#c1c7cf]"><span className="h-2 w-2 rounded-full bg-[#ffd9ae] shadow-[0_0_8px_rgba(255,217,174,0.6)] animate-pulse" />Pronto para novas operacoes</div></article>
+          </section>
+
+          <section className="xl:col-span-8">
+            {error ? <div className="rounded-xl border border-[#7f2f33] bg-[#3b181b] px-4 py-3 text-sm text-[#ffb4ab]">Erro ao carregar documentos.</div> : null}
+            {isLoading ? <div className="space-y-3">{[1, 2, 3].map(item => <Skeleton key={item} className="h-28 w-full rounded-2xl bg-[#2a2a2a]" />)}</div> : null}
+            {!isLoading && filtered.length === 0 && !error ? <div className="rounded-2xl bg-[#1c1b1b] p-10 text-center"><FileText className="mx-auto mb-3 h-10 w-10 text-[#8b9199]" /><p className="font-headline text-xl font-bold text-[#e5e2e1]">{normalized ? 'Nenhum documento encontrado' : 'Nenhum documento indexado'}</p></div> : null}
+            {!isLoading && filtered.length > 0 ? (
+              <div className="space-y-3">
+                {filtered.map(doc => (
+                  <article key={doc.doc_id} className="group flex flex-col gap-4 rounded-2xl bg-[#1c1b1b] p-4 transition-all hover:bg-[#2a2a2a] sm:flex-row sm:items-center">
+                    <div className={cn('flex h-16 w-14 shrink-0 items-center justify-center rounded-xl bg-[#0e0e0e]', fileAccent(doc.file_name))}><FileText className="h-6 w-6" /></div>
+                    <div className="min-w-0 flex-1"><h3 className="truncate font-headline text-lg font-bold tracking-tight text-[#e5e2e1]">{doc.file_name}</h3><p className="mt-1 text-xs text-[#aab2bc]">{formatChunkCount(doc.chunk_count)} chunks indexados</p></div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button variant="outline" size="sm" onClick={() => setViewDoc(doc)} className="h-8 border-[#41474e] bg-[#131313] text-[#c1c7cf]"><Eye className="h-3.5 w-3.5" /></Button>
+                      <Button size="sm" onClick={() => setOpsDoc(doc.file_name)} className="h-8 rounded-lg border-0 bg-[#203142] text-[#c5e3ff]"><Zap className="mr-1 h-3.5 w-3.5" />Ops</Button>
+                      {docs.length > 1 ? <Button variant="outline" size="sm" onClick={() => setCompareDoc(doc.file_name)} className="h-8 border-[#41474e] bg-[#131313] text-[#c1c7cf]"><GitCompare className="h-3.5 w-3.5" /></Button> : null}
+                      <Button variant="outline" size="sm" onClick={() => { if (window.confirm(`Remover "${doc.file_name}"?`)) deleteMut.mutate(doc.doc_id) }} disabled={deleteMut.isPending} className="h-8 border-[#7f2f33]/40 bg-[#2a1517] text-[#ffb4ab]"><Trash2 className="h-3.5 w-3.5" /></Button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : null}
+          </section>
+        </div>
+
+        <button type="button" onClick={() => navigate('/ingest')} className="fixed bottom-6 right-6 z-40 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-[#c5e3ff] to-[#90caf9] px-5 py-3 font-headline text-sm font-bold text-[#03263b]">
+          <FileText className="h-4 w-4" />
+          Novo artefato
+        </button>
       </div>
 
-      {error && (
-        <div className="rounded-lg border border-red-800 bg-red-950/30 px-4 py-3 text-sm text-red-400">
-          Erro ao carregar documentos. Certifique-se que o servidor está rodando.
-        </div>
-      )}
-
-      {isLoading && (
-        <div className="space-y-3">
-          {[1, 2, 3, 4].map(i => (
-            <Skeleton key={i} className="h-16 w-full" />
-          ))}
-        </div>
-      )}
-
-      {!isLoading && (!filtered || filtered.length === 0) && !error && (
-        <Card>
-          <CardContent className="flex flex-col items-center gap-3 py-12">
-            <FileText className="h-12 w-12 text-zinc-600" />
-            <p className="font-medium text-zinc-300">
-              {search ? 'Nenhum documento encontrado' : 'Nenhum documento indexado'}
-            </p>
-            <p className="text-sm text-zinc-500">
-              {search
-                ? 'Tente outro termo de busca'
-                : 'Use a página de Inserção para adicionar documentos'}
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
-      {filtered && filtered.length > 0 && (
-        <div className="space-y-2">
-          {filtered.map(doc => (
-            <Card key={doc.file_name} className="hover:border-zinc-700 transition-colors">
-              <CardContent className="flex items-center justify-between py-4">
-                <div className="flex items-center gap-3 min-w-0">
-                  <FileText className="h-5 w-5 shrink-0 text-blue-400" />
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-zinc-100 truncate">
-                      {doc.file_name}
-                    </p>
-                    <p className="text-xs text-zinc-500 truncate">{doc.chunk_count} chunks indexados</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0 ml-4">
-                  <Badge variant="secondary">{doc.chunk_count} chunks</Badge>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setViewDoc(doc)}
-                    className="text-blue-400 hover:text-blue-300"
-                    title="Visualizar documento"
-                  >
-                    <Eye className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setDigestDoc(doc.file_name)}
-                    className="text-amber-400 hover:text-amber-300"
-                    title="Smart Digest: resumo + flashcards + tarefas"
-                  >
-                    <Zap className="h-4 w-4" />
-                    Digest
-                  </Button>
-                  {docs && docs.length > 1 && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setCompareDoc(doc.file_name)}
-                    >
-                      <GitCompare className="h-4 w-4" />
-                      Comparar
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      if (confirm(`Remover "${doc.file_name}"? Esta ação não pode ser desfeita.`)) {
-                        deleteMut.mutate(doc.doc_id)
-                      }
-                    }}
-                    disabled={deleteMut.isPending}
-                    className="text-zinc-600 hover:text-red-400"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      {/* Dialogs */}
-      {compareDoc && docs && (
-        <CompareDialog
-          doc1={compareDoc}
-          allDocs={docs}
-          onClose={() => setCompareDoc(null)}
-        />
-      )}
-      {digestDoc && (
-        <SmartDigestDialog doc={digestDoc} onClose={() => setDigestDoc(null)} />
-      )}
-      {viewDoc && (
-        <PdfViewerModal doc={viewDoc} onClose={() => setViewDoc(null)} />
-      )}
-    </PageShell>
+      {compareDoc ? <CompareDialog doc1={compareDoc} docs={docs} onClose={() => setCompareDoc(null)} /> : null}
+      {opsDoc ? <SmartOpsDialog doc={opsDoc} onClose={() => setOpsDoc(null)} /> : null}
+      {viewDoc ? <FileViewerModal doc={viewDoc} onClose={() => setViewDoc(null)} /> : null}
+    </>
   )
 }
