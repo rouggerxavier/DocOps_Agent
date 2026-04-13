@@ -4,8 +4,8 @@ import axios from 'axios'
 import { toast } from 'sonner'
 import {
   Plus, Trash2, ChevronLeft, ChevronDown,
-  Layers, Loader2, Eye, EyeOff, ThumbsUp, ThumbsDown, Send, AlertTriangle,
-  ArrowRight, FileText, X, Bot,
+  Layers, Loader2, ThumbsUp, ThumbsDown, Send, AlertTriangle,
+  ArrowRight, FileText, X, Bot, Sparkles, Brain,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -612,174 +612,260 @@ function StudySession({
     ? (VERDICT_CONFIG[evaluation.verdict as keyof typeof VERDICT_CONFIG] ?? VERDICT_CONFIG.parcial)
     : null
 
-  const answerComposer = (
-    <>
-      <textarea
-        value={userAnswer}
-        onChange={e => setUserAnswer(e.target.value)}
-        onKeyDown={e => {
-          if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && userAnswer.trim()) {
-            e.preventDefault()
-            evaluateMut.mutate({ cardId: card.id, answer: userAnswer.trim() })
-          }
-        }}
-        placeholder="Digite sua resposta aqui..."
-        rows={3}
-        className="w-full resize-none rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-200 placeholder:text-zinc-700 outline-none focus:border-zinc-500 transition-colors"
-      />
-      <div className="flex justify-end">
-        <button
-          onClick={() => evaluateMut.mutate({ cardId: card.id, answer: userAnswer.trim() })}
-          disabled={!userAnswer.trim() || evaluateMut.isPending}
-          className="flex items-center gap-1.5 rounded-lg border border-blue-800/50 bg-blue-950/20 px-3 py-1.5 text-xs font-medium text-blue-400 hover:bg-blue-950/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-        >
-          {evaluateMut.isPending
-            ? <><Loader2 className="h-3 w-3 animate-spin" /> Avaliando...</>
-            : <><Send className="h-3 w-3" /> Avaliar <span className="text-zinc-600 ml-1">Ctrl+Enter</span></>
-          }
-        </button>
-      </div>
-    </>
-  )
+  const progressPct = ((idx + 1) / cards.length) * 100
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <button onClick={onBack} className="flex items-center gap-1 text-xs text-on-surface-variant hover:text-on-surface transition-colors">
-          <ChevronLeft className="h-3.5 w-3.5" /> Voltar
-        </button>
-        <p className="text-xs text-on-surface-variant">{idx + 1} / {cards.length}</p>
-      </div>
+    <div className="relative min-h-screen pb-36">
 
-      <div className="h-1 w-full rounded-full bg-surface-container-highest overflow-hidden">
-        <div
-          className="h-full rounded-full bg-primary transition-all duration-300"
-          style={{ width: `${((idx + 1) / cards.length) * 100}%` }}
-        />
-      </div>
-
-      <div className="relative rounded-2xl border border-zinc-800 bg-zinc-900 p-8 min-h-[200px] flex flex-col items-center justify-center text-center">
-        <div className="absolute top-3 left-3">
-          <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-medium', diffStyle)}>
+      {/* ── Status bar ── */}
+      <div className="flex items-center justify-between mb-12">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 text-on-surface-variant hover:text-on-surface transition-colors text-xs font-medium mr-2"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" /> Decks
+          </button>
+          <span className={cn(
+            'px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase font-headline border',
+            activeDiff === 'facil'
+              ? 'bg-emerald-950/20 text-emerald-400 border-emerald-800/40'
+              : activeDiff === 'dificil'
+                ? 'bg-red-950/20 text-red-400 border-red-800/40'
+                : 'bg-yellow-950/20 text-yellow-400 border-yellow-800/40',
+          )}>
             {diffLabel}
           </span>
+          <span className="text-on-surface-variant text-xs font-medium tracking-wide hidden sm:block truncate max-w-[200px]">
+            {deck.title}
+          </span>
         </div>
-        <div className="absolute top-3 right-3">
-          {revealed
-            ? <Eye className="h-3.5 w-3.5 text-emerald-500" />
-            : <EyeOff className="h-3.5 w-3.5 text-zinc-700" />
-          }
+        <div className="flex items-center gap-3">
+          <div className="h-1 w-24 bg-surface-container-highest rounded-full overflow-hidden">
+            <div
+              className="h-full bg-primary rounded-full transition-all duration-500"
+              style={{ width: `${progressPct}%` }}
+            />
+          </div>
+          <span className="text-[10px] font-mono text-on-surface-variant">{idx + 1}/{cards.length}</span>
         </div>
-
-        <p className="text-xs text-zinc-600 mb-3 uppercase tracking-wider">Pergunta</p>
-        <p className="text-base font-medium text-zinc-100 leading-relaxed">{card.front}</p>
-
-        {!revealed && (
-          <button
-            onClick={() => setRevealed(true)}
-            disabled={evaluateMut.isPending}
-            className="mt-5 rounded-lg border border-emerald-800/50 bg-emerald-950/20 px-3 py-1.5 text-xs font-medium text-emerald-400 hover:bg-emerald-950/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            Mostrar resposta
-          </button>
-        )}
       </div>
 
+      {/* ── Question ── */}
+      <section className="mb-12">
+        <p className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant mb-5 flex items-center gap-2">
+          <span className="w-1.5 h-1.5 rounded-full bg-on-surface-variant/40 inline-block" />
+          Pergunta
+        </p>
+        <h2
+          className="text-3xl md:text-4xl lg:text-5xl font-headline font-extrabold tracking-tighter text-on-surface leading-[1.1] mb-8"
+          style={{ textShadow: '0 0 40px rgba(147,197,253,0.15)' }}
+        >
+          {card.front}
+        </h2>
+        <div className="h-[2px] w-16 rounded-full bg-primary/40" />
+      </section>
+
+      {/* ── Before reveal: textarea + buttons ── */}
       {!revealed && (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 space-y-2">
-          <p className="text-xs text-zinc-500">Sua resposta <span className="text-zinc-700">(opcional antes de revelar)</span></p>
-          {answerComposer}
+        <div className="space-y-3 mb-10">
+          <textarea
+            value={userAnswer}
+            onChange={e => setUserAnswer(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && userAnswer.trim()) {
+                e.preventDefault()
+                evaluateMut.mutate({ cardId: card.id, answer: userAnswer.trim() })
+              }
+            }}
+            placeholder="Escreva sua resposta aqui... (opcional)"
+            rows={4}
+            className="w-full resize-none rounded-xl px-5 py-4 text-on-surface placeholder:text-on-surface-variant/30 outline-none transition-colors text-sm leading-relaxed"
+            style={{
+              background: '#111111',
+              border: '1px solid rgba(255,255,255,0.05)',
+            }}
+            onFocus={e => (e.currentTarget.style.borderColor = 'rgba(147,197,253,0.3)')}
+            onBlur={e => (e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)')}
+          />
+          <div className="flex gap-3">
+            <button
+              onClick={() => setRevealed(true)}
+              disabled={evaluateMut.isPending}
+              className="flex-1 py-3 rounded-xl text-on-surface-variant hover:text-on-surface text-sm font-medium transition-colors"
+              style={{ border: '1px solid rgba(255,255,255,0.08)' }}
+            >
+              Mostrar resposta
+            </button>
+            <button
+              onClick={() => evaluateMut.mutate({ cardId: card.id, answer: userAnswer.trim() })}
+              disabled={!userAnswer.trim() || evaluateMut.isPending}
+              className="flex-1 py-3 rounded-xl text-primary font-semibold text-sm transition-all hover:brightness-110 disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+              style={{ background: 'rgba(147,197,253,0.08)', border: '1px solid rgba(147,197,253,0.2)' }}
+            >
+              {evaluateMut.isPending
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> Avaliando...</>
+                : <><Send className="h-4 w-4" /> Avaliar com IA</>
+              }
+            </button>
+          </div>
         </div>
       )}
 
+      {/* ── After reveal: comparison grid ── */}
       {revealed && (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-2">
-          <p className="text-xs text-zinc-600 uppercase tracking-wider">Resposta oficial</p>
-          <p className="text-sm text-zinc-200 leading-relaxed">{card.back}</p>
-        </div>
-      )}
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
+            {/* Sua resposta */}
+            <div className="space-y-3">
+              <label className="text-[10px] font-bold uppercase tracking-widest text-on-surface-variant flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-on-surface-variant/50 inline-block" />
+                Sua resposta
+              </label>
+              <div className="rounded-xl px-6 py-5 min-h-[140px]"
+                style={{ background: '#111111', border: '1px solid rgba(255,255,255,0.05)' }}>
+                {userAnswer
+                  ? <p className="text-on-surface leading-relaxed italic text-sm">"{userAnswer}"</p>
+                  : <p className="text-on-surface-variant/40 text-sm italic">Sem resposta registrada.</p>
+                }
+              </div>
+            </div>
 
-      {revealed && (
-        <div className={cn('rounded-xl border p-4 space-y-3', verdictCfg ? `${verdictCfg.border} ${verdictCfg.bg}` : 'border-zinc-800 bg-zinc-900/60')}>
-          <p className="text-xs text-zinc-600 uppercase tracking-wider">Analise da IA</p>
+            {/* Resposta correta */}
+            <div className="space-y-3">
+              <label className="text-[10px] font-bold uppercase tracking-widest text-primary flex items-center gap-2">
+                <span
+                  className="w-1.5 h-1.5 rounded-full bg-primary inline-block"
+                  style={{ boxShadow: '0 0 8px rgba(147,197,253,0.5)' }}
+                />
+                Resposta correta
+              </label>
+              <div className="rounded-xl px-6 py-5 min-h-[140px]"
+                style={{ background: '#1e1e1e', border: '1px solid rgba(147,197,253,0.1)' }}>
+                <p className="text-on-surface leading-relaxed text-sm">{card.back}</p>
+              </div>
+            </div>
+          </div>
 
-          {evaluation && verdictCfg ? (
-            <>
-              <div className="flex items-center gap-2">
-                <span className={cn('text-lg font-bold', verdictCfg.color)}>{verdictCfg.icon}</span>
-                <span className={cn('text-sm font-semibold', verdictCfg.color)}>{verdictCfg.label}</span>
+          {/* ── AI Evaluation ── */}
+          <section
+            className="rounded-2xl p-8 relative overflow-hidden group mb-8"
+            style={{
+              background: '#050505',
+              border: '1px solid rgba(147,197,253,0.06)',
+              boxShadow: '0 20px 50px rgba(0,0,0,0.5)',
+            }}
+          >
+            {/* Decorative icon */}
+            <div className="absolute top-0 right-0 p-8 opacity-[0.07] group-hover:opacity-[0.14] transition-opacity pointer-events-none">
+              <Brain className="w-24 h-24 text-primary" />
+            </div>
+
+            <div className="relative z-10">
+              <div className="flex items-center gap-2 mb-6">
+                <Sparkles className="text-primary w-5 h-5" />
+                <h3 className="font-headline font-bold text-lg tracking-tight text-primary">Análise da IA</h3>
               </div>
-              <div className="rounded-lg border border-zinc-700/50 bg-zinc-900/50 px-3 py-2">
-                <p className="text-[10px] text-zinc-600 uppercase tracking-wider mb-1">Sua resposta</p>
-                <p className="text-xs text-zinc-400 italic">"{userAnswer}"</p>
-              </div>
-              <div>
-                <p className="text-[10px] text-zinc-500 uppercase tracking-wider mb-1">Avaliacao</p>
-                <p className="text-xs text-zinc-300 leading-relaxed">{evaluation.feedback}</p>
-              </div>
-              {evaluation.highlight && (
-                <div className="flex items-start gap-2 rounded-lg border border-zinc-700/40 bg-zinc-800/40 px-3 py-2">
-                  <span className="text-yellow-500 text-xs mt-0.5">!</span>
-                  <p className="text-xs text-zinc-400">{evaluation.highlight}</p>
+
+              {evaluation && verdictCfg ? (
+                <div className="flex flex-col md:flex-row gap-8 items-start">
+                  <div className="flex-1 space-y-4">
+                    <p className="text-on-surface text-lg font-medium leading-snug">
+                      <span className={verdictCfg.color}>{verdictCfg.icon} </span>
+                      {verdictCfg.label}
+                    </p>
+                    <p className="text-on-surface-variant text-sm leading-relaxed">
+                      {evaluation.feedback}
+                    </p>
+                    {evaluation.highlight && (
+                      <p className="text-xs text-primary/70 leading-relaxed border-l-2 border-primary/30 pl-3">
+                        {evaluation.highlight}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex flex-col gap-2 md:w-44 shrink-0">
+                    <div className="rounded-lg px-3 py-2.5"
+                      style={{ background: 'rgba(147,197,253,0.05)', border: '1px solid rgba(147,197,253,0.1)' }}>
+                      <span className="text-[9px] uppercase tracking-tighter text-on-surface-variant block mb-1">Veredicto</span>
+                      <span className={cn('text-[11px] font-mono font-bold', verdictCfg.color)}>{verdictCfg.label}</span>
+                    </div>
+                    {userAnswer && (
+                      <div className="rounded-lg px-3 py-2.5"
+                        style={{ background: 'rgba(147,197,253,0.05)', border: '1px solid rgba(147,197,253,0.1)' }}>
+                        <span className="text-[9px] uppercase tracking-tighter text-on-surface-variant block mb-1">Intervalo</span>
+                        <span className="text-[11px] font-mono text-primary">
+                          {verdictCfg.label === 'Correta!' ? '+7d' : verdictCfg.label === 'Parcialmente correta' ? '+3d' : '+1d'}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <p className="text-on-surface-variant text-sm">
+                    {userAnswer
+                      ? 'Sua resposta foi registrada. Clique para avaliar:'
+                      : 'Escreva sua resposta para receber a análise:'}
+                  </p>
+                  {!userAnswer && (
+                    <textarea
+                      value={userAnswer}
+                      onChange={e => setUserAnswer(e.target.value)}
+                      placeholder="Digite sua resposta aqui..."
+                      rows={3}
+                      className="w-full resize-none rounded-xl px-4 py-3 text-on-surface placeholder:text-on-surface-variant/30 outline-none text-sm leading-relaxed"
+                      style={{ background: '#111111', border: '1px solid rgba(255,255,255,0.06)' }}
+                    />
+                  )}
+                  <button
+                    onClick={() => evaluateMut.mutate({ cardId: card.id, answer: userAnswer.trim() })}
+                    disabled={!userAnswer.trim() || evaluateMut.isPending}
+                    className="flex items-center gap-2 rounded-xl px-5 py-3 text-primary font-semibold text-sm transition-all hover:brightness-110 disabled:opacity-30 disabled:cursor-not-allowed"
+                    style={{ background: 'rgba(147,197,253,0.08)', border: '1px solid rgba(147,197,253,0.2)' }}
+                  >
+                    {evaluateMut.isPending
+                      ? <><Loader2 className="h-4 w-4 animate-spin" /> Avaliando...</>
+                      : <><Send className="h-4 w-4" /> Avaliar minha resposta →</>
+                    }
+                  </button>
                 </div>
               )}
-            </>
-          ) : (
-            <>
-              <p className="text-xs text-zinc-500">Envie sua resposta para receber a analise da IA.</p>
-              {answerComposer}
-            </>
-          )}
-        </div>
-      )}
+            </div>
+          </section>
 
-      {revealed && (
-        <div className="space-y-3">
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-3">
+          {/* ── Difficulty vote ── */}
+          <div className="rounded-xl px-4 py-3 mb-4"
+            style={{ background: '#0e0e0e', border: '1px solid rgba(65,71,78,0.15)' }}>
             {diffVote === null && (
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-zinc-400">
-                  A IA classificou como{' '}
-                  <span className={cn('font-semibold', diffStyle.split(' ').pop())}>{diffLabel}</span>.
-                  {' '}Você concorda?
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs text-on-surface-variant">
+                  IA classificou como <span className={cn('font-semibold', activeDiff === 'facil' ? 'text-emerald-400' : activeDiff === 'dificil' ? 'text-red-400' : 'text-yellow-400')}>{diffLabel}</span>. Concorda?
                 </span>
-                <div className="flex gap-1 ml-3 shrink-0">
-                  <button
-                    onClick={handleAgree}
-                    className="flex items-center gap-1 rounded-lg border border-emerald-800/50 bg-emerald-950/20 px-2.5 py-1.5 text-xs font-medium text-emerald-400 hover:bg-emerald-950/40 transition-colors"
-                  >
+                <div className="flex gap-1.5 shrink-0">
+                  <button onClick={handleAgree}
+                    className="flex items-center gap-1 rounded-lg border border-emerald-800/50 bg-emerald-950/20 px-2.5 py-1.5 text-xs font-medium text-emerald-400 hover:bg-emerald-950/40 transition-colors">
                     <ThumbsUp className="h-3 w-3" /> Sim
                   </button>
-                  <button
-                    onClick={handleDisagree}
-                    className="flex items-center gap-1 rounded-lg border border-red-800/50 bg-red-950/20 px-2.5 py-1.5 text-xs font-medium text-red-400 hover:bg-red-950/40 transition-colors"
-                  >
+                  <button onClick={handleDisagree}
+                    className="flex items-center gap-1 rounded-lg border border-red-800/50 bg-red-950/20 px-2.5 py-1.5 text-xs font-medium text-red-400 hover:bg-red-950/40 transition-colors">
                     <ThumbsDown className="h-3 w-3" /> Não
                   </button>
                 </div>
               </div>
             )}
             {diffVote === 'agree' && (
-              <p className="text-xs text-zinc-500 text-center">
-                ✓ Dificuldade <span className={cn('font-semibold', (DIFFICULTY_STYLES[activeDiff] ?? DIFFICULTY_STYLES.media).split(' ').pop())}>{DIFFICULTY_LABELS[activeDiff]}</span> confirmada.
+              <p className="text-xs text-on-surface-variant/60 text-center">
+                ✓ Dificuldade <span className={cn('font-semibold', activeDiff === 'facil' ? 'text-emerald-400' : activeDiff === 'dificil' ? 'text-red-400' : 'text-yellow-400')}>{diffLabel}</span> confirmada.
               </p>
             )}
             {diffVote === 'disagree' && (
-              <div className="space-y-2">
-                <p className="text-xs text-zinc-400 text-center">Qual é a dificuldade correta?</p>
-                <div className="flex gap-2 justify-center">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-xs text-on-surface-variant">Qual a dificuldade correta?</span>
+                <div className="flex gap-1.5">
                   {(['facil', 'media', 'dificil'] as const).map(d => (
-                    <button
-                      key={d}
-                      onClick={() => handleCorrectDiff(d)}
-                      disabled={difficultyMut.isPending}
-                      className={cn(
-                        'rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
-                        DIFFICULTY_STYLES[d],
-                        d === card.difficulty && 'opacity-40 cursor-default',
-                        d !== card.difficulty && 'hover:opacity-80',
-                      )}
-                    >
+                    <button key={d} onClick={() => handleCorrectDiff(d)} disabled={difficultyMut.isPending}
+                      className={cn('rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
+                        DIFFICULTY_STYLES[d], d === card.difficulty && 'opacity-40 cursor-default')}>
                       {DIFFICULTY_LABELS[d]}
                     </button>
                   ))}
@@ -787,29 +873,44 @@ function StudySession({
               </div>
             )}
           </div>
+        </>
+      )}
 
-          <div className="flex gap-2">
-            <button
-              onClick={() => handleRate(1)}
-              className="flex-1 rounded-xl border border-red-800/50 bg-red-950/20 py-3 text-xs font-medium text-red-400 hover:bg-red-950/40 transition-colors"
-            >
-              Difícil
-            </button>
-            <button
-              onClick={() => handleRate(2)}
-              className="flex-1 rounded-xl border border-yellow-800/50 bg-yellow-950/20 py-3 text-xs font-medium text-yellow-400 hover:bg-yellow-950/40 transition-colors"
-            >
-              Bom
-            </button>
-            <button
-              onClick={() => handleRate(3)}
-              className="flex-1 rounded-xl border border-emerald-800/50 bg-emerald-950/20 py-3 text-xs font-medium text-emerald-400 hover:bg-emerald-950/40 transition-colors"
-            >
-              Fácil
-            </button>
+      {/* ── Fixed bottom ease buttons (only after reveal) ── */}
+      {revealed && (
+        <div className="fixed bottom-0 left-0 right-0 z-50 md:pl-64"
+          style={{ background: 'linear-gradient(to top, rgba(10,10,10,0.98) 60%, transparent)' }}>
+          <div className="max-w-4xl mx-auto px-4 md:px-8 pb-6 pt-4">
+            <div className="flex gap-3">
+              <button
+                onClick={() => handleRate(1)}
+                className="flex-1 flex flex-col items-center py-4 rounded-xl transition-all active:scale-95 hover:brightness-110"
+                style={{ background: 'rgba(147,0,10,0.15)', border: '1px solid rgba(255,180,171,0.2)' }}
+              >
+                <span className="text-[10px] font-bold uppercase tracking-widest text-red-400/90 mb-1">Difícil</span>
+                <span className="text-[10px] font-mono text-on-surface-variant">+1d</span>
+              </button>
+              <button
+                onClick={() => handleRate(2)}
+                className="flex-1 flex flex-col items-center py-4 rounded-xl transition-all active:scale-95 hover:brightness-110"
+                style={{ background: 'rgba(246,184,104,0.08)', border: '1px solid rgba(246,184,104,0.2)' }}
+              >
+                <span className="text-[10px] font-bold uppercase tracking-widest text-[#f6b868]/90 mb-1">Bom</span>
+                <span className="text-[10px] font-mono text-on-surface-variant">+3d</span>
+              </button>
+              <button
+                onClick={() => handleRate(3)}
+                className="flex-1 flex flex-col items-center py-4 rounded-xl transition-all active:scale-95 hover:brightness-110"
+                style={{ background: 'rgba(147,197,253,0.08)', border: '1px solid rgba(147,197,253,0.2)' }}
+              >
+                <span className="text-[10px] font-bold uppercase tracking-widest text-primary/90 mb-1">Fácil</span>
+                <span className="text-[10px] font-mono text-on-surface-variant">+7d</span>
+              </button>
+            </div>
           </div>
         </div>
       )}
+
     </div>
   )
 }
@@ -924,7 +1025,7 @@ export function Flashcards() {
   // ── Study mode ─────────────────────────────────────────────────────────────
   if (studyDeckId !== null && studyDeck) {
     return (
-      <div className="mx-auto max-w-xl px-4 py-8">
+      <div className="max-w-4xl mx-auto">
         <StudySession key={studyDeck.id} deck={studyDeck} onBack={() => setStudyDeckId(null)} />
       </div>
     )
