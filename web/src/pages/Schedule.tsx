@@ -456,11 +456,13 @@ function WeekView({
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      <div className="grid grid-cols-[60px_1fr] border-b border-[color:var(--ui-border-soft)]/70 bg-[color:var(--ui-bg)]">
-        <div className="flex h-16 items-center justify-center border-r border-[color:var(--ui-border-soft)]/60 text-[10px] font-semibold tracking-[0.12em] text-[color:var(--ui-text-meta)]">
-          GMT-3
-        </div>
-        <div className="grid grid-cols-7 h-16">
+      {/* Header dias — scroll horizontal sincronizado */}
+      <div className="overflow-x-auto border-b border-[color:var(--ui-border-soft)]/70 bg-[color:var(--ui-bg)]" style={{ scrollbarWidth: 'none' }}>
+        <div className="flex" style={{ minWidth: 'max(100%, 560px)' }}>
+          <div className="flex h-16 w-[60px] shrink-0 items-center justify-center border-r border-[color:var(--ui-border-soft)]/60 text-[10px] font-semibold tracking-[0.12em] text-[color:var(--ui-text-meta)]">
+            GMT-3
+          </div>
+          <div className="grid flex-1 h-16" style={{ gridTemplateColumns: 'repeat(7, minmax(70px, 1fr))' }}>
         {weekDays.map((day, i) => {
           const key = toDateKey(day)
           const isSelected = key === selectedDate
@@ -510,10 +512,13 @@ function WeekView({
             </button>
           )
         })}
+          </div>
         </div>
       </div>
 
-      <div className="flex flex-1 overflow-y-auto">
+      {/* Body — scroll vertical + horizontal sincronizado */}
+      <div className="flex flex-1 overflow-x-auto overflow-y-auto">
+        <div className="flex" style={{ minWidth: 'max(100%, 560px)' }}>
         <div className="w-[60px] shrink-0 border-r border-[color:var(--ui-border-soft)]/50 bg-[color:var(--ui-bg)]">
           {hours.map(h => (
             <div
@@ -546,7 +551,7 @@ function WeekView({
                 ...(!isSelected && !isTodayDay ? timeGridStyle : {}),
               }}
               className={cn(
-                'relative flex-1 cursor-pointer border-r border-[color:var(--ui-border-soft)]/40 transition-colors',
+                'relative min-w-[70px] flex-1 cursor-pointer border-r border-[color:var(--ui-border-soft)]/40 transition-colors',
                 isSelected && 'bg-[color:var(--ui-accent-soft)]/26',
                 isTodayDay && !isSelected && 'bg-[color:var(--ui-surface-1)]/45',
                 isWeekend && !isSelected && !isTodayDay && 'bg-[color:var(--ui-bg)]/65'
@@ -625,6 +630,7 @@ function WeekView({
             </div>
           )
         })}
+        </div>{/* end flex wrapper */}
       </div>
     </div>
   )
@@ -891,8 +897,8 @@ export function Schedule() {
             </div>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2">
-            {/* Toggle view — semana só em telas maiores */}
-            <div className="hidden rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] p-0.5 sm:flex">
+            {/* Toggle view */}
+            <div className="flex rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] p-0.5">
               <button
                 onClick={() => setView('month')}
                 className={cn(
