@@ -271,12 +271,18 @@ export function Landing() {
         </main>
 
         <div className="fixed inset-x-4 bottom-3 z-40 md:hidden">
-          <div className="rounded-2xl border border-primary/30 bg-surface/95 p-2 shadow-[0_14px_40px_-14px_rgba(59,130,246,0.45)] backdrop-blur-xl">
+          <div className="flex gap-2 rounded-2xl border border-primary/30 bg-surface/95 p-2 shadow-[0_14px_40px_-14px_rgba(59,130,246,0.45)] backdrop-blur-xl">
+            <Link
+              to="/login"
+              className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-outline-variant/30 px-5 py-3.5 font-headline font-bold text-on-surface"
+            >
+              Entrar
+            </Link>
             <Link
               to="/register"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3.5 font-headline font-bold text-on-primary"
+              className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary px-5 py-3.5 font-headline font-bold text-on-primary"
             >
-              Comecar agora
+              Criar conta
               <ArrowRight className="h-4 w-4" />
             </Link>
           </div>
