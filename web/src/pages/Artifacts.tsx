@@ -285,138 +285,237 @@ function SummarizeDocDialog({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-      <div className="w-full max-w-2xl rounded-2xl border border-[#282828] bg-[#111111] shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between border-b border-[#282828] px-6 py-4 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-[#1e1e1e] flex items-center justify-center">
-              <BookOpen className="h-4 w-4 text-primary" />
-            </div>
-            <h2 className="font-bold font-headline text-[#e1e3e4]">Resumir Documento</h2>
-          </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 overflow-y-auto">
+      <div className="w-full max-w-2xl rounded-2xl border border-[#1e1e1e] bg-[#0d0d0d] shadow-2xl shadow-black/60 my-auto">
+
+        {/* ── Close button ── */}
+        <div className="flex justify-end px-6 pt-5">
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-[#1e1e1e] text-[#c6c5d4] transition-colors">
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="p-6 space-y-5 overflow-y-auto flex-1">
-          {!result && !isProcessing && (
-            <>
-              <p className="text-sm text-[#c6c5d4]">
-                Gera um resumo analítico do documento com IA e salva nos artefatos para download.
+
+        {result ? (
+          /* ── Result view ── */
+          <div className="px-8 pb-8 space-y-4">
+            <div className="flex items-center justify-between">
+              <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${mode === 'brief' ? 'bg-primary/15 text-primary' : 'bg-violet-500/15 text-violet-300'}`}>
+                {modeLabel}{resultTemplateLabel ? ` — ${resultTemplateLabel}` : ''}
+              </span>
+              <button
+                className="text-xs text-[#c6c5d4] hover:text-[#e1e3e4] transition-colors"
+                onClick={() => { setResult(''); setArtifactFilename(null); setResultTemplateLabel(null); startJob.reset() }}
+              >
+                ← Gerar outro
+              </button>
+            </div>
+            {artifactFilename && (
+              <div className="flex flex-wrap gap-2">
+                <button onClick={handleDownloadMd} disabled={downloading !== null} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#282828] bg-[#1e1e1e] text-sm text-[#e1e3e4] hover:border-primary/40 transition-colors disabled:opacity-50">
+                  <Download className="h-3.5 w-3.5" />{downloading === 'md' ? 'Baixando...' : 'Exportar .md'}
+                </button>
+                <button onClick={handleDownloadPdf} disabled={downloading !== null} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#282828] bg-[#1e1e1e] text-sm text-[#e1e3e4] hover:border-primary/40 transition-colors disabled:opacity-50">
+                  <FileText className="h-3.5 w-3.5" />{downloading === 'pdf' ? 'Baixando...' : 'Exportar PDF'}
+                </button>
+              </div>
+            )}
+            <div className="prose prose-invert prose-sm max-w-none max-h-[32rem] overflow-y-auto rounded-xl bg-[#1e1e1e] p-4">
+              <ReactMarkdown>{result}</ReactMarkdown>
+            </div>
+          </div>
+        ) : isProcessing ? (
+          /* ── Processing view ── */
+          <div className="px-8 pb-10 flex flex-col items-center gap-4">
+            {/* Kicker */}
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#1e1e1e] border border-[#282828]/40 mb-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse shadow-[0_0_8px_rgba(147,197,253,0.6)]" />
+              <span className="text-[10px] uppercase tracking-widest font-bold text-[#c6c5d4]">Processando</span>
+            </div>
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <p className="text-base font-semibold text-[#e1e3e4] text-center">
+              {mode === 'deep' ? 'Analisando documento em profundidade...' : 'Gerando resumo breve...'}
+            </p>
+            <div className="w-full rounded-xl border border-[#1e1e1e] bg-[#111111] p-3">
+              <div className="mb-2 flex justify-between text-[11px] text-[#c6c5d4]">
+                <span>{jobQuery.data?.stage ?? 'iniciando'}</span>
+                <span>{jobQuery.data?.progress ?? 5}%</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-[#1e1e1e]">
+                <div className="h-1.5 rounded-full bg-gradient-to-r from-primary to-primary/60 transition-all" style={{ width: `${jobQuery.data?.progress ?? 5}%` }} />
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* ── Config view ── */
+          <div className="px-8 pb-8 space-y-6">
+            {/* Kicker + headline */}
+            <div className="space-y-3">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#1e1e1e] border border-[#282828]/40">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shadow-[0_0_8px_rgba(251,191,36,0.5)]" />
+                <span className="text-[10px] uppercase tracking-widest font-bold text-[#c6c5d4]">Inteligência Artificial</span>
+              </div>
+              <h2 className="text-3xl font-headline font-extrabold text-[#e1e3e4] tracking-tight leading-tight">
+                Configuração do Resumo
+              </h2>
+              <p className="text-[#c6c5d4] text-sm leading-relaxed">
+                Transforme documentos extensos em inteligência estruturada através do motor de análise semântica.
               </p>
-              <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-[#c6c5d4]">Documento</label>
-                <DocSelector docs={docs ?? []} value={selectedDoc} onChange={setSelectedDoc} />
-              </div>
-              <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-[#c6c5d4]">Tipo de resumo</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    onClick={() => setMode('brief')}
-                    className={`rounded-xl border px-4 py-3 text-left transition-all ${mode === 'brief' ? 'border-primary/50 bg-primary/10 text-primary' : 'border-[#282828] bg-[#1e1e1e] text-[#c6c5d4] hover:border-[#454652]'}`}
-                  >
-                    <p className="text-sm font-bold font-headline">Resumo Breve</p>
-                    <p className="mt-0.5 text-xs opacity-70">Síntese concisa – até 300 palavras</p>
-                  </button>
-                  <button
-                    onClick={() => setMode('deep')}
-                    className={`rounded-xl border px-4 py-3 text-left transition-all ${mode === 'deep' ? 'border-violet-500/50 bg-violet-500/10 text-violet-300' : 'border-[#282828] bg-[#1e1e1e] text-[#c6c5d4] hover:border-[#454652]'}`}
-                  >
-                    <p className="text-sm font-bold font-headline">Resumo Aprofundado</p>
-                    <p className="mt-0.5 text-xs opacity-70">Análise completa seção por seção</p>
-                  </button>
-                </div>
-              </div>
-              {templatesEnabled && templateOptions.length > 0 && (
-                <div>
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-[#c6c5d4]">Template de saída</p>
-                  <div className="grid gap-2 md:grid-cols-3">
-                    {templateOptions.map(template => (
-                      <button
-                        key={template.template_id}
-                        onClick={() => setSelectedTemplateId(template.template_id)}
-                        className={`rounded-xl border px-3 py-2 text-left transition-all ${
-                          selectedTemplateId === template.template_id
-                            ? 'border-amber-500/50 bg-amber-500/10 text-amber-300'
-                            : 'border-[#282828] bg-[#1e1e1e] text-[#c6c5d4] hover:border-[#454652]'
-                        }`}
-                      >
-                        <p className="text-sm font-semibold">{template.label}</p>
-                        <p className="mt-0.5 text-xs opacity-80">{template.short_description}</p>
-                      </button>
-                    ))}
-                  </div>
-                  {selectedTemplate && (
-                    <div className="mt-2 rounded-xl border border-[#282828] bg-[#1e1e1e] p-3">
-                      <p className="text-xs font-medium text-[#e1e3e4]">{selectedTemplate.preview_title}</p>
-                      <p className="mt-1 text-xs text-[#c6c5d4]">{selectedTemplate.long_description}</p>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        {selectedTemplate.preview_sections.map(section => (
-                          <span key={section} className="rounded-full border border-[#282828] bg-[#111111] px-2 py-0.5 text-[11px] text-[#c6c5d4]">
-                            {section}
-                          </span>
-                        ))}
-                      </div>
+            </div>
+
+            {/* Document selector */}
+            <div>
+              <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[#c6c5d4]">Documento de Origem</label>
+              <DocSelector docs={docs ?? []} value={selectedDoc} onChange={setSelectedDoc} />
+            </div>
+
+            {/* Type cards */}
+            <div>
+              <p className="mb-3 text-xs font-bold uppercase tracking-widest text-[#c6c5d4]">Tipo de Análise</p>
+              <div className="grid grid-cols-2 gap-4">
+                {/* Resumo Breve */}
+                <button
+                  onClick={() => setMode('brief')}
+                  className={`relative rounded-xl p-5 text-left transition-all duration-300 border-2 ${
+                    mode === 'brief'
+                      ? 'bg-[#1e1e1e] border-primary/60 shadow-[0_0_24px_rgba(147,197,253,0.08)]'
+                      : 'bg-[#111111] border-transparent hover:bg-[#151515]'
+                  }`}
+                >
+                  {mode === 'brief' && (
+                    <div className="absolute top-3 right-3 text-primary">
+                      <svg className="h-5 w-5 fill-current" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z" style={{display:'none'}}/></svg>
                     </div>
                   )}
+                  {mode === 'brief' && (
+                    <span className="absolute top-3 right-3 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[#001e30]">
+                      <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    </span>
+                  )}
+                  <div className={`w-12 h-12 rounded-lg mb-4 flex items-center justify-center ${mode === 'brief' ? 'bg-primary/10' : 'bg-[#1e1e1e]'}`}>
+                    <BookOpen className={`h-6 w-6 ${mode === 'brief' ? 'text-primary' : 'text-[#c6c5d4]'}`} />
+                  </div>
+                  <h3 className="text-base font-headline font-bold text-[#e1e3e4] mb-1">Resumo Breve</h3>
+                  <p className="text-xs text-[#c6c5d4] leading-relaxed mb-4">
+                    Síntese executiva focada nos pontos cruciais. Ideal para leituras rápidas e tomada de decisão.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${mode === 'brief' ? 'bg-primary/20 text-primary' : 'bg-[#0a0a0a] text-[#c6c5d4]'}`}>
+                      Até 300 palavras
+                    </span>
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${mode === 'brief' ? 'bg-primary/20 text-primary' : 'bg-[#0a0a0a] text-[#c6c5d4]'}`}>
+                      Formato Lista
+                    </span>
+                  </div>
+                </button>
+
+                {/* Resumo Aprofundado */}
+                <button
+                  onClick={() => setMode('deep')}
+                  className={`relative rounded-xl p-5 text-left transition-all duration-300 border-2 ${
+                    mode === 'deep'
+                      ? 'bg-[#1e1e1e] border-primary/60 shadow-[0_0_24px_rgba(147,197,253,0.08)]'
+                      : 'bg-[#111111] border-transparent hover:bg-[#151515]'
+                  }`}
+                >
+                  {mode === 'deep' && (
+                    <span className="absolute top-3 right-3 flex h-5 w-5 items-center justify-center rounded-full bg-primary text-[#001e30]">
+                      <svg className="h-3 w-3" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                    </span>
+                  )}
+                  <div className={`w-12 h-12 rounded-lg mb-4 flex items-center justify-center ${mode === 'deep' ? 'bg-primary/10' : 'bg-[#1e1e1e]'}`}>
+                    <Brain className={`h-6 w-6 ${mode === 'deep' ? 'text-primary' : 'text-[#c6c5d4]'}`} />
+                  </div>
+                  <h3 className="text-base font-headline font-bold text-[#e1e3e4] mb-1">Resumo Aprofundado</h3>
+                  <p className="text-xs text-[#c6c5d4] leading-relaxed mb-4">
+                    Análise técnica completa, abrangendo metodologias, dados estatísticos e implicações de longo prazo.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${mode === 'deep' ? 'bg-primary/20 text-primary' : 'bg-[#0a0a0a] text-[#c6c5d4]'}`}>
+                      Análise Ilimitada
+                    </span>
+                    <span className={`text-[11px] font-semibold px-2 py-0.5 rounded ${mode === 'deep' ? 'bg-primary/20 text-primary' : 'bg-[#0a0a0a] text-[#c6c5d4]'}`}>
+                      Seção por Seção
+                    </span>
+                  </div>
+                </button>
+              </div>
+            </div>
+
+            {/* Templates (premium) */}
+            {templatesEnabled && templateOptions.length > 0 && (
+              <div>
+                <p className="mb-3 text-xs font-bold uppercase tracking-widest text-[#c6c5d4]">Template de Saída</p>
+                <div className="grid gap-2 md:grid-cols-3">
+                  {templateOptions.map(template => (
+                    <button
+                      key={template.template_id}
+                      onClick={() => setSelectedTemplateId(template.template_id)}
+                      className={`rounded-xl border px-3 py-2.5 text-left transition-all ${
+                        selectedTemplateId === template.template_id
+                          ? 'border-amber-500/50 bg-amber-500/10 text-amber-300'
+                          : 'border-[#1e1e1e] bg-[#111111] text-[#c6c5d4] hover:border-[#282828]'
+                      }`}
+                    >
+                      <p className="text-sm font-semibold">{template.label}</p>
+                      <p className="mt-0.5 text-xs opacity-80">{template.short_description}</p>
+                    </button>
+                  ))}
                 </div>
-              )}
+                {selectedTemplate && (
+                  <div className="mt-2 rounded-xl border border-[#1e1e1e] bg-[#111111] p-3">
+                    <p className="text-xs font-medium text-[#e1e3e4]">{selectedTemplate.preview_title}</p>
+                    <p className="mt-1 text-xs text-[#c6c5d4]">{selectedTemplate.long_description}</p>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {selectedTemplate.preview_sections.map(section => (
+                        <span key={section} className="rounded-full border border-[#282828] bg-[#0a0a0a] px-2 py-0.5 text-[11px] text-[#c6c5d4]">
+                          {section}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Footer: AI status + CTA */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-[#1e1e1e]">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-[#1e1e1e] flex items-center justify-center border border-[#282828]">
+                  <Brain className="h-5 w-5 text-[#c6c5d4] opacity-60" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#c6c5d4]">Status do Processamento</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_6px_rgba(147,197,253,0.6)]" />
+                    <span className="text-sm font-medium text-[#e1e3e4]">IA Pronta para Analisar</span>
+                  </div>
+                </div>
+              </div>
               <button
                 onClick={() => startJob.mutate()}
                 disabled={!selectedDoc || isProcessing}
-                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-primary text-[#000000] font-bold font-headline transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex items-center gap-3 px-7 py-3 rounded-xl font-bold font-headline text-[#001e30] bg-gradient-to-br from-primary to-primary/70 shadow-[0_8px_24px_rgba(147,197,253,0.2)] hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:scale-100"
               >
-                <BookOpen className="h-4 w-4" />
-                Gerar {modeLabel}
+                <span>Gerar Resumo</span>
+                <Zap className="h-4 w-4" />
               </button>
-            </>
-          )}
-          {isProcessing && (
-            <div className="flex flex-col items-center justify-center gap-3 py-8">
-              <Loader2 className="h-6 w-6 animate-spin text-primary" />
-              <span className="text-sm text-[#c6c5d4]">
-                {mode === 'deep' ? 'Analisando documento em profundidade...' : 'Gerando resumo breve...'}
-              </span>
-              <div className="w-full max-w-md rounded-xl border border-[#282828] bg-[#1e1e1e] p-2">
-                <div className="mb-1 flex justify-between text-[11px] text-[#c6c5d4]">
-                  <span>{jobQuery.data?.stage ?? 'iniciando'}</span>
-                  <span>{jobQuery.data?.progress ?? 5}%</span>
-                </div>
-                <div className="h-1.5 rounded-full bg-[#282828]">
-                  <div className="h-1.5 rounded-full bg-primary transition-all" style={{ width: `${jobQuery.data?.progress ?? 5}%` }} />
-                </div>
-              </div>
             </div>
-          )}
-          {result && (
-            <>
-              <div className="flex items-center justify-between">
-                <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${mode === 'brief' ? 'bg-primary/15 text-primary' : 'bg-violet-500/15 text-violet-300'}`}>
-                  {modeLabel} — {selectedDoc}{resultTemplateLabel ? ` — ${resultTemplateLabel}` : ''}
-                </span>
-                <button
-                  className="text-xs text-[#c6c5d4] hover:text-[#e1e3e4] transition-colors"
-                  onClick={() => { setResult(''); setArtifactFilename(null); setResultTemplateLabel(null); startJob.reset() }}
-                >
-                  Gerar outro
-                </button>
-              </div>
-              {artifactFilename && (
-                <div className="flex flex-wrap gap-2">
-                  <button onClick={handleDownloadMd} disabled={downloading !== null} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#282828] bg-[#1e1e1e] text-sm text-[#e1e3e4] hover:border-primary/40 transition-colors disabled:opacity-50">
-                    <Download className="h-3.5 w-3.5" />{downloading === 'md' ? 'Baixando...' : 'Exportar .md'}
-                  </button>
-                  <button onClick={handleDownloadPdf} disabled={downloading !== null} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-[#282828] bg-[#1e1e1e] text-sm text-[#e1e3e4] hover:border-primary/40 transition-colors disabled:opacity-50">
-                    <FileText className="h-3.5 w-3.5" />{downloading === 'pdf' ? 'Baixando...' : 'Exportar PDF'}
-                  </button>
+
+            {/* Stats bento */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: 'Tempo Estimado', value: mode === 'deep' ? '~45 seg' : '~14 seg' },
+                { label: 'Complexidade', value: mode === 'deep' ? 'Alta' : 'Baixa', accent: true },
+                { label: 'Créditos de IA', value: 'Premium' },
+              ].map(stat => (
+                <div key={stat.label} className="bg-[#0a0a0a] p-4 rounded-xl border border-[#1e1e1e]">
+                  <span className="text-[10px] text-[#c6c5d4] uppercase font-bold tracking-widest block mb-1">{stat.label}</span>
+                  <p className={`text-xl font-headline font-bold ${stat.accent ? 'text-primary' : 'text-[#e1e3e4]'}`}>{stat.value}</p>
                 </div>
-              )}
-              <div className="prose prose-invert prose-sm max-w-none max-h-[32rem] overflow-y-auto rounded-xl bg-[#1e1e1e] p-4">
-                <ReactMarkdown>{result}</ReactMarkdown>
-              </div>
-            </>
-          )}
-        </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -454,134 +553,250 @@ function SmartDigestDialog({ onClose }: { onClose: () => void }) {
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
-      <div className="w-full max-w-2xl rounded-2xl border border-[#282828] bg-[#111111] shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between border-b border-[#282828] px-6 py-4 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-[#1e1e1e] flex items-center justify-center">
-              <Zap className="h-4 w-4 text-amber-400" />
-            </div>
-            <h2 className="font-bold font-headline text-[#e1e3e4]">Smart Digest</h2>
-          </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 overflow-y-auto">
+      <div className="w-full max-w-2xl rounded-2xl border border-[#1e1e1e] bg-[#0d0d0d] shadow-2xl shadow-black/60 my-auto">
+
+        {/* ── Close button ── */}
+        <div className="flex justify-end px-6 pt-5">
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-[#1e1e1e] text-[#c6c5d4] transition-colors">
             <X className="h-4 w-4" />
           </button>
         </div>
-        <div className="p-6 space-y-5 overflow-y-auto flex-1">
-          {!digestResult && !digestMutation.isPending && (
-            <>
-              <p className="text-sm text-[#c6c5d4]">
-                Analisa o documento com IA e gera em uma operação: <strong className="text-[#e1e3e4]">resumo analítico</strong>, <strong className="text-[#e1e3e4]">flashcards</strong> para revisão espaçada e <strong className="text-[#e1e3e4]">tarefas</strong> extraídas automaticamente.
-              </p>
+
+        {digestResult ? (
+          /* ── Result view ── */
+          <div className="px-8 pb-8 space-y-4">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-amber-500/15 text-amber-400">
+                Smart Digest — concluído
+              </span>
+              <button
+                className="text-xs text-[#c6c5d4] hover:text-[#e1e3e4] transition-colors"
+                onClick={() => { setDigestResult(null); digestMutation.reset() }}
+              >
+                ← Fazer novamente
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {digestResult.deck_id && (
+                <div className="rounded-xl border border-primary/20 bg-primary/5 p-4">
+                  <p className="text-xs text-primary font-bold uppercase tracking-widest mb-1">Flashcards criados</p>
+                  <p className="text-2xl font-headline font-bold text-primary">{numCards} cards</p>
+                  <a href="/flashcards" className="text-xs text-primary/70 hover:text-primary transition-colors mt-1 block">Ver em Flashcards →</a>
+                </div>
+              )}
+              {digestResult.tasks_created > 0 && (
+                <div className="rounded-xl border border-emerald-700/30 bg-emerald-950/20 p-4">
+                  <p className="text-xs text-emerald-400 font-bold uppercase tracking-widest mb-1">Tarefas extraídas</p>
+                  <p className="text-2xl font-headline font-bold text-emerald-300">{digestResult.tasks_created}</p>
+                  <a href="/tasks" className="text-xs text-emerald-500/70 hover:text-emerald-400 transition-colors mt-1 block">Ver em Tarefas →</a>
+                </div>
+              )}
+              {digestResult.reviews_scheduled > 0 && (
+                <div className="rounded-xl border border-purple-700/30 bg-purple-950/20 p-4">
+                  <p className="text-xs text-purple-400 font-bold uppercase tracking-widest mb-1">Revisões SRS</p>
+                  <p className="text-2xl font-headline font-bold text-purple-300">{digestResult.reviews_scheduled}</p>
+                  <a href="/schedule" className="text-xs text-purple-500/70 hover:text-purple-400 transition-colors mt-1 block">Ver Calendário →</a>
+                </div>
+              )}
+            </div>
+            {digestResult.task_titles.length > 0 && (
               <div>
-                <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-[#c6c5d4]">Documento</label>
-                <DocSelector docs={docs ?? []} value={selectedDoc} onChange={setSelectedDoc} />
+                <p className="text-xs font-bold uppercase tracking-widest text-[#c6c5d4] mb-2 flex items-center gap-1">
+                  <CheckSquare className="h-3 w-3" /> Tarefas criadas
+                </p>
+                <ul className="space-y-1">
+                  {digestResult.task_titles.map((t, i) => (
+                    <li key={i} className="text-xs text-[#e1e3e4] flex items-start gap-2">
+                      <span className="text-emerald-500 mt-0.5">✓</span>{t}
+                    </li>
+                  ))}
+                </ul>
               </div>
+            )}
+            <div>
+              <p className="text-xs font-bold uppercase tracking-widest text-[#c6c5d4] mb-2 flex items-center gap-1">
+                <BookOpen className="h-3 w-3" /> Resumo gerado
+              </p>
+              <div className="prose prose-invert prose-xs max-w-none max-h-60 overflow-y-auto rounded-xl bg-[#111111] p-4">
+                <ReactMarkdown>{digestResult.summary}</ReactMarkdown>
+              </div>
+            </div>
+          </div>
+
+        ) : digestMutation.isPending ? (
+          /* ── Processing view ── */
+          <div className="px-8 pb-10 flex flex-col items-center gap-4">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#1e1e1e] border border-[#282828]/40 mb-2">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shadow-[0_0_8px_rgba(251,191,36,0.5)]" />
+              <span className="text-[10px] uppercase tracking-widest font-bold text-[#c6c5d4]">Processando</span>
+            </div>
+            <Brain className="h-8 w-8 animate-pulse text-amber-400" />
+            <p className="text-base font-semibold text-[#e1e3e4] text-center">Analisando documento...</p>
+            <p className="text-xs text-[#8e9099] text-center">Gerando resumo, flashcards e extraindo tarefas</p>
+          </div>
+
+        ) : (
+          /* ── Config view ── */
+          <div className="px-8 pb-8 space-y-6">
+            {/* Kicker + headline */}
+            <div className="space-y-3">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#1e1e1e] border border-[#282828]/40">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse shadow-[0_0_8px_rgba(251,191,36,0.5)]" />
+                <span className="text-[10px] uppercase tracking-widest font-bold text-[#c6c5d4]">Automação Inteligente</span>
+              </div>
+              <h2 className="text-3xl font-headline font-extrabold text-[#e1e3e4] tracking-tight leading-tight">
+                Configurar Smart Digest
+              </h2>
+              <p className="text-[#c6c5d4] text-sm leading-relaxed">
+                Uma operação, três entregas: <strong className="text-[#e1e3e4]">resumo analítico</strong>, <strong className="text-[#e1e3e4]">flashcards</strong> para revisão espaçada e <strong className="text-[#e1e3e4]">tarefas</strong> extraídas automaticamente.
+              </p>
+            </div>
+
+            {/* Document selector */}
+            <div>
+              <label className="mb-2 block text-xs font-bold uppercase tracking-widest text-[#c6c5d4]">Documento de Origem</label>
+              <DocSelector docs={docs ?? []} value={selectedDoc} onChange={setSelectedDoc} />
+            </div>
+
+            {/* Option cards */}
+            <div>
+              <p className="mb-3 text-xs font-bold uppercase tracking-widest text-[#c6c5d4]">O que será gerado</p>
               <div className="space-y-2">
-                <label className="flex items-center gap-3 rounded-xl border border-[#282828] bg-[#1e1e1e] px-4 py-3 cursor-pointer hover:border-primary/30 transition-colors">
-                  <input type="checkbox" checked={genFlashcards} onChange={e => setGenFlashcards(e.target.checked)} className="h-4 w-4 accent-blue-500" />
-                  <div>
-                    <p className="text-sm font-semibold text-[#e1e3e4]">Gerar Flashcards</p>
-                    <p className="text-xs text-[#c6c5d4]">Cria um deck de flashcards para revisão espaçada</p>
-                  </div>
-                </label>
-                {genFlashcards && (
-                  <div className="ml-7 flex items-center gap-3">
-                    <span className="text-xs text-[#c6c5d4] shrink-0">Quantidade de cards:</span>
-                    <input type="range" min={5} max={30} step={5} value={numCards} onChange={e => setNumCards(Number(e.target.value))} className="flex-1" />
-                    <span className="text-xs font-medium text-primary w-8 text-right">{numCards}</span>
-                  </div>
-                )}
-                <label className="flex items-center gap-3 rounded-xl border border-[#282828] bg-[#1e1e1e] px-4 py-3 cursor-pointer hover:border-primary/30 transition-colors">
-                  <input type="checkbox" checked={extractTasks} onChange={e => setExtractTasks(e.target.checked)} className="h-4 w-4 accent-emerald-500" />
-                  <div>
-                    <p className="text-sm font-semibold text-[#e1e3e4]">Extrair Tarefas</p>
-                    <p className="text-xs text-[#c6c5d4]">Identifica ações, exercícios e entregas no documento</p>
-                  </div>
-                </label>
-                {genFlashcards && (
-                  <label className="flex items-center gap-3 rounded-xl border border-[#282828] bg-[#1e1e1e] px-4 py-3 cursor-pointer hover:border-primary/30 transition-colors">
-                    <input type="checkbox" checked={scheduleReviews} onChange={e => setScheduleReviews(e.target.checked)} className="h-4 w-4 accent-purple-500" />
-                    <div>
-                      <p className="text-sm font-semibold text-[#e1e3e4]">Agendar Revisões SRS</p>
-                      <p className="text-xs text-[#c6c5d4]">Cria lembretes de revisão espaçada no calendário (+1d, +3d, +7d)</p>
+
+                {/* Flashcards card */}
+                <button
+                  type="button"
+                  onClick={() => setGenFlashcards(v => !v)}
+                  className={`w-full text-left rounded-xl border-2 p-4 transition-all duration-200 ${
+                    genFlashcards
+                      ? 'border-primary/50 bg-[#111111] shadow-[0_0_20px_rgba(147,197,253,0.06)]'
+                      : 'border-transparent bg-[#111111] hover:bg-[#151515]'
+                  }`}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${genFlashcards ? 'bg-primary/10' : 'bg-[#1e1e1e]'}`}>
+                      <BookOpen className={`h-5 w-5 ${genFlashcards ? 'text-primary' : 'text-[#c6c5d4]'}`} />
                     </div>
-                  </label>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-bold font-headline text-[#e1e3e4]">Gerar Flashcards</p>
+                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${genFlashcards ? 'border-primary bg-primary' : 'border-[#454652]'}`}>
+                          {genFlashcards && <svg className="h-2.5 w-2.5 text-[#001e30]" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                        </div>
+                      </div>
+                      <p className="text-xs text-[#c6c5d4] mt-0.5">Cria um deck de flashcards para revisão espaçada</p>
+                      {genFlashcards && (
+                        <div className="mt-3 flex items-center gap-3" onClick={e => e.stopPropagation()}>
+                          <span className="text-xs text-[#c6c5d4] shrink-0">Quantidade:</span>
+                          <input
+                            type="range" min={5} max={30} step={5} value={numCards}
+                            onChange={e => setNumCards(Number(e.target.value))}
+                            className="flex-1"
+                            style={{ background: `linear-gradient(to right, #93C5FD ${((numCards - 5) / 25) * 100}%, #282828 ${((numCards - 5) / 25) * 100}%)` }}
+                          />
+                          <span className="text-xs font-bold text-primary w-8 text-right font-mono">{numCards}</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </button>
+
+                {/* Extract tasks card */}
+                <button
+                  type="button"
+                  onClick={() => setExtractTasks(v => !v)}
+                  className={`w-full text-left rounded-xl border-2 p-4 transition-all duration-200 ${
+                    extractTasks
+                      ? 'border-emerald-500/40 bg-[#111111] shadow-[0_0_20px_rgba(52,211,153,0.04)]'
+                      : 'border-transparent bg-[#111111] hover:bg-[#151515]'
+                  }`}
+                >
+                  <div className="flex items-start gap-4">
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${extractTasks ? 'bg-emerald-500/10' : 'bg-[#1e1e1e]'}`}>
+                      <CheckSquare className={`h-5 w-5 ${extractTasks ? 'text-emerald-400' : 'text-[#c6c5d4]'}`} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center justify-between">
+                        <p className="text-sm font-bold font-headline text-[#e1e3e4]">Extrair Tarefas</p>
+                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${extractTasks ? 'border-emerald-500 bg-emerald-500' : 'border-[#454652]'}`}>
+                          {extractTasks && <svg className="h-2.5 w-2.5 text-[#001e30]" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                        </div>
+                      </div>
+                      <p className="text-xs text-[#c6c5d4] mt-0.5">Identifica ações, exercícios e entregas no documento</p>
+                    </div>
+                  </div>
+                </button>
+
+                {/* Schedule reviews card (only if flashcards enabled) */}
+                {genFlashcards && (
+                  <button
+                    type="button"
+                    onClick={() => setScheduleReviews(v => !v)}
+                    className={`w-full text-left rounded-xl border-2 p-4 transition-all duration-200 ${
+                      scheduleReviews
+                        ? 'border-purple-500/40 bg-[#111111] shadow-[0_0_20px_rgba(168,85,247,0.04)]'
+                        : 'border-transparent bg-[#111111] hover:bg-[#151515]'
+                    }`}
+                  >
+                    <div className="flex items-start gap-4">
+                      <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${scheduleReviews ? 'bg-purple-500/10' : 'bg-[#1e1e1e]'}`}>
+                        <GraduationCap className={`h-5 w-5 ${scheduleReviews ? 'text-purple-400' : 'text-[#c6c5d4]'}`} />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center justify-between">
+                          <p className="text-sm font-bold font-headline text-[#e1e3e4]">Agendar Revisões SRS</p>
+                          <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center shrink-0 ${scheduleReviews ? 'border-purple-500 bg-purple-500' : 'border-[#454652]'}`}>
+                            {scheduleReviews && <svg className="h-2.5 w-2.5 text-white" viewBox="0 0 12 12" fill="none"><path d="M2 6l3 3 5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                          </div>
+                        </div>
+                        <p className="text-xs text-[#c6c5d4] mt-0.5">Cria lembretes de revisão espaçada no calendário (+1d, +3d, +7d)</p>
+                      </div>
+                    </div>
+                  </button>
                 )}
+              </div>
+            </div>
+
+            {/* Footer: AI status + CTA */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-4 border-t border-[#1e1e1e]">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-[#1e1e1e] flex items-center justify-center border border-[#282828]">
+                  <Brain className="h-5 w-5 text-amber-400 opacity-70" />
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-[#c6c5d4]">Status do Processamento</p>
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shadow-[0_0_6px_rgba(251,191,36,0.6)]" />
+                    <span className="text-sm font-medium text-[#e1e3e4]">Agente Pronto</span>
+                  </div>
+                </div>
               </div>
               <button
                 onClick={() => digestMutation.mutate()}
                 disabled={!selectedDoc}
-                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-amber-500 text-[#000000] font-bold font-headline transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+                className="flex items-center gap-3 px-7 py-3 rounded-xl font-bold font-headline text-[#000000] bg-gradient-to-br from-amber-400 to-amber-500/80 shadow-[0_8px_24px_rgba(251,191,36,0.2)] hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:scale-100"
               >
+                <span>Executar Smart Digest</span>
                 <Zap className="h-4 w-4" />
-                Executar Smart Digest
-              </button>
-            </>
-          )}
-          {digestMutation.isPending && (
-            <div className="flex flex-col items-center justify-center gap-3 py-10">
-              <Brain className="h-8 w-8 animate-pulse text-amber-400" />
-              <span className="text-sm text-[#c6c5d4]">Analisando documento...</span>
-              <span className="text-xs text-[#8e9099]">Gerando resumo, flashcards e extraindo tarefas</span>
-            </div>
-          )}
-          {digestResult && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                {digestResult.deck_id && (
-                  <div className="rounded-xl border border-primary/20 bg-primary/5 p-3">
-                    <p className="text-xs text-primary font-medium mb-1">Flashcards criados</p>
-                    <p className="text-lg font-bold text-primary">{numCards} cards</p>
-                    <a href="/flashcards" className="text-xs text-primary/70 hover:text-primary transition-colors">Ver em Flashcards →</a>
-                  </div>
-                )}
-                {digestResult.tasks_created > 0 && (
-                  <div className="rounded-xl border border-emerald-700/30 bg-emerald-950/20 p-3">
-                    <p className="text-xs text-emerald-400 font-medium mb-1">Tarefas extraídas</p>
-                    <p className="text-lg font-bold text-emerald-300">{digestResult.tasks_created} tarefas</p>
-                    <a href="/tasks" className="text-xs text-emerald-500/70 hover:text-emerald-400 transition-colors">Ver em Tarefas →</a>
-                  </div>
-                )}
-                {digestResult.reviews_scheduled > 0 && (
-                  <div className="rounded-xl border border-purple-700/30 bg-purple-950/20 p-3">
-                    <p className="text-xs text-purple-400 font-medium mb-1">Revisões SRS agendadas</p>
-                    <p className="text-lg font-bold text-purple-300">{digestResult.reviews_scheduled} lembretes</p>
-                    <a href="/schedule" className="text-xs text-purple-500/70 hover:text-purple-400 transition-colors">Ver Calendário →</a>
-                  </div>
-                )}
-              </div>
-              {digestResult.task_titles.length > 0 && (
-                <div>
-                  <p className="text-xs font-medium text-[#c6c5d4] mb-2 flex items-center gap-1">
-                    <CheckSquare className="h-3 w-3" /> Tarefas criadas:
-                  </p>
-                  <ul className="space-y-1">
-                    {digestResult.task_titles.map((t, i) => (
-                      <li key={i} className="text-xs text-[#e1e3e4] flex items-start gap-2">
-                        <span className="text-emerald-500 mt-0.5">✓</span>{t}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              <div>
-                <p className="text-xs font-medium text-[#c6c5d4] mb-2 flex items-center gap-1">
-                  <BookOpen className="h-3 w-3" /> Resumo:
-                </p>
-                <div className="prose prose-invert prose-xs max-w-none max-h-60 overflow-y-auto rounded-xl bg-[#1e1e1e] p-3">
-                  <ReactMarkdown>{digestResult.summary}</ReactMarkdown>
-                </div>
-              </div>
-              <button
-                onClick={() => { setDigestResult(null); digestMutation.reset() }}
-                className="w-full py-2 rounded-xl border border-[#282828] bg-[#1e1e1e] text-sm text-[#e1e3e4] hover:border-primary/30 transition-colors"
-              >
-                Fazer novamente
               </button>
             </div>
-          )}
-        </div>
+
+            {/* Stats bento */}
+            <div className="grid grid-cols-3 gap-3">
+              {[
+                { label: 'Entregas', value: [genFlashcards, extractTasks, scheduleReviews].filter(Boolean).length + 1 + ' itens' },
+                { label: 'Flashcards', value: genFlashcards ? `${numCards} cards` : 'Desativado', accent: genFlashcards },
+                { label: 'Modo', value: 'Paralelo' },
+              ].map(stat => (
+                <div key={stat.label} className="bg-[#0a0a0a] p-4 rounded-xl border border-[#1e1e1e]">
+                  <span className="text-[10px] text-[#c6c5d4] uppercase font-bold tracking-widest block mb-1">{stat.label}</span>
+                  <p className={`text-xl font-headline font-bold ${stat.accent ? 'text-amber-400' : 'text-[#e1e3e4]'}`}>{stat.value}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
