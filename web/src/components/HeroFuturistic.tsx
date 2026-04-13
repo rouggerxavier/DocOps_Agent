@@ -202,45 +202,45 @@ export function HeroFuturistic({
   interactive = true,
   fallbackMode = 'still',
 }: HeroFuturisticProps) {
-  const containerRef = useRef<HTMLDivElement>(null)
+  // Delay Canvas mount until after the browser's first paint so Chrome's GPU
+  // process is fully active. Without this, WebGPU init races with GPU process
+  // scheduling — the renderer silently stalls until DevTools opens (which
+  // forces the GPU process into "active" mode as a side effect).
+  const [canvasReady, setCanvasReady] = useState(false)
 
   useEffect(() => {
-    // Fire a resize after mount so the R3F Canvas recalculates dimensions
-    // when rendered inside a flex/h-full container whose size isn't resolved
-    // synchronously (fixes WebGPU freeze until DevTools opens).
-    const id = requestAnimationFrame(() => {
-      window.dispatchEvent(new Event('resize'))
-    })
-    return () => cancelAnimationFrame(id)
+    const id = setTimeout(() => setCanvasReady(true), 0)
+    return () => clearTimeout(id)
   }, [])
 
   return (
     <div
-      ref={containerRef}
       className={cn(
         'relative isolate min-h-[260px] overflow-hidden rounded-[2rem] border border-[color:var(--ui-border)] bg-[color:var(--ui-surface)] shadow-[0_24px_80px_rgba(0,0,0,0.38)] sm:min-h-[360px]',
         className
       )}
     >
       <HeroBaseLayer mode={fallbackMode} />
-      <WebGPUErrorBoundary fallback={<HeroFallback mode={fallbackMode} />}>
-        <Canvas
-          flat
-          dpr={[1, 1.5]}
-          className="relative z-10"
-          camera={{ position: [0, 0, 1.6], fov: 32 }}
-          gl={async (props) => {
-            const renderer = new THREE.WebGPURenderer({ ...props, antialias: true } as any)
-            await renderer.init()
-            return renderer
-          }}
-        >
-          <Suspense fallback={null}>
-            <PostProcessing animated={true} />
-            <Scene animated={true} interactive={interactive} />
-          </Suspense>
-        </Canvas>
-      </WebGPUErrorBoundary>
+      {canvasReady && (
+        <WebGPUErrorBoundary fallback={<HeroFallback mode={fallbackMode} />}>
+          <Canvas
+            flat
+            dpr={[1, 1.5]}
+            className="relative z-10"
+            camera={{ position: [0, 0, 1.6], fov: 32 }}
+            gl={async (props) => {
+              const renderer = new THREE.WebGPURenderer({ ...props, antialias: true } as any)
+              await renderer.init()
+              return renderer
+            }}
+          >
+            <Suspense fallback={null}>
+              <PostProcessing animated={true} />
+              <Scene animated={true} interactive={interactive} />
+            </Suspense>
+          </Canvas>
+        </WebGPUErrorBoundary>
+      )}
       <div className="pointer-events-none absolute inset-0 rounded-[2rem] border border-white/5" />
       <div className="pointer-events-none absolute inset-x-8 bottom-8 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.16),transparent)]" />
     </div>
