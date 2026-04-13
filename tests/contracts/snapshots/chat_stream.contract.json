@@ -1,0 +1,52 @@
+{
+  "contract": "chat_stream_sse",
+  "version": "1.0.0",
+  "event_field_types": {
+    "start": {
+      "type": "string",
+      "correlation_id": "string",
+      "session_id": [
+        "string",
+        "null"
+      ]
+    },
+    "status": {
+      "type": "string",
+      "correlation_id": "string",
+      "stage": "string",
+      "detail": "string"
+    },
+    "delta": {
+      "type": "string",
+      "correlation_id": "string",
+      "delta": "string"
+    },
+    "final": {
+      "type": "string",
+      "correlation_id": "string",
+      "response": "object"
+    },
+    "error": {
+      "type": "string",
+      "correlation_id": "string",
+      "status_code": "integer",
+      "detail": "string"
+    },
+    "done": {
+      "type": "string",
+      "correlation_id": "string"
+    }
+  },
+  "success_sequence": [
+    "start",
+    "status?",
+    "delta*",
+    "final",
+    "done"
+  ],
+  "error_sequence": [
+    "start",
+    "status?",
+    "error"
+  ]
+}

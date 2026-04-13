@@ -311,7 +311,7 @@ export function Dashboard() {
   })
   const { data: artifacts } = useQuery<ArtifactItem[]>({
     queryKey: ['artifacts'],
-    queryFn: apiClient.listArtifacts,
+    queryFn: () => apiClient.listArtifacts(),
     retry: 1,
   })
   const { data: calendar, isLoading: isCalLoading } = useQuery<CalendarOverview>({

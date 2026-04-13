@@ -38,6 +38,11 @@ class User(Base):
     study_plans: Mapped[list["StudyPlanRecord"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     daily_questions: Mapped[list["DailyQuestionRecord"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     reading_status_records: Mapped[list["ReadingStatusRecord"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    preferences: Mapped["UserPreferenceRecord | None"] = relationship(
+        back_populates="owner",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
     def __repr__(self) -> str:
         return f"<User id={self.id} email={self.email!r}>"
@@ -70,6 +75,29 @@ class DocumentRecord(Base):
         return f"<DocumentRecord id={self.id} user={self.user_id} file={self.file_name!r}>"
 
 
+class UserPreferenceRecord(Base):
+    __tablename__ = "user_preferences"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    default_depth: Mapped[str] = mapped_column(String(16), nullable=False, default="brief")
+    tone: Mapped[str] = mapped_column(String(16), nullable=False, default="neutral")
+    strictness_preference: Mapped[str] = mapped_column(String(16), nullable=False, default="balanced")
+    schedule_preference: Mapped[str] = mapped_column(String(16), nullable=False, default="flexible")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    owner: Mapped[User] = relationship(back_populates="preferences")
+
+    __table_args__ = (
+        Index("ix_user_preferences_updated_at", "updated_at"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<UserPreferenceRecord id={self.id} user={self.user_id} schema={self.schema_version}>"
+
+
 class ArtifactRecord(Base):
     __tablename__ = "artifacts"
 
@@ -79,8 +107,16 @@ class ArtifactRecord(Base):
     title: Mapped[str | None] = mapped_column(String(512), nullable=True)
     filename: Mapped[str] = mapped_column(String(512), nullable=False)
     path: Mapped[str] = mapped_column(String(1024), nullable=False)
+    template_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    generation_profile: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    confidence_level: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    confidence_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    metadata_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     source_doc_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     source_doc_id_2: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_doc_ids: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    conversation_session_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    conversation_turn_ref: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
 
@@ -88,6 +124,11 @@ class ArtifactRecord(Base):
 
     __table_args__ = (
         Index("ix_artifact_user_filename", "user_id", "filename"),
+        Index("ix_artifact_user_type", "user_id", "artifact_type"),
+        Index("ix_artifact_user_template", "user_id", "template_id"),
+        Index("ix_artifact_user_created", "user_id", "created_at"),
+        Index("ix_artifact_user_confidence", "user_id", "confidence_score"),
+        Index("ix_artifact_user_conversation", "user_id", "conversation_session_id"),
     )
 
     def __repr__(self) -> str:

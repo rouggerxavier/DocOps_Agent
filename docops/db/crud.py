@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import re
 import unicodedata
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from docops.db.models import ArtifactRecord, DocumentRecord, ReminderRecord, ScheduleRecord, User
+from docops.db.models import (
+    ArtifactRecord,
+    DocumentRecord,
+    ReminderRecord,
+    ScheduleRecord,
+    User,
+    UserPreferenceRecord,
+)
 
 
 # -- User --------------------------------------------------------------------
@@ -27,6 +35,248 @@ def create_user(db: Session, name: str, email: str, password_hash: str) -> User:
     db.commit()
     db.refresh(user)
     return user
+
+
+def get_or_create_google_user(db: Session, email: str, name: str) -> User:
+    """Retorna usuário existente pelo e-mail ou cria um novo via OAuth Google."""
+    user = get_user_by_email(db, email)
+    if not user:
+        user = create_user(db, name=name, email=email, password_hash="__google_oauth__")
+    return user
+
+
+# -- UserPreferenceRecord -----------------------------------------------------
+
+PREFERENCE_SCHEMA_VERSION = 1
+_DEFAULT_PREFERENCE_DEFAULT_DEPTH = "brief"
+_DEFAULT_PREFERENCE_TONE = "neutral"
+_DEFAULT_PREFERENCE_STRICTNESS = "balanced"
+_DEFAULT_PREFERENCE_SCHEDULE = "flexible"
+
+_ALLOWED_DEFAULT_DEPTH_VALUES = {"brief", "balanced", "deep"}
+_ALLOWED_TONE_VALUES = {"neutral", "didactic", "objective", "encouraging"}
+_ALLOWED_STRICTNESS_VALUES = {"relaxed", "balanced", "strict"}
+_ALLOWED_SCHEDULE_VALUES = {"flexible", "fixed", "intensive"}
+
+
+def _normalize_preference_choice(raw: str | None, allowed: set[str], fallback: str) -> str:
+    value = str(raw or "").strip().lower()
+    if value in allowed:
+        return value
+    return fallback
+
+
+def default_user_preferences_payload() -> dict[str, str | int]:
+    return {
+        "schema_version": PREFERENCE_SCHEMA_VERSION,
+        "default_depth": _DEFAULT_PREFERENCE_DEFAULT_DEPTH,
+        "tone": _DEFAULT_PREFERENCE_TONE,
+        "strictness_preference": _DEFAULT_PREFERENCE_STRICTNESS,
+        "schedule_preference": _DEFAULT_PREFERENCE_SCHEDULE,
+    }
+
+
+def serialize_user_preferences(record: UserPreferenceRecord) -> dict[str, str | int]:
+    return {
+        "schema_version": max(PREFERENCE_SCHEMA_VERSION, int(record.schema_version or PREFERENCE_SCHEMA_VERSION)),
+        "default_depth": _normalize_preference_choice(
+            record.default_depth,
+            _ALLOWED_DEFAULT_DEPTH_VALUES,
+            _DEFAULT_PREFERENCE_DEFAULT_DEPTH,
+        ),
+        "tone": _normalize_preference_choice(
+            record.tone,
+            _ALLOWED_TONE_VALUES,
+            _DEFAULT_PREFERENCE_TONE,
+        ),
+        "strictness_preference": _normalize_preference_choice(
+            record.strictness_preference,
+            _ALLOWED_STRICTNESS_VALUES,
+            _DEFAULT_PREFERENCE_STRICTNESS,
+        ),
+        "schedule_preference": _normalize_preference_choice(
+            record.schedule_preference,
+            _ALLOWED_SCHEDULE_VALUES,
+            _DEFAULT_PREFERENCE_SCHEDULE,
+        ),
+    }
+
+
+def get_user_preference_record(db: Session, user_id: int) -> UserPreferenceRecord | None:
+    return (
+        db.query(UserPreferenceRecord)
+        .filter(UserPreferenceRecord.user_id == user_id)
+        .first()
+    )
+
+
+def _resolve_preference_retention_days(retention_days: int | None = None) -> int:
+    if retention_days is not None:
+        return max(0, int(retention_days))
+    from docops.config import config
+
+    return max(0, int(config.preferences_retention_days))
+
+
+def _preference_record_last_updated_at(record: UserPreferenceRecord) -> datetime | None:
+    latest = record.updated_at or record.created_at
+    if latest is None:
+        return None
+    if latest.tzinfo is None:
+        return latest.replace(tzinfo=timezone.utc)
+    return latest
+
+
+def _is_user_preference_record_retention_expired(
+    record: UserPreferenceRecord,
+    *,
+    retention_days: int,
+    now: datetime | None = None,
+) -> bool:
+    if retention_days <= 0:
+        return False
+    last_updated = _preference_record_last_updated_at(record)
+    if last_updated is None:
+        return False
+    now_utc = now or datetime.now(timezone.utc)
+    return last_updated < (now_utc - timedelta(days=retention_days))
+
+
+def apply_user_preference_retention_policy(
+    db: Session,
+    *,
+    user_id: int,
+    retention_days: int | None = None,
+    now: datetime | None = None,
+) -> bool:
+    record = get_user_preference_record(db, user_id)
+    if record is None:
+        return False
+
+    resolved_days = _resolve_preference_retention_days(retention_days)
+    if not _is_user_preference_record_retention_expired(
+        record,
+        retention_days=resolved_days,
+        now=now,
+    ):
+        return False
+
+    db.delete(record)
+    db.commit()
+    return True
+
+
+def _apply_preference_defaults(record: UserPreferenceRecord) -> None:
+    defaults = default_user_preferences_payload()
+    record.schema_version = int(defaults["schema_version"])
+    record.default_depth = str(defaults["default_depth"])
+    record.tone = str(defaults["tone"])
+    record.strictness_preference = str(defaults["strictness_preference"])
+    record.schedule_preference = str(defaults["schedule_preference"])
+
+
+def _migrate_user_preference_record(db: Session, record: UserPreferenceRecord) -> UserPreferenceRecord:
+    changed = False
+    current = serialize_user_preferences(record)
+
+    if int(record.schema_version or 0) != int(current["schema_version"]):
+        record.schema_version = int(current["schema_version"])
+        changed = True
+    if record.default_depth != current["default_depth"]:
+        record.default_depth = str(current["default_depth"])
+        changed = True
+    if record.tone != current["tone"]:
+        record.tone = str(current["tone"])
+        changed = True
+    if record.strictness_preference != current["strictness_preference"]:
+        record.strictness_preference = str(current["strictness_preference"])
+        changed = True
+    if record.schedule_preference != current["schedule_preference"]:
+        record.schedule_preference = str(current["schedule_preference"])
+        changed = True
+
+    if changed:
+        db.commit()
+        db.refresh(record)
+    return record
+
+
+def get_or_create_user_preference_record(db: Session, user_id: int) -> UserPreferenceRecord:
+    apply_user_preference_retention_policy(db, user_id=user_id)
+    record = get_user_preference_record(db, user_id)
+    if record is not None:
+        return _migrate_user_preference_record(db, record)
+
+    record = UserPreferenceRecord(user_id=user_id)
+    _apply_preference_defaults(record)
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def get_effective_user_preferences(db: Session, user_id: int) -> dict[str, str | int]:
+    record = get_or_create_user_preference_record(db, user_id)
+    return serialize_user_preferences(record)
+
+
+def update_user_preference_record(
+    db: Session,
+    *,
+    user_id: int,
+    default_depth: str | None = None,
+    tone: str | None = None,
+    strictness_preference: str | None = None,
+    schedule_preference: str | None = None,
+) -> UserPreferenceRecord:
+    record = get_or_create_user_preference_record(db, user_id)
+
+    if default_depth is not None:
+        record.default_depth = _normalize_preference_choice(
+            default_depth,
+            _ALLOWED_DEFAULT_DEPTH_VALUES,
+            _DEFAULT_PREFERENCE_DEFAULT_DEPTH,
+        )
+    if tone is not None:
+        record.tone = _normalize_preference_choice(
+            tone,
+            _ALLOWED_TONE_VALUES,
+            _DEFAULT_PREFERENCE_TONE,
+        )
+    if strictness_preference is not None:
+        record.strictness_preference = _normalize_preference_choice(
+            strictness_preference,
+            _ALLOWED_STRICTNESS_VALUES,
+            _DEFAULT_PREFERENCE_STRICTNESS,
+        )
+    if schedule_preference is not None:
+        record.schedule_preference = _normalize_preference_choice(
+            schedule_preference,
+            _ALLOWED_SCHEDULE_VALUES,
+            _DEFAULT_PREFERENCE_SCHEDULE,
+        )
+
+    record.schema_version = PREFERENCE_SCHEMA_VERSION
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def reset_user_preference_record(db: Session, *, user_id: int) -> UserPreferenceRecord:
+    record = get_or_create_user_preference_record(db, user_id)
+    _apply_preference_defaults(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def delete_user_preference_record(db: Session, *, user_id: int) -> bool:
+    record = get_user_preference_record(db, user_id)
+    if record is None:
+        return False
+    db.delete(record)
+    db.commit()
+    return True
 
 
 # -- DocumentRecord -----------------------------------------------------------
@@ -112,6 +362,32 @@ def delete_document_record(db: Session, user_id: int, doc_id: str) -> bool:
 
 # -- ArtifactRecord -----------------------------------------------------------
 
+def _normalize_source_doc_ids(source_doc_ids: list[str] | None) -> str | None:
+    if not source_doc_ids:
+        return None
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw in source_doc_ids:
+        value = str(raw or "").strip()
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        normalized.append(value)
+    if not normalized:
+        return None
+    # Pipe-delimited with leading/trailing marker allows exact-ish LIKE match.
+    return f"|{'|'.join(normalized)}|"
+
+
+def parse_source_doc_ids_blob(blob: str | None) -> list[str]:
+    value = str(blob or "").strip()
+    if not value:
+        return []
+    if value.startswith("|") and value.endswith("|"):
+        return [item for item in value.strip("|").split("|") if item]
+    return [item for item in value.split(",") if item]
+
+
 def create_artifact_record(
     db: Session,
     *,
@@ -120,17 +396,34 @@ def create_artifact_record(
     filename: str,
     path: str,
     title: str | None = None,
+    template_id: str | None = None,
+    generation_profile: str | None = None,
+    confidence_level: str | None = None,
+    confidence_score: float | None = None,
+    metadata_version: int = 1,
     source_doc_id: str | None = None,
     source_doc_id_2: str | None = None,
+    source_doc_ids: list[str] | None = None,
+    conversation_session_id: str | None = None,
+    conversation_turn_ref: str | None = None,
 ) -> ArtifactRecord:
+    source_doc_ids_blob = _normalize_source_doc_ids(source_doc_ids)
     artifact = ArtifactRecord(
         user_id=user_id,
         artifact_type=artifact_type,
         title=title,
         filename=filename,
         path=path,
+        template_id=template_id,
+        generation_profile=generation_profile,
+        confidence_level=confidence_level,
+        confidence_score=confidence_score,
+        metadata_version=max(1, int(metadata_version or 1)),
         source_doc_id=source_doc_id,
         source_doc_id_2=source_doc_id_2,
+        source_doc_ids=source_doc_ids_blob,
+        conversation_session_id=str(conversation_session_id or "").strip() or None,
+        conversation_turn_ref=str(conversation_turn_ref or "").strip() or None,
     )
     db.add(artifact)
     db.commit()
@@ -138,13 +431,103 @@ def create_artifact_record(
     return artifact
 
 
-def list_artifacts_for_user(db: Session, user_id: int) -> list[ArtifactRecord]:
-    return (
+def list_artifacts_for_user(
+    db: Session,
+    user_id: int,
+    *,
+    artifact_type: str | None = None,
+    source_doc_id: str | None = None,
+    conversation_session_id: str | None = None,
+    template_id: str | None = None,
+    generation_profile: str | None = None,
+    search: str | None = None,
+    sort_by: str = "created_at",
+    sort_order: str = "desc",
+) -> list[ArtifactRecord]:
+    query = db.query(ArtifactRecord).filter(ArtifactRecord.user_id == user_id)
+
+    if artifact_type:
+        query = query.filter(ArtifactRecord.artifact_type == artifact_type)
+    if template_id:
+        query = query.filter(ArtifactRecord.template_id == template_id)
+    if conversation_session_id:
+        query = query.filter(ArtifactRecord.conversation_session_id == conversation_session_id)
+    if generation_profile:
+        query = query.filter(ArtifactRecord.generation_profile == generation_profile)
+    if source_doc_id:
+        source_doc_id = str(source_doc_id).strip()
+        if source_doc_id:
+            query = query.filter(
+                or_(
+                    ArtifactRecord.source_doc_id == source_doc_id,
+                    ArtifactRecord.source_doc_id_2 == source_doc_id,
+                    ArtifactRecord.source_doc_ids.like(f"%|{source_doc_id}|%"),
+                )
+            )
+    if search:
+        term = f"%{str(search).strip()}%"
+        query = query.filter(
+            or_(
+                ArtifactRecord.title.ilike(term),
+                ArtifactRecord.filename.ilike(term),
+            )
+        )
+
+    sort_key = str(sort_by or "created_at").strip().lower()
+    sort_dir = str(sort_order or "desc").strip().lower()
+    sort_map = {
+        "created_at": ArtifactRecord.created_at,
+        "updated_at": ArtifactRecord.updated_at,
+        "title": ArtifactRecord.title,
+        "artifact_type": ArtifactRecord.artifact_type,
+        "confidence_score": ArtifactRecord.confidence_score,
+        "filename": ArtifactRecord.filename,
+    }
+    sort_column = sort_map.get(sort_key, ArtifactRecord.created_at)
+    if sort_dir == "asc":
+        query = query.order_by(sort_column.asc(), ArtifactRecord.id.asc())
+    else:
+        query = query.order_by(sort_column.desc(), ArtifactRecord.id.desc())
+
+    return query.all()
+
+
+def list_artifact_filter_options_for_user(db: Session, user_id: int) -> dict[str, list[str]]:
+    records = (
         db.query(ArtifactRecord)
         .filter(ArtifactRecord.user_id == user_id)
-        .order_by(ArtifactRecord.created_at.desc())
         .all()
     )
+
+    artifact_types: set[str] = set()
+    template_ids: set[str] = set()
+    generation_profiles: set[str] = set()
+    source_doc_ids: set[str] = set()
+    confidence_levels: set[str] = set()
+
+    for record in records:
+        if record.artifact_type:
+            artifact_types.add(str(record.artifact_type))
+        if record.template_id:
+            template_ids.add(str(record.template_id))
+        if record.generation_profile:
+            generation_profiles.add(str(record.generation_profile))
+        if record.confidence_level:
+            confidence_levels.add(str(record.confidence_level))
+
+        raw_source_ids = [record.source_doc_id, record.source_doc_id_2] + parse_source_doc_ids_blob(record.source_doc_ids)
+        for source_id in raw_source_ids:
+            value = str(source_id or "").strip()
+            if value:
+                source_doc_ids.add(value)
+
+    return {
+        "artifact_types": sorted(artifact_types),
+        "template_ids": sorted(template_ids),
+        "generation_profiles": sorted(generation_profiles),
+        "source_doc_ids": sorted(source_doc_ids),
+        "confidence_levels": sorted(confidence_levels),
+    }
 
 
 def get_artifact_by_user_and_filename(db: Session, user_id: int, filename: str) -> ArtifactRecord | None:

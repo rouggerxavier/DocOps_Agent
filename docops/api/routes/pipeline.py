@@ -20,6 +20,7 @@ from docops.db import crud
 from docops.db.database import get_db, session_scope
 from docops.db.models import User
 from docops.logging import get_logger
+from docops.observability import emit_event
 from docops.services.ownership import require_user_document
 
 logger = get_logger("docops.api.pipeline")
@@ -514,10 +515,25 @@ async def get_daily_question(
     from datetime import date
 
     today = date.today().isoformat()
+    emit_event(
+        logger,
+        "recommendation.daily_question.requested",
+        category="recommendation",
+        user_id=current_user.id,
+        date=today,
+    )
 
     # Verifica cache diário
     existing = crud.get_daily_question_for_user(db, current_user.id, today)
     if existing:
+        emit_event(
+            logger,
+            "recommendation.daily_question.cached",
+            category="recommendation",
+            user_id=current_user.id,
+            date=today,
+            doc_name=existing.doc_name,
+        )
         return {
             "question": existing.question,
             "answer_hint": existing.answer_hint,
@@ -527,6 +543,13 @@ async def get_daily_question(
 
     docs = crud.list_documents_for_user(db, current_user.id)
     if not docs:
+        emit_event(
+            logger,
+            "recommendation.daily_question.empty_docs",
+            category="recommendation",
+            user_id=current_user.id,
+            date=today,
+        )
         return {"question": None, "answer_hint": None, "doc_name": None, "date": today}
 
     doc = random.choice(docs)
@@ -549,6 +572,15 @@ async def get_daily_question(
         question, answer_hint = await asyncio.to_thread(_gen)
     except Exception as exc:
         logger.warning("Falha ao gerar pergunta do dia: %s", exc)
+        emit_event(
+            logger,
+            "recommendation.daily_question.failed",
+            level="error",
+            category="recommendation",
+            user_id=current_user.id,
+            date=today,
+            error_type=exc.__class__.__name__,
+        )
         return {"question": None, "answer_hint": None, "doc_name": None, "date": today}
 
     if question:
@@ -560,6 +592,14 @@ async def get_daily_question(
             doc_name=doc.file_name,
             date_generated=today,
         )
+        emit_event(
+            logger,
+            "recommendation.daily_question.generated",
+            category="recommendation",
+            user_id=current_user.id,
+            date=today,
+            doc_name=doc.file_name,
+        )
         return {
             "question": record.question,
             "answer_hint": record.answer_hint,
@@ -567,6 +607,14 @@ async def get_daily_question(
             "date": record.date_generated,
         }
 
+    emit_event(
+        logger,
+        "recommendation.daily_question.empty_result",
+        category="recommendation",
+        user_id=current_user.id,
+        date=today,
+        doc_name=doc.file_name,
+    )
     return {"question": None, "answer_hint": None, "doc_name": None, "date": today}
 
 
@@ -714,6 +762,15 @@ async def run_gap_analysis(
     if not docs:
         raise HTTPException(status_code=404, detail="Nenhum documento encontrado.")
 
+    target_count = len([d for d in docs if not payload.doc_names or d.file_name in payload.doc_names]) or len(docs)
+    emit_event(
+        logger,
+        "recommendation.gap_analysis.started",
+        category="recommendation",
+        user_id=current_user.id,
+        target_docs=min(target_count, 3),
+        selected_doc_filters=len(payload.doc_names or []),
+    )
     logger.info(
         "Gap analysis solicitada por user=%d, %d doc(s) alvo",
         current_user.id, len(payload.doc_names) or len(docs),
@@ -729,9 +786,24 @@ async def run_gap_analysis(
         )
     except Exception as exc:
         logger.exception("Falha na gap analysis: %s", exc)
+        emit_event(
+            logger,
+            "recommendation.gap_analysis.failed",
+            level="error",
+            category="recommendation",
+            user_id=current_user.id,
+            error_type=exc.__class__.__name__,
+        )
         raise HTTPException(status_code=500, detail="Erro interno ao executar análise de lacunas.")
 
-    target_count = len([d for d in docs if not payload.doc_names or d.file_name in payload.doc_names]) or len(docs)
+    emit_event(
+        logger,
+        "recommendation.gap_analysis.completed",
+        category="recommendation",
+        user_id=current_user.id,
+        target_docs=min(target_count, 3),
+        gap_count=len(gaps_raw),
+    )
     return GapAnalysisResponse(
         gaps=[GapItem(**g) for g in gaps_raw],
         docs_analyzed=min(target_count, 3),

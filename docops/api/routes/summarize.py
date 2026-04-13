@@ -16,11 +16,36 @@ from docops.db.crud import create_artifact_record
 from docops.db.database import SessionLocal, get_db
 from docops.db.models import User
 from docops.logging import get_logger
+from docops.services.artifact_templates import apply_template_layout, resolve_template
 from docops.services.ownership import require_user_document
 from docops.services.jobs import create_job, run_thread_with_progress, schedule_job, update_job
 
 logger = get_logger("docops.api.summarize")
 router = APIRouter()
+
+
+def _confidence_level_from_score(score: float | None) -> str | None:
+    if score is None:
+        return None
+    if score >= 0.8:
+        return "high"
+    if score >= 0.55:
+        return "medium"
+    return "low"
+
+
+def _extract_summary_confidence(diagnostics: dict | None) -> tuple[str | None, float | None]:
+    if not isinstance(diagnostics, dict):
+        return None, None
+
+    score: float | None = None
+    coverage = diagnostics.get("coverage", {})
+    if isinstance(coverage, dict):
+        raw = coverage.get("overall_coverage_score")
+        if isinstance(raw, (int, float)):
+            score = max(0.0, min(1.0, float(raw)))
+
+    return _confidence_level_from_score(score), score
 
 
 def _run_summarize(
@@ -29,11 +54,17 @@ def _run_summarize(
     save: bool,
     summary_mode: str,
     user_id: int,
+    template_id: str | None = None,
     debug_summary: bool = False,
     deep_profile: str | None = None,
 ) -> dict:
     from docops.tools.doc_tools import tool_write_artifact
 
+    template = resolve_template(
+        template_id=template_id,
+        summary_mode=summary_mode,
+        artifact_type="summary",
+    )
     diagnostics = None
     if summary_mode == "deep":
         # Multi-step pipeline: treats the document as a closed, ordered corpus
@@ -54,16 +85,30 @@ def _run_summarize(
 
         state = dict(
             run(
-                query=f"Faca um resumo breve do documento {file_name}",
+                query=(
+                    f"Faca um resumo breve do documento {file_name}. "
+                    f"Template obrigatorio: {template.label}. {template.prompt_directive}"
+                ),
                 extra={
                     "doc_name": file_name,
                     "doc_id": doc_id,
                     "summary_mode": "brief",
+                    "template_id": template.template_id,
                 },
                 user_id=user_id,
             )
         )
         answer = state.get("answer", "")
+
+    mode_label = "Resumo breve" if summary_mode == "brief" else "Resumo aprofundado"
+    answer = apply_template_layout(
+        answer,
+        template=template,
+        heading=f"{mode_label} - {Path(file_name).stem}",
+        context_line=f"Documento-base: {file_name}",
+    )
+    confidence_level, confidence_score = _extract_summary_confidence(diagnostics)
+    generation_profile = f"summary:{summary_mode}:{template.template_id}"
 
     artifact_path = None
     artifact_filename = None
@@ -79,6 +124,12 @@ def _run_summarize(
         "answer": answer,
         "artifact_path": artifact_path,
         "artifact_filename": artifact_filename,
+        "template_id": template.template_id,
+        "template_label": template.label,
+        "template_description": template.short_description,
+        "generation_profile": generation_profile,
+        "confidence_level": confidence_level,
+        "confidence_score": confidence_score,
         "diagnostics": diagnostics,
     }
 
@@ -107,6 +158,7 @@ async def summarize(
             body.save,
             body.summary_mode,
             current_user.id,
+            body.template_id,
             body.debug_summary,
             body.deep_profile,
         )
@@ -142,20 +194,30 @@ async def summarize(
 
     if body.save and result.get("artifact_path") and result.get("artifact_filename"):
         mode_suffix = "breve" if body.summary_mode == "brief" else "aprofundado"
+        template_label = str(result.get("template_label") or "").strip()
+        title_suffix = f" [{template_label}]" if template_label else ""
         create_artifact_record(
             db,
             user_id=current_user.id,
             artifact_type="summary",
-            title=f"Summary ({mode_suffix}) - {document.file_name}",
+            title=f"Summary ({mode_suffix}){title_suffix} - {document.file_name}",
             filename=str(result["artifact_filename"]),
             path=str(result["artifact_path"]),
+            template_id=result.get("template_id"),
+            generation_profile=result.get("generation_profile"),
+            confidence_level=result.get("confidence_level"),
+            confidence_score=result.get("confidence_score"),
             source_doc_id=document.doc_id,
+            source_doc_ids=[document.doc_id],
         )
 
     return SummarizeResponse(
         answer=str(result.get("answer", "")),
         artifact_path=result.get("artifact_path"),
         artifact_filename=result.get("artifact_filename"),
+        template_id=result.get("template_id"),
+        template_label=result.get("template_label"),
+        template_description=result.get("template_description"),
         summary_diagnostics=(
             jsonable_encoder(result.get("diagnostics")) if body.debug_summary else None
         ),
@@ -183,6 +245,7 @@ async def summarize_async(
                 body.save,
                 body.summary_mode,
                 current_user.id,
+                body.template_id,
                 body.debug_summary,
                 body.deep_profile,
             ),
@@ -196,6 +259,8 @@ async def summarize_async(
 
         if body.save and result.get("artifact_path") and result.get("artifact_filename"):
             mode_suffix = "breve" if body.summary_mode == "brief" else "aprofundado"
+            template_label = str(result.get("template_label") or "").strip()
+            title_suffix = f" [{template_label}]" if template_label else ""
 
             def _persist() -> None:
                 db_local = SessionLocal()
@@ -204,10 +269,15 @@ async def summarize_async(
                         db_local,
                         user_id=current_user.id,
                         artifact_type="summary",
-                        title=f"Summary ({mode_suffix}) - {document.file_name}",
+                        title=f"Summary ({mode_suffix}){title_suffix} - {document.file_name}",
                         filename=str(result["artifact_filename"]),
                         path=str(result["artifact_path"]),
+                        template_id=result.get("template_id"),
+                        generation_profile=result.get("generation_profile"),
+                        confidence_level=result.get("confidence_level"),
+                        confidence_score=result.get("confidence_score"),
                         source_doc_id=document.doc_id,
+                        source_doc_ids=[document.doc_id],
                     )
                 finally:
                     db_local.close()
@@ -219,6 +289,9 @@ async def summarize_async(
             "answer": str(result.get("answer", "")),
             "artifact_path": result.get("artifact_path"),
             "artifact_filename": result.get("artifact_filename"),
+            "template_id": result.get("template_id"),
+            "template_label": result.get("template_label"),
+            "template_description": result.get("template_description"),
             "summary_diagnostics": (
                 jsonable_encoder(result.get("diagnostics")) if body.debug_summary else None
             ),

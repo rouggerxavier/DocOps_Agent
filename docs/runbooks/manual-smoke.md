@@ -58,6 +58,73 @@ curl -s -X POST "http://127.0.0.1:$PORT/api/chat" \
 
 Expected: non-empty `answer`.
 
+Expected quality payload (when available):
+- `quality_signal.level`
+- `quality_signal.score`
+- `quality_signal.reason_codes`
+- `quality_signal.score_components`
+
+## 4.1 Correlation id header
+```bash
+curl -i -s -X POST "http://127.0.0.1:$PORT/api/chat" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-Correlation-ID: smoke-correlation-12345678" \
+  -d "{\"message\":\"quick check\"}" | grep -i "x-correlation-id"
+```
+
+Expected:
+- response includes `X-Correlation-ID`
+- value matches input id when input is valid
+
+## 4.2 Capabilities (feature flag snapshot)
+```bash
+curl -s -X GET "http://127.0.0.1:$PORT/api/capabilities" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Expected:
+- JSON with `map` and `flags`
+- `chat_streaming_enabled` present in `map`
+
+## 4.3 Stream chat endpoint (when enabled)
+```bash
+curl -N -s -X POST "http://127.0.0.1:$PORT/api/chat/stream" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"message\":\"Resumo rapido de ${DOC_TITLE}\"}"
+```
+
+Expected:
+- `data: {"type":"start"...}`
+- `data: {"type":"status","stage":"analyzing"...}`
+- `data: {"type":"status","stage":"retrieving"...}`
+- `data: {"type":"status","stage":"drafting"...}`
+- `data: {"type":"status","stage":"finalizing"...}`
+- multiple `data: {"type":"delta"...}`
+- one `data: {"type":"final"...}`
+- every SSE payload includes `correlation_id`
+
+## 4.4 Stream recovery behavior
+Open chat UI and validate fallback behavior during streaming:
+- Start a streamed question with a long answer.
+- Simulate interruption (disable network briefly or restart backend during stream).
+- Expected:
+  - partial streamed content remains visible (not lost)
+  - UI shows interruption guidance and recovery attempt
+  - app performs at most one automatic fallback to `/api/chat`
+  - no duplicate assistant bubble is created for the same user message
+  - composer remains usable after failure (no locked state)
+
+## 4.5 Evidence explainability panel (chat UI)
+- Open `/chat` in the browser.
+- Send a question that returns `quality_signal`.
+- Expected:
+  - confidence card visible below assistant answer
+  - card shows confidence level, score, source spread and unsupported-claims count
+  - click "Como esta resposta foi construida" opens component breakdown details
+  - panel remains readable on desktop and mobile widths
+
 ## 5. Summary and artifact creation
 ```bash
 curl -s -X POST "http://127.0.0.1:$PORT/api/summarize" \

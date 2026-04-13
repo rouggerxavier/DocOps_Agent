@@ -7,7 +7,7 @@ import json
 import re
 from typing import Any, List
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from docops.api.schemas import ChatQualitySignal, ChatRequest, ChatResponse, SourceItem
@@ -16,7 +16,13 @@ from docops.config import config
 from docops.db.database import get_db, session_scope
 from docops.db.models import User
 from docops.logging import get_logger
+from docops.observability import (
+    emit_event,
+    get_request_correlation_id,
+    is_stream_fallback_request,
+)
 from docops.rag.citations import _strip_embedding_header
+from docops.features.flags import is_feature_enabled, require_feature_enabled
 from docops.services.calendar_assistant import maybe_answer_calendar_query
 from docops.services.chat_context import (
     get_active_context,
@@ -96,39 +102,148 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _round2(value: float) -> float:
+    return round(_clamp01(value), 2)
+
+
+def _source_breadth_component(source_count: int) -> tuple[float, str, str]:
+    if source_count <= 0:
+        return 0.0, "source_breadth_none", "no_inline_sources"
+    if source_count == 1:
+        return 0.6, "source_breadth_single", "single_source"
+    return 1.0, "source_breadth_multi", "multi_source"
+
+
+def _retrieval_depth_component(retrieved_count: int) -> tuple[float, str, str]:
+    if retrieved_count <= 0:
+        return 0.0, "retrieval_depth_none", "no_retrieval"
+    if retrieved_count <= 2:
+        return 0.45 if retrieved_count == 1 else 0.7, "retrieval_depth_shallow", f"retrieval_chunks={retrieved_count}"
+    return 1.0, "retrieval_depth_sufficient", f"retrieval_chunks={retrieved_count}"
+
+
+def _unsupported_claims_component(unsupported_count: int) -> tuple[float, str, str]:
+    if unsupported_count <= 0:
+        return 1.0, "unsupported_claims_none", "unsupported_claims=0"
+    if unsupported_count == 1:
+        return 0.75, "unsupported_claims_present", "unsupported_claims=1"
+    if unsupported_count == 2:
+        return 0.5, "unsupported_claims_present", "unsupported_claims=2"
+    return 0.25, "unsupported_claims_present", f"unsupported_claims={unsupported_count}"
+
+
+def _support_component(support_rate: float | None) -> tuple[float, str, str]:
+    if support_rate is None:
+        return 0.55, "support_rate_missing", "support_rate_missing"
+    normalized = _clamp01(support_rate)
+    if normalized >= 0.8:
+        code = "support_rate_strong"
+    elif normalized >= 0.55:
+        code = "support_rate_moderate"
+    else:
+        code = "support_rate_weak"
+    return normalized, code, f"support_rate={normalized:.2f}"
+
+
+def _build_low_confidence_suggested_action(retrieved_count: int, source_count: int) -> str:
+    if retrieved_count <= 0:
+        intro = "Nao encontrei evidencias suficientes nos documentos atuais."
+    elif source_count <= 0:
+        intro = "A resposta foi gerada com pouca citacao explicita de fontes."
+    else:
+        intro = "A resposta tem suporte parcial e requer validacao adicional."
+
+    return (
+        f"{intro} "
+        "1) Especifique melhor a pergunta (escopo, periodo ou contexto). "
+        "2) Adicione ou selecione documentos mais relevantes para o tema. "
+        "3) Ative o modo strict grounding para exigir evidencia forte."
+    )
+
+
+def _constrain_low_confidence_answer(answer: str) -> str:
+    normalized = re.sub(r"\s+", " ", str(answer or "")).strip()
+    if not normalized:
+        normalized = "Nao encontrei evidencia suficiente para responder com seguranca."
+    if len(normalized) > 420:
+        normalized = f"{normalized[:420].rstrip()}..."
+    return normalized
+
+
+def _apply_low_confidence_guardrail(
+    answer: str,
+    quality_signal: ChatQualitySignal,
+) -> tuple[str, bool]:
+    if quality_signal.level != "low":
+        return answer, False
+
+    constrained = _constrain_low_confidence_answer(answer)
+    guarded_answer = (
+        "Confiabilidade baixa: resposta em modo conservador.\n\n"
+        f"{constrained}\n\n"
+        "Proximos passos recomendados:\n"
+        "1. Especifique melhor a pergunta (escopo, periodo ou contexto).\n"
+        "2. Adicione ou selecione documentos mais relevantes.\n"
+        "3. Ative o modo strict grounding para exigir evidencia forte."
+    )
+    return guarded_answer, True
+
+
 def _build_quality_signal(state: dict, sources: list[SourceItem]) -> ChatQualitySignal:
-    """Compute a lightweight confidence signal for chat UX."""
+    """Compute confidence signal V2 with decomposed components and taxonomy."""
     retrieved_chunks = state.get("retrieved_chunks") or []
     retrieved_count = len(retrieved_chunks)
     source_count = len(sources)
 
     grounding = state.get("grounding") or state.get("grounding_info") or {}
-    support_rate = _as_float(grounding.get("support_rate"))
+    raw_support_rate = _as_float(grounding.get("support_rate"))
+    support_rate = _clamp01(raw_support_rate) if raw_support_rate is not None else None
     unsupported_claims = grounding.get("unsupported_claims") or []
     unsupported_count = len(unsupported_claims) if isinstance(unsupported_claims, list) else 0
 
-    score = support_rate if support_rate is not None else 0.55
-    reasons: list[str] = []
+    support_component, support_code, support_reason = _support_component(support_rate)
+    source_component, source_code, source_reason = _source_breadth_component(source_count)
+    retrieval_component, retrieval_code, retrieval_reason = _retrieval_depth_component(retrieved_count)
+    unsupported_component, unsupported_code, unsupported_reason = _unsupported_claims_component(
+        unsupported_count
+    )
 
-    if support_rate is not None:
-        reasons.append(f"support_rate={support_rate:.2f}")
-    if source_count == 0:
-        reasons.append("no_inline_sources")
-        score -= 0.25
-    elif source_count == 1:
-        reasons.append("single_source")
-        score -= 0.08
-    else:
-        reasons.append("multi_source")
-        score += 0.08
-    if retrieved_count == 0:
-        reasons.append("no_retrieval")
-        score -= 0.35
-    if unsupported_count > 0:
-        reasons.append(f"unsupported_claims={unsupported_count}")
-        score -= min(0.3, unsupported_count * 0.05)
+    weights = {
+        "support_rate": 0.5,
+        "source_breadth": 0.2,
+        "unsupported_claims": 0.2,
+        "retrieval_depth": 0.1,
+    }
+    score = _round2(
+        (support_component * weights["support_rate"])
+        + (source_component * weights["source_breadth"])
+        + (unsupported_component * weights["unsupported_claims"])
+        + (retrieval_component * weights["retrieval_depth"])
+    )
 
-    score = max(0.0, min(1.0, round(score, 2)))
+    reason_codes = [
+        support_code,
+        source_code,
+        unsupported_code,
+        retrieval_code,
+    ]
+    reasons = [
+        support_reason,
+        source_reason,
+        unsupported_reason,
+        retrieval_reason,
+    ]
+
+    score_components = {
+        "support_rate": _round2(support_component),
+        "source_breadth": _round2(source_component),
+        "unsupported_claims": _round2(unsupported_component),
+        "retrieval_depth": _round2(retrieval_component),
+    }
 
     if score >= 0.8:
         level = "high"
@@ -142,27 +257,17 @@ def _build_quality_signal(state: dict, sources: list[SourceItem]) -> ChatQuality
 
     suggested_action: str | None = None
     if level == "low":
-        if retrieved_count == 0:
-            suggested_action = (
-                "Nao encontrei evidencias nos documentos atuais. "
-                "Considere ingerir mais material sobre este tema."
-            )
-        elif source_count == 0:
-            suggested_action = (
-                "Tente pedir uma resposta com citacoes explicitas "
-                "(por exemplo: inclua [Fonte N] no texto)."
-            )
-        else:
-            suggested_action = (
-                "A resposta tem suporte parcial. Vale reformular a pergunta "
-                "ou ampliar o conjunto de documentos."
-            )
+        suggested_action = _build_low_confidence_suggested_action(retrieved_count, source_count)
 
     return ChatQualitySignal(
         level=level,
         score=score,
         label=label,
         reasons=reasons,
+        reason_codes=reason_codes,
+        score_components=score_components,
+        support_rate=_round2(support_rate) if support_rate is not None else None,
+        unsupported_claim_count=unsupported_count,
         suggested_action=suggested_action,
         source_count=source_count,
         retrieved_count=retrieved_count,
@@ -183,7 +288,7 @@ def _run_chat(
         clean_doc_names = [str(name).strip() for name in doc_names if str(name).strip()]
         if clean_doc_names:
             extra["doc_names"] = clean_doc_names
-    if strict_grounding:
+    if strict_grounding and is_feature_enabled("strict_grounding_enabled"):
         extra["strict_grounding"] = True
 
     return dict(run(query=message, top_k=top_k, user_id=user_id, extra=extra or None))
@@ -394,13 +499,52 @@ async def _build_chat_response(
     include_grounding = body.debug_grounding or config.debug_grounding
     grounding_payload = state.get("grounding") or state.get("grounding_info")
     quality_signal = _build_quality_signal(state, sources)
+    guarded_answer, guardrail_applied = _apply_low_confidence_guardrail(
+        state.get("answer", ""),
+        quality_signal,
+    )
+    if guardrail_applied and "low_confidence_guardrail_applied" not in quality_signal.reason_codes:
+        quality_signal.reason_codes.append("low_confidence_guardrail_applied")
+    if guardrail_applied:
+        emit_event(
+            logger,
+            "chat.low_confidence_guardrail.applied",
+            category="chat_quality",
+            user_id=current_user.id,
+            session_id=body.session_id,
+            intent=state.get("intent", "qa"),
+            quality_score=quality_signal.score,
+            quality_reason_codes=quality_signal.reason_codes,
+            quality_source_count=quality_signal.source_count,
+            quality_retrieved_count=quality_signal.retrieved_count,
+        )
+
     logger.info(
-        "Chat quality signal user=%s intent=%s level=%s score=%.2f reasons=%s",
+        "Chat quality signal user=%s intent=%s level=%s score=%.2f reason_codes=%s reasons=%s",
         current_user.id,
         state.get("intent", "qa"),
         quality_signal.level,
         quality_signal.score,
+        ",".join(quality_signal.reason_codes),
         ",".join(quality_signal.reasons),
+    )
+    emit_event(
+        logger,
+        "chat.quality_signal.computed",
+        category="chat_quality",
+        user_id=current_user.id,
+        intent=state.get("intent", "qa"),
+        quality_level=quality_signal.level,
+        quality_score=quality_signal.score,
+        quality_reason_codes=quality_signal.reason_codes,
+        quality_support_rate=quality_signal.support_rate,
+        quality_unsupported_claim_count=quality_signal.unsupported_claim_count,
+        quality_source_count=quality_signal.source_count,
+        quality_retrieved_count=quality_signal.retrieved_count,
+        quality_component_support_rate=quality_signal.score_components.get("support_rate"),
+        quality_component_source_breadth=quality_signal.score_components.get("source_breadth"),
+        quality_component_unsupported_claims=quality_signal.score_components.get("unsupported_claims"),
+        quality_component_retrieval_depth=quality_signal.score_components.get("retrieval_depth"),
     )
     next_context = remember_active_context(
         current_user.id,
@@ -415,7 +559,7 @@ async def _build_chat_response(
     )
 
     return ChatResponse(
-        answer=state.get("answer", ""),
+        answer=guarded_answer,
         sources=sources,
         intent=state.get("intent", "qa"),
         session_id=body.session_id,
@@ -433,59 +577,335 @@ def _sse_payload(payload: dict[str, Any]) -> str:
     return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
+def _stream_event_payload(
+    event_type: str,
+    request: Request | None,
+    **fields: Any,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "type": event_type,
+        "correlation_id": get_request_correlation_id(request),
+    }
+    for key, value in fields.items():
+        if value is not None:
+            payload[key] = value
+    return payload
+
+
+def _is_timeout_message(detail: str) -> bool:
+    text = detail.casefold()
+    return "timeout" in text or "timed out" in text
+
+
+def _normalize_stream_error_detail(status_code: int, detail: Any) -> str:
+    raw_detail = str(detail or "").strip()
+    fallback_detail = "Stream request failed before completion."
+
+    if status_code == 504 or _is_timeout_message(raw_detail):
+        prefix = "Stream timed out before completion."
+    elif status_code >= 500:
+        prefix = "Stream failed before completion."
+    elif status_code in {408, 429}:
+        prefix = "Stream was interrupted and may be retried."
+    else:
+        return raw_detail or fallback_detail
+
+    if not raw_detail:
+        return prefix
+    if raw_detail.casefold() == prefix.casefold():
+        return prefix
+    return f"{prefix} Detail: {raw_detail}"
+
+
+class _StreamLifecycleEmitter:
+    """Emit SSE payloads while enforcing a single final/terminal lifecycle."""
+
+    def __init__(self, request: Request | None):
+        self._request = request
+        self._final_emitted = False
+        self._terminal_emitted = False
+
+    def emit(self, event_type: str, **fields: Any) -> str | None:
+        if self._terminal_emitted:
+            logger.warning(
+                "chat.stream.event.suppressed_after_terminal",
+                extra={"event_type": event_type},
+            )
+            return None
+
+        if event_type == "final":
+            if self._final_emitted:
+                logger.warning("chat.stream.event.suppressed_duplicate_final")
+                return None
+            self._final_emitted = True
+        elif event_type == "done":
+            if not self._final_emitted:
+                logger.warning("chat.stream.event.suppressed_done_without_final")
+                return None
+            self._terminal_emitted = True
+        elif event_type == "error":
+            if self._final_emitted:
+                logger.warning("chat.stream.event.suppressed_error_after_final")
+                return None
+            self._terminal_emitted = True
+        elif self._final_emitted and event_type in {"status", "delta"}:
+            logger.warning(
+                "chat.stream.event.suppressed_after_final",
+                extra={"event_type": event_type},
+            )
+            return None
+
+        return _sse_payload(_stream_event_payload(event_type, self._request, **fields))
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     body: ChatRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ChatResponse:
+    fallback_from_stream = is_stream_fallback_request(request)
     logger.info("Chat request from user %s: '%s'", current_user.id, body.message[:80])
-    return await _build_chat_response(body, current_user, db)
+    emit_event(
+        logger,
+        "chat.request.received",
+        category="chat",
+        route="/api/chat",
+        user_id=current_user.id,
+        session_id=body.session_id,
+        doc_count=len(body.doc_names or []),
+        strict_grounding_requested=bool(body.strict_grounding),
+        fallback_from_stream=fallback_from_stream,
+    )
+    response = await _build_chat_response(body, current_user, db)
+    emit_event(
+        logger,
+        "chat.request.completed",
+        category="chat",
+        route="/api/chat",
+        user_id=current_user.id,
+        session_id=response.session_id,
+        intent=response.intent,
+        source_count=len(response.sources or []),
+        quality_level=(response.quality_signal.level if response.quality_signal else None),
+        quality_score=(response.quality_signal.score if response.quality_signal else None),
+        quality_reason_codes=(response.quality_signal.reason_codes if response.quality_signal else None),
+        quality_component_support_rate=(
+            response.quality_signal.score_components.get("support_rate")
+            if response.quality_signal
+            else None
+        ),
+        quality_component_source_breadth=(
+            response.quality_signal.score_components.get("source_breadth")
+            if response.quality_signal
+            else None
+        ),
+        quality_component_unsupported_claims=(
+            response.quality_signal.score_components.get("unsupported_claims")
+            if response.quality_signal
+            else None
+        ),
+        quality_component_retrieval_depth=(
+            response.quality_signal.score_components.get("retrieval_depth")
+            if response.quality_signal
+            else None
+        ),
+        quality_support_rate=(response.quality_signal.support_rate if response.quality_signal else None),
+        quality_unsupported_claim_count=(
+            response.quality_signal.unsupported_claim_count if response.quality_signal else None
+        ),
+        fallback_from_stream=fallback_from_stream,
+    )
+    return response
 
 
 @router.post("/chat/stream")
 async def chat_stream(
     body: ChatRequest,
+    request: Request,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> StreamingResponse:
     """Stream chat answer incrementally as SSE events."""
+    require_feature_enabled(
+        "chat_streaming_enabled",
+        detail="Chat streaming is disabled by feature flag.",
+    )
     logger.info("Chat stream request from user %s: '%s'", current_user.id, body.message[:80])
+    correlation_id = get_request_correlation_id(request)
+    emit_event(
+        logger,
+        "chat.stream.started",
+        category="chat_stream",
+        route="/api/chat/stream",
+        correlation_id=correlation_id,
+        user_id=current_user.id,
+        session_id=body.session_id,
+        doc_count=len(body.doc_names or []),
+        strict_grounding_requested=bool(body.strict_grounding),
+    )
 
     async def event_generator():
-        yield _sse_payload({"type": "start", "session_id": body.session_id})
+        emitter = _StreamLifecycleEmitter(request)
+
+        start_event = emitter.emit(
+            "start",
+            session_id=body.session_id,
+        )
+        if start_event is not None:
+            yield start_event
+
+        analyzing_event = emitter.emit(
+            "status",
+            stage="analyzing",
+            detail="Analyzing question and intent",
+        )
+        if analyzing_event is not None:
+            yield analyzing_event
+
+        retrieving_event = emitter.emit(
+            "status",
+            stage="retrieving",
+            detail="Retrieving evidence from indexed documents",
+        )
+        if retrieving_event is not None:
+            yield retrieving_event
 
         try:
             response = await _build_chat_response(body, current_user, db)
         except HTTPException as exc:
-            yield _sse_payload(
-                {
-                    "type": "error",
-                    "status_code": exc.status_code,
-                    "detail": str(exc.detail),
-                }
+            detail = _normalize_stream_error_detail(exc.status_code, exc.detail)
+            emit_event(
+                logger,
+                "chat.stream.failed",
+                level="error",
+                category="chat_stream",
+                route="/api/chat/stream",
+                correlation_id=correlation_id,
+                user_id=current_user.id,
+                session_id=body.session_id,
+                status_code=exc.status_code,
+                detail=detail,
             )
+            error_event = emitter.emit(
+                "error",
+                status_code=exc.status_code,
+                detail=detail,
+            )
+            if error_event is not None:
+                yield error_event
+            return
+        except (TimeoutError, asyncio.TimeoutError) as exc:
+            detail = _normalize_stream_error_detail(504, str(exc))
+            emit_event(
+                logger,
+                "chat.stream.failed",
+                level="error",
+                category="chat_stream",
+                route="/api/chat/stream",
+                correlation_id=correlation_id,
+                user_id=current_user.id,
+                session_id=body.session_id,
+                status_code=504,
+                detail=detail,
+                error_type=exc.__class__.__name__,
+            )
+            error_event = emitter.emit(
+                "error",
+                status_code=504,
+                detail=detail,
+            )
+            if error_event is not None:
+                yield error_event
             return
         except Exception as exc:  # pragma: no cover - defensive fallback
             logger.error("Chat stream error: %s", exc)
-            yield _sse_payload(
-                {
-                    "type": "error",
-                    "status_code": 500,
-                    "detail": "Agent error - check server logs",
-                }
+            detail = _normalize_stream_error_detail(500, "Agent error - check server logs")
+            emit_event(
+                logger,
+                "chat.stream.failed",
+                level="error",
+                category="chat_stream",
+                route="/api/chat/stream",
+                correlation_id=correlation_id,
+                user_id=current_user.id,
+                session_id=body.session_id,
+                status_code=500,
+                detail=detail,
+                error_type=exc.__class__.__name__,
             )
+            error_event = emitter.emit(
+                "error",
+                status_code=500,
+                detail=detail,
+            )
+            if error_event is not None:
+                yield error_event
             return
 
         answer = response.answer or ""
+        drafting_event = emitter.emit(
+            "status",
+            stage="drafting",
+            detail="Drafting answer",
+        )
+        if drafting_event is not None:
+            yield drafting_event
+
+        streamed_chars = 0
         for idx in range(0, len(answer), _STREAM_CHARS_PER_CHUNK):
             chunk = answer[idx : idx + _STREAM_CHARS_PER_CHUNK]
             if chunk:
-                yield _sse_payload({"type": "delta", "delta": chunk})
+                streamed_chars += len(chunk)
+                delta_event = emitter.emit(
+                    "delta",
+                    delta=chunk,
+                )
+                if delta_event is not None:
+                    yield delta_event
                 await asyncio.sleep(_STREAM_DELAY_SECONDS)
+        finalizing_event = emitter.emit(
+            "status",
+            stage="finalizing",
+            detail="Finalizing answer",
+        )
+        if finalizing_event is not None:
+            yield finalizing_event
 
-        yield _sse_payload({"type": "final", "response": response.model_dump(mode="json")})
-        yield _sse_payload({"type": "done"})
+        emit_event(
+            logger,
+            "chat.stream.final",
+            category="chat_stream",
+            route="/api/chat/stream",
+            user_id=current_user.id,
+            session_id=response.session_id,
+            intent=response.intent,
+            source_count=len(response.sources or []),
+            delta_chars=streamed_chars,
+            correlation_id=correlation_id,
+        )
+        final_event = emitter.emit(
+            "final",
+            response=response.model_dump(mode="json"),
+        )
+        if final_event is not None:
+            yield final_event
+
+        done_event = emitter.emit("done")
+        if done_event is not None:
+            yield done_event
+
+        emit_event(
+            logger,
+            "chat.stream.completed",
+            category="chat_stream",
+            route="/api/chat/stream",
+            correlation_id=correlation_id,
+            user_id=current_user.id,
+            session_id=response.session_id,
+            delta_chars=streamed_chars,
+        )
 
     headers = {
         "Cache-Control": "no-cache",

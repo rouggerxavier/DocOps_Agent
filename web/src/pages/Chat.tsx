@@ -1,11 +1,11 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useId } from 'react'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import {
   Send, Bot, User, FileText, ChevronRight, Loader2, X,
   Plus, MessageSquare, Clock, CalendarCheck, Trash2,
-  SlidersHorizontal, ChevronDown,
+  SlidersHorizontal, ChevronDown, Sparkles,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
@@ -15,17 +15,21 @@ import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
   apiClient,
+  ChatStreamError,
   type ChatResponse,
   type ChatQualitySignal,
   type SourceItem,
   type DocItem,
   type FlashcardDeck,
+  type UserPreferences,
 } from '@/api/client'
+import { useCapabilities } from '@/features/CapabilitiesProvider'
 import { cn } from '@/lib/utils'
 
 interface Message {
   role: 'user' | 'assistant'
   content: string
+  prompt_hint?: string | null
   sources?: SourceItem[]
   intent?: string
   calendar_action?: Record<string, any> | null
@@ -35,7 +39,13 @@ interface Message {
   confirmation_text?: string | null
   suggested_reply?: string | null
   streaming?: boolean
+  stream_stage?: StreamStage | null
+  stream_status_text?: string | null
+  stream_interrupted?: boolean
+  active_context_snapshot?: ChatActiveContext | null
 }
+
+type StreamStage = 'analyzing' | 'retrieving' | 'drafting' | 'finalizing'
 
 interface ChatActiveContext {
   active_doc_ids: string[]
@@ -109,11 +119,105 @@ interface FlashcardBatchResult {
 
 interface ChatRunPayload {
   message: string
+  displayMessage: string
   sessionId: string
   docIds: string[]
   strictGrounding: boolean
   history: Array<{ role: 'user' | 'assistant'; content: string }>
   activeContext: ChatActiveContext
+}
+
+type ComposerPreferenceOverrides = {
+  default_depth: UserPreferences['default_depth'] | null
+  tone: UserPreferences['tone'] | null
+  strictness_preference: UserPreferences['strictness_preference'] | null
+}
+
+const DEFAULT_USER_PREFERENCES: UserPreferences = {
+  schema_version: 1,
+  default_depth: 'brief',
+  tone: 'neutral',
+  strictness_preference: 'balanced',
+  schedule_preference: 'flexible',
+}
+
+const DEPTH_LABELS: Record<UserPreferences['default_depth'], string> = {
+  brief: 'Breve',
+  balanced: 'Equilibrado',
+  deep: 'Profundo',
+}
+
+const TONE_LABELS: Record<UserPreferences['tone'], string> = {
+  neutral: 'Neutro',
+  didactic: 'Didatico',
+  objective: 'Objetivo',
+  encouraging: 'Encorajador',
+}
+
+const STRICTNESS_LABELS: Record<UserPreferences['strictness_preference'], string> = {
+  relaxed: 'Relaxado',
+  balanced: 'Equilibrado',
+  strict: 'Estrito',
+}
+
+const DEPTH_OPTIONS: Array<{ value: UserPreferences['default_depth'] }> = [
+  { value: 'brief' },
+  { value: 'balanced' },
+  { value: 'deep' },
+]
+
+const TONE_OPTIONS: Array<{ value: UserPreferences['tone'] }> = [
+  { value: 'neutral' },
+  { value: 'didactic' },
+  { value: 'objective' },
+  { value: 'encouraging' },
+]
+
+const STRICTNESS_OPTIONS: Array<{ value: UserPreferences['strictness_preference'] }> = [
+  { value: 'relaxed' },
+  { value: 'balanced' },
+  { value: 'strict' },
+]
+
+const SCHEDULE_LABELS: Record<UserPreferences['schedule_preference'], string> = {
+  flexible: 'Flexivel',
+  fixed: 'Fixo',
+  intensive: 'Intensivo',
+}
+
+function emptyComposerOverrides(): ComposerPreferenceOverrides {
+  return {
+    default_depth: null,
+    tone: null,
+    strictness_preference: null,
+  }
+}
+
+function resolveComposerPreferences(
+  base: UserPreferences,
+  overrides: ComposerPreferenceOverrides,
+): UserPreferences {
+  return {
+    ...base,
+    default_depth: overrides.default_depth ?? base.default_depth,
+    tone: overrides.tone ?? base.tone,
+    strictness_preference: overrides.strictness_preference ?? base.strictness_preference,
+  }
+}
+
+function hasComposerOverrides(overrides: ComposerPreferenceOverrides): boolean {
+  return Boolean(overrides.default_depth || overrides.tone || overrides.strictness_preference)
+}
+
+function buildPreferenceInstructionBlock(preferences: UserPreferences): string {
+  return [
+    '',
+    '[Preferencias para esta resposta]',
+    `- profundidade: ${DEPTH_LABELS[preferences.default_depth]}`,
+    `- tom: ${TONE_LABELS[preferences.tone]}`,
+    `- rigor: ${STRICTNESS_LABELS[preferences.strictness_preference]}`,
+    '- aplique essas preferencias nesta resposta sem mencionar esse bloco.',
+  ].join('\n')
 }
 
 const WELCOME_MESSAGE: Message = {
@@ -262,6 +366,29 @@ function normalizeForMatch(value: string) {
     .trim()
 }
 
+function shouldOfferChatArtifactCTA(message: Message): boolean {
+  if (message.role !== 'assistant' || message.streaming || message.needs_confirmation) return false
+  if (message.action_metadata || message.calendar_action) return false
+
+  const content = normalizeForMatch(message.content || '')
+  const prompt = normalizeForMatch(message.prompt_hint || '')
+  const intent = normalizeForMatch(message.intent || '')
+
+  const promptLooksDeepSummary = (
+    /\b(resumo|resumir|sumario|sintese)\b/.test(prompt)
+    && /\b(aprofundad|detalhad|profund|complet|secc?ao por secc?ao)\b/.test(prompt)
+  )
+  const contentLooksDeepSummary = (
+    /\b(resumo aprofundado|analise detalhada|analise completa|secao por secao)\b/.test(content)
+    || (message.content.includes('##') && content.length >= 420)
+  )
+
+  if (intent === 'summary') {
+    return promptLooksDeepSummary || contentLooksDeepSummary || content.length >= 500
+  }
+  return promptLooksDeepSummary && content.length >= 420
+}
+
 function formatDifficultyMix(mix: FlashcardDifficultyMix) {
   return `${mix.facil} faceis, ${mix.media} medias e ${mix.dificil} dificeis`
 }
@@ -383,6 +510,38 @@ function parseFlashcardCommandPlan(prompt: string, docs: DocItem[], selectedDocs
     difficultyMode,
     difficultyCustom,
   }
+}
+
+const STREAM_STAGE_LABELS: Record<StreamStage, string> = {
+  analyzing: 'Analisando',
+  retrieving: 'Buscando evidencias',
+  drafting: 'Redigindo resposta',
+  finalizing: 'Finalizando',
+}
+
+const STREAM_STAGE_DETAIL_DEFAULT: Record<StreamStage, string> = {
+  analyzing: 'Entendendo sua solicitacao.',
+  retrieving: 'Consultando os documentos ativos.',
+  drafting: 'Montando a resposta em tempo real.',
+  finalizing: 'Consolidando a versao final.',
+}
+
+const STREAM_STAGE_ORDER: Record<StreamStage, number> = {
+  analyzing: 1,
+  retrieving: 2,
+  drafting: 3,
+  finalizing: 4,
+}
+
+function normalizeStreamStage(raw: string | null | undefined): StreamStage | null {
+  const value = (raw ?? '').trim().toLowerCase()
+  if (value === 'analyzing' || value === 'retrieving' || value === 'drafting' || value === 'finalizing') {
+    return value
+  }
+  if (value === 'processing') {
+    return 'retrieving'
+  }
+  return null
 }
 
 // ── Typing indicator ──────────────────────────────────────────────────────
@@ -596,37 +755,291 @@ const INTENT_LABELS: Record<string, string> = {
 // ── Message bubble ────────────────────────────────────────────────────────
 
 const QUALITY_TONE_CLASS: Record<'high' | 'medium' | 'low', string> = {
-  high: 'border-emerald-700/40 bg-emerald-600/10 text-emerald-200',
+  high: 'border-emerald-700/40 bg-emerald-600/10 text-emerald-100',
   medium: 'border-amber-700/40 bg-amber-600/10 text-amber-100',
   low: 'border-red-700/40 bg-red-600/10 text-red-100',
 }
 
+const QUALITY_BADGE_CLASS: Record<'high' | 'medium' | 'low', string> = {
+  high: 'border-emerald-500/40 bg-emerald-400/10 text-emerald-200',
+  medium: 'border-amber-500/40 bg-amber-400/10 text-amber-200',
+  low: 'border-red-500/40 bg-red-400/10 text-red-200',
+}
+
+type QualityComponentKey = 'support_rate' | 'source_breadth' | 'unsupported_claims' | 'retrieval_depth'
+
+const QUALITY_COMPONENT_LABELS: Record<QualityComponentKey, string> = {
+  support_rate: 'Suporte factual',
+  source_breadth: 'Variedade de fontes',
+  unsupported_claims: 'Afirmacoes suportadas',
+  retrieval_depth: 'Profundidade da busca',
+}
+
+const QUALITY_REASON_CODE_LABELS: Record<string, string> = {
+  support_rate_strong: 'Alta taxa de suporte nas evidencias.',
+  support_rate_moderate: 'Taxa de suporte moderada.',
+  support_rate_weak: 'Taxa de suporte baixa.',
+  support_rate_missing: 'Taxa de suporte indisponivel para esta resposta.',
+  source_breadth_none: 'Nenhuma fonte citada no texto.',
+  source_breadth_single: 'A resposta depende de uma unica fonte.',
+  source_breadth_multi: 'A resposta usa multiplas fontes.',
+  unsupported_claims_none: 'Nao foram detectadas afirmacoes sem suporte.',
+  unsupported_claims_present: 'Foram detectadas afirmacoes com suporte parcial.',
+  retrieval_depth_none: 'Nenhum trecho foi recuperado no contexto.',
+  retrieval_depth_shallow: 'Poucos trechos foram recuperados para sustentar a resposta.',
+  retrieval_depth_sufficient: 'Quantidade suficiente de trechos recuperados.',
+}
+
+function clamp01(value: number) {
+  return Math.max(0, Math.min(1, value))
+}
+
+function toPercent(value: number | null | undefined): number {
+  if (value == null || !Number.isFinite(value)) return 0
+  return Math.round(clamp01(value) * 100)
+}
+
+function parseLegacyReason(reason: string): string {
+  const raw = String(reason || '').trim()
+  if (!raw) return 'Sinal de confianca nao detalhado.'
+  if (QUALITY_REASON_CODE_LABELS[raw]) return QUALITY_REASON_CODE_LABELS[raw]
+  if (raw === 'no_inline_sources') return 'Nenhuma fonte citada no texto.'
+  if (raw === 'single_source') return 'A resposta depende de uma unica fonte.'
+  if (raw === 'multi_source') return 'A resposta usa multiplas fontes.'
+  if (raw === 'no_retrieval') return 'Nenhum trecho foi recuperado no contexto.'
+
+  if (raw.startsWith('support_rate=')) {
+    const parsed = Number(raw.split('=')[1])
+    if (Number.isFinite(parsed)) return `Taxa de suporte: ${toPercent(parsed)}%.`
+  }
+  if (raw.startsWith('unsupported_claims=')) {
+    const count = Number(raw.split('=')[1])
+    if (Number.isFinite(count)) {
+      return count <= 0
+        ? 'Nao foram detectadas afirmacoes sem suporte.'
+        : `${Math.round(count)} afirmacao(oes) com suporte parcial.`
+    }
+  }
+  if (raw.startsWith('retrieval_chunks=')) {
+    const count = Number(raw.split('=')[1])
+    if (Number.isFinite(count)) {
+      return `${Math.round(count)} trecho(s) recuperado(s) na busca.`
+    }
+  }
+
+  return raw.replace(/_/g, ' ')
+}
+
+function deriveReasonLabels(signal: ChatQualitySignal): string[] {
+  const fromCodes = (signal.reason_codes ?? [])
+    .map(code => QUALITY_REASON_CODE_LABELS[String(code)] ?? parseLegacyReason(String(code)))
+    .filter(Boolean)
+  if (fromCodes.length > 0) return Array.from(new Set(fromCodes))
+
+  const fromReasons = (signal.reasons ?? [])
+    .map(reason => parseLegacyReason(String(reason)))
+    .filter(Boolean)
+  if (fromReasons.length > 0) return Array.from(new Set(fromReasons))
+
+  return ['Sem diagnostico detalhado para esta resposta.']
+}
+
+function deriveScoreComponents(signal: ChatQualitySignal): Array<{ key: QualityComponentKey; label: string; value: number }> {
+  const unsupportedCount = Number(signal.unsupported_claim_count ?? 0)
+  const fallbackUnsupported = unsupportedCount <= 0
+    ? 1
+    : unsupportedCount === 1
+      ? 0.75
+      : unsupportedCount === 2
+        ? 0.5
+        : 0.25
+  const retrievedCount = Number(signal.retrieved_count ?? 0)
+  const fallbackRetrieval = retrievedCount <= 0
+    ? 0
+    : retrievedCount <= 2
+      ? (retrievedCount === 1 ? 0.45 : 0.7)
+      : 1
+  const sourceCount = Number(signal.source_count ?? 0)
+  const fallbackSourceBreadth = sourceCount <= 0 ? 0 : (sourceCount === 1 ? 0.6 : 1)
+
+  const raw: Partial<Record<QualityComponentKey, number>> = signal.score_components ?? {}
+  const values: Record<QualityComponentKey, number> = {
+    support_rate: clamp01(Number(raw.support_rate ?? signal.support_rate ?? signal.score ?? 0)),
+    source_breadth: clamp01(Number(raw.source_breadth ?? fallbackSourceBreadth)),
+    unsupported_claims: clamp01(Number(raw.unsupported_claims ?? fallbackUnsupported)),
+    retrieval_depth: clamp01(Number(raw.retrieval_depth ?? fallbackRetrieval)),
+  }
+
+  return (Object.keys(QUALITY_COMPONENT_LABELS) as QualityComponentKey[]).map(key => ({
+    key,
+    label: QUALITY_COMPONENT_LABELS[key],
+    value: values[key],
+  }))
+}
+
 function QualitySignalCard({ signal }: { signal: ChatQualitySignal }) {
-  const scorePct = Math.round(Math.max(0, Math.min(1, signal.score)) * 100)
+  const scorePct = toPercent(signal.score)
+  const reasonLabels = deriveReasonLabels(signal)
+  const components = deriveScoreComponents(signal)
+  const explainId = useId()
+  const [expanded, setExpanded] = useState(false)
+
+  const sourceCount = Math.max(0, Number(signal.source_count ?? 0))
+  const retrievedCount = Math.max(0, Number(signal.retrieved_count ?? 0))
+  const unsupportedCount = Math.max(0, Number(signal.unsupported_claim_count ?? 0))
+  const sourceSpreadPct = retrievedCount > 0
+    ? Math.round(Math.min(1, sourceCount / retrievedCount) * 100)
+    : (sourceCount > 0 ? 100 : 0)
+
   return (
     <div
       data-testid="chat-quality-signal"
       className={cn(
-        'rounded-xl border px-3 py-2 text-[11px] leading-5',
+        'rounded-xl border px-3 py-3 text-[11px] leading-5',
         QUALITY_TONE_CLASS[signal.level],
       )}
     >
-      <p className="font-semibold">
-        Confiabilidade: {signal.label} ({scorePct}%)
-      </p>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-semibold">
+            Confiabilidade: {signal.label} ({scorePct}%)
+          </p>
+          <p className="text-[11px] opacity-90">
+            Score normalizado com sinais de suporte, fontes e recuperacao.
+          </p>
+        </div>
+        <span className={cn(
+          'shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide',
+          QUALITY_BADGE_CLASS[signal.level],
+        )}
+        >
+          {signal.level}
+        </span>
+      </div>
+
+      <div className="mt-2 grid grid-cols-2 gap-2 text-[10px]">
+        <div className="rounded-md border border-white/10 bg-black/15 px-2 py-1.5">
+          <p className="text-zinc-300/90">Fontes citadas</p>
+          <p className="font-semibold">{sourceCount}</p>
+        </div>
+        <div className="rounded-md border border-white/10 bg-black/15 px-2 py-1.5">
+          <p className="text-zinc-300/90">Trechos recuperados</p>
+          <p className="font-semibold">{retrievedCount}</p>
+        </div>
+        <div className="rounded-md border border-white/10 bg-black/15 px-2 py-1.5">
+          <p className="text-zinc-300/90">Espalhamento de fontes</p>
+          <p className="font-semibold">{sourceSpreadPct}%</p>
+        </div>
+        <div className="rounded-md border border-white/10 bg-black/15 px-2 py-1.5">
+          <p className="text-zinc-300/90">Claims sem suporte</p>
+          <p className="font-semibold">{unsupportedCount}</p>
+        </div>
+      </div>
+
       {signal.suggested_action && (
-        <p className="mt-1 text-[11px] opacity-95">{signal.suggested_action}</p>
+        <p className="mt-2 rounded-md border border-white/10 bg-black/20 px-2 py-1.5 text-[11px]">
+          {signal.suggested_action}
+        </p>
+      )}
+
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {reasonLabels.slice(0, 3).map(label => (
+          <span
+            key={label}
+            className="rounded-full border border-white/15 bg-black/20 px-2 py-0.5 text-[10px]"
+          >
+            {label}
+          </span>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        className="mt-2 inline-flex items-center gap-1 text-[11px] font-medium text-blue-200 transition-colors hover:text-blue-100"
+        aria-expanded={expanded}
+        aria-controls={explainId}
+        onClick={() => setExpanded(prev => !prev)}
+      >
+        Como esta resposta foi construida
+        <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} />
+      </button>
+
+      {expanded && (
+        <div id={explainId} className="mt-2 space-y-2 rounded-lg border border-white/10 bg-black/20 p-2.5">
+          <p className="text-[10px] text-zinc-300/90">
+            Diagnostico resumido do pipeline de evidencia desta resposta.
+          </p>
+
+          <div className="space-y-1.5">
+            {components.map(item => {
+              const pct = toPercent(item.value)
+              return (
+                <div key={item.key}>
+                  <div className="mb-0.5 flex items-center justify-between gap-2">
+                    <span className="text-[10px] text-zinc-200">{item.label}</span>
+                    <span className="text-[10px] font-semibold text-zinc-100">{pct}%</span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-900/70">
+                    <div
+                      className="h-full rounded-full bg-blue-400/70"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="space-y-1 text-[10px] text-zinc-200/90">
+            <p>1. Recuperamos {retrievedCount} trecho(s) relevantes para a pergunta.</p>
+            <p>2. A resposta citou {sourceCount} fonte(s) no texto final.</p>
+            <p>3. Detectamos {unsupportedCount} claim(s) com suporte parcial.</p>
+          </div>
+        </div>
       )}
     </div>
   )
 }
 
+function StreamStatusCard({
+  stage,
+  detail,
+  interrupted,
+}: {
+  stage: StreamStage | null | undefined
+  detail?: string | null
+  interrupted?: boolean
+}) {
+  if (!stage && !interrupted && !detail) return null
+  const label = stage ? STREAM_STAGE_LABELS[stage] : 'Transmissao interrompida'
+  const safeDetail = detail?.trim() || (stage ? STREAM_STAGE_DETAIL_DEFAULT[stage] : 'Tente reenviar para continuar.')
+  return (
+    <div
+      className={cn(
+        'rounded-xl border px-3 py-2 text-[11px] leading-5',
+        interrupted
+          ? 'border-amber-700/40 bg-amber-700/10 text-amber-100'
+          : 'border-blue-700/40 bg-blue-600/10 text-blue-100',
+      )}
+    >
+      <div className="flex items-center gap-2">
+        {!interrupted && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+        <span className="font-semibold">{label}</span>
+      </div>
+      <p className="mt-1 opacity-95">{safeDetail}</p>
+    </div>
+  )
+}
+
 function MessageBubble({
-  message, onSourceClick, onCitationClick,
+  message, onSourceClick, onCitationClick, canSaveAsArtifact, savingAsArtifact, onSaveAsArtifact,
 }: {
   message: Message
   onSourceClick?: (sources: SourceItem[]) => void
   onCitationClick?: (source: SourceItem, allSources: SourceItem[]) => void
+  canSaveAsArtifact?: boolean
+  savingAsArtifact?: boolean
+  onSaveAsArtifact?: () => void
 }) {
   const isUser = message.role === 'user'
 
@@ -674,11 +1087,19 @@ function MessageBubble({
             <div className="prose prose-invert prose-sm max-w-none select-text selection:bg-amber-200 selection:text-zinc-950" style={{ userSelect: 'text', WebkitUserSelect: 'text' }}>
               <ReactMarkdown>{message.content}</ReactMarkdown>
               {message.streaming && (
-                <span className="inline-block h-4 w-0.5 animate-pulse bg-zinc-400 ml-0.5 align-text-bottom" />
+                <span className="ml-1 inline-flex h-[1.05em] w-[2px] animate-pulse rounded-full bg-blue-300/80 align-[-0.15em] shadow-[0_0_10px_rgba(96,165,250,0.55)]" />
               )}
             </div>
           )}
         </div>
+
+        {!isUser && (message.streaming || message.stream_interrupted || message.stream_status_text) && (
+          <StreamStatusCard
+            stage={message.stream_stage}
+            detail={message.stream_status_text}
+            interrupted={message.stream_interrupted}
+          />
+        )}
 
         {!isUser && message.calendar_action && (
           <CalendarActionBadge action={message.calendar_action} />
@@ -704,6 +1125,19 @@ function MessageBubble({
 
         {!isUser && message.quality_signal && (
           <QualitySignalCard signal={message.quality_signal} />
+        )}
+
+        {!isUser && canSaveAsArtifact && (
+          <div>
+            <button
+              type="button"
+              onClick={onSaveAsArtifact}
+              disabled={Boolean(savingAsArtifact)}
+              className="rounded-full border border-emerald-700/60 bg-emerald-700/10 px-3 py-1.5 text-[11px] font-medium text-emerald-200 transition-colors hover:bg-emerald-700/20 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {savingAsArtifact ? 'Salvando artefato...' : 'Salvar como artefato'}
+            </button>
+          </div>
         )}
 
         {!isUser && message.sources && message.sources.length > 0 && (
@@ -744,6 +1178,7 @@ function MessageBubble({
 
 export function Chat() {
   const qc = useQueryClient()
+  const capabilities = useCapabilities()
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     const loaded = loadSessions()
     return loaded.length > 0 ? loaded : [newSession()]
@@ -756,17 +1191,35 @@ export function Chat() {
   const [selectedDoc, setSelectedDoc] = useState('')
   const [selectedDocs, setSelectedDocs] = useState<DocItem[]>([])
   const [strictGrounding, setStrictGrounding] = useState(false)
+  const [composerOverrides, setComposerOverrides] = useState<ComposerPreferenceOverrides>(() => emptyComposerOverrides())
   const [activeSources, setActiveSources] = useState<SourceItem[]>([])
   const [selectedSource, setSelectedSource] = useState<SourceItem | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [pendingFlashcardCommand, setPendingFlashcardCommand] = useState<FlashcardCommandPlan | null>(null)
+  const [savingArtifactTurnRef, setSavingArtifactTurnRef] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const streamAbortRef = useRef<AbortController | null>(null)
 
   const activeSession = sessions.find(s => s.id === activeSessionId) ?? sessions[0]
   const messages = activeSession?.messages ?? EMPTY_MESSAGES
   const activeContext = activeSession?.activeContext ?? emptyActiveContext()
+  const isStreamingEnabled = capabilities.isEnabled('chat_streaming_enabled')
+  const isStrictGroundingEnabled = capabilities.isEnabled('strict_grounding_enabled')
+  const isChatToArtifactEnabled = capabilities.isEnabled('premium_chat_to_artifact_enabled')
+  const isPersonalizationEnabled = capabilities.isEnabled('personalization_enabled')
+
+  const preferencesQuery = useQuery<UserPreferences>({
+    queryKey: ['user-preferences'],
+    queryFn: apiClient.getPreferences,
+    enabled: isPersonalizationEnabled,
+    staleTime: 30_000,
+    retry: 1,
+  })
+
+  const userPreferences = preferencesQuery.data ?? DEFAULT_USER_PREFERENCES
+  const resolvedComposerPreferences = resolveComposerPreferences(userPreferences, composerOverrides)
+  const composerHasOverrides = hasComposerOverrides(composerOverrides)
 
   useEffect(() => {
     saveSessions(sessions)
@@ -774,6 +1227,8 @@ export function Chat() {
 
   useEffect(() => {
     setPendingFlashcardCommand(null)
+    setSavingArtifactTurnRef(null)
+    setComposerOverrides(emptyComposerOverrides())
   }, [activeSessionId])
 
   const { data: docs } = useQuery<DocItem[]>({
@@ -797,6 +1252,12 @@ export function Chat() {
       return prevIds === nextIds ? prev : hydrated
     })
   }, [activeContext.active_doc_ids, activeContext.active_doc_names, docs])
+
+  useEffect(() => {
+    if (!isStrictGroundingEnabled && strictGrounding) {
+      setStrictGrounding(false)
+    }
+  }, [isStrictGroundingEnabled, strictGrounding])
 
   function appendAssistantMessage(message: Message) {
     setSessions(prev =>
@@ -822,7 +1283,11 @@ export function Chat() {
     updateSessionActiveContext(activeSessionId, nextContext)
   }
 
-  function appendStreamingAssistantPlaceholder(sessionId: string) {
+  function appendStreamingAssistantPlaceholder(
+    sessionId: string,
+    userPrompt: string,
+    contextSnapshot: ChatActiveContext,
+  ) {
     setSessions(prev =>
       prev.map(s =>
         s.id === sessionId
@@ -833,7 +1298,12 @@ export function Chat() {
               {
                 role: 'assistant',
                 content: '',
+                prompt_hint: userPrompt,
                 streaming: true,
+                stream_stage: 'analyzing',
+                stream_status_text: STREAM_STAGE_DETAIL_DEFAULT.analyzing,
+                stream_interrupted: false,
+                active_context_snapshot: normalizeActiveContext(contextSnapshot),
                 sources: [],
                 intent: 'qa',
                 quality_signal: null,
@@ -844,6 +1314,61 @@ export function Chat() {
           }
           : s
       )
+    )
+  }
+
+  function updateStreamingStage(
+    sessionId: string,
+    rawStage: string | null | undefined,
+    detail?: string | null,
+  ) {
+    const stage = normalizeStreamStage(rawStage)
+    setSessions(prev =>
+      prev.map(s => {
+        if (s.id !== sessionId || s.messages.length === 0) return s
+        const msgs = [...s.messages]
+        const last = msgs[msgs.length - 1]
+        if (!last || last.role !== 'assistant' || !last.streaming) return s
+
+        const previousStage = normalizeStreamStage(last.stream_stage ?? null)
+        let nextStage = stage ?? previousStage
+        if (!nextStage) {
+          nextStage = 'analyzing'
+        }
+
+        if (
+          previousStage
+          && STREAM_STAGE_ORDER[nextStage] < STREAM_STAGE_ORDER[previousStage]
+        ) {
+          nextStage = previousStage
+        }
+
+        msgs[msgs.length - 1] = {
+          ...last,
+          stream_stage: nextStage,
+          stream_status_text: detail?.trim() || STREAM_STAGE_DETAIL_DEFAULT[nextStage],
+          stream_interrupted: false,
+        }
+        return { ...s, messages: msgs }
+      }),
+    )
+  }
+
+  function markStreamingInterruption(sessionId: string, guidance: string) {
+    setSessions(prev =>
+      prev.map(s => {
+        if (s.id !== sessionId || s.messages.length === 0) return s
+        const msgs = [...s.messages]
+        const last = msgs[msgs.length - 1]
+        if (!last || last.role !== 'assistant') return s
+        msgs[msgs.length - 1] = {
+          ...last,
+          stream_interrupted: true,
+          stream_status_text: guidance,
+          stream_stage: last.stream_stage ?? 'finalizing',
+        }
+        return { ...s, messages: msgs }
+      }),
     )
   }
 
@@ -858,23 +1383,32 @@ export function Chat() {
         msgs[msgs.length - 1] = {
           ...last,
           content: `${last.content}${delta}`,
+          stream_stage: 'drafting',
+          stream_status_text: STREAM_STAGE_DETAIL_DEFAULT.drafting,
+          stream_interrupted: false,
         }
         return { ...s, messages: msgs }
       })
     )
   }
 
-  function finalizeStreamingAssistantMessage(sessionId: string, data: ChatResponse) {
+  function finalizeStreamingAssistantMessage(sessionId: string, data: ChatResponse, userPrompt: string) {
     setSessions(prev =>
       prev.map(s => {
         if (s.id !== sessionId || s.messages.length === 0) return s
         const msgs = [...s.messages]
         const last = msgs[msgs.length - 1]
         if (!last || last.role !== 'assistant') return s
+        const safeAnswer = typeof data.answer === 'string' ? data.answer.trim() : ''
         msgs[msgs.length - 1] = {
           ...last,
-          content: data.answer ?? last.content ?? '',
+          content: safeAnswer ? data.answer : (last.content ?? ''),
           streaming: false,
+          stream_stage: null,
+          stream_status_text: null,
+          stream_interrupted: false,
+          prompt_hint: userPrompt,
+          active_context_snapshot: normalizeActiveContext(data.active_context ?? last.active_context_snapshot),
           sources: data.sources ?? [],
           intent: data.intent,
           calendar_action: data.calendar_action ?? null,
@@ -896,19 +1430,79 @@ export function Chat() {
         const msgs = [...s.messages]
         const last = msgs[msgs.length - 1]
         if (last && last.role === 'assistant' && last.streaming) {
+          const hasPartialContent = Boolean(last.content?.trim())
+          const nextContent = hasPartialContent
+            ? `${last.content}\n\n${message}`
+            : message
           msgs[msgs.length - 1] = {
             ...last,
-            content: message,
+            content: nextContent,
             streaming: false,
+            stream_interrupted: true,
+            stream_status_text: 'Conexao interrompida. Reenvie para tentar novamente.',
+            stream_stage: 'finalizing',
           }
           return { ...s, messages: msgs }
         }
         return {
           ...s,
-          messages: [...msgs, { role: 'assistant', content: message }],
+          messages: [
+            ...msgs,
+            {
+              role: 'assistant',
+              content: message,
+              stream_interrupted: true,
+              stream_status_text: 'Conexao interrompida. Reenvie para tentar novamente.',
+              stream_stage: 'finalizing',
+            },
+          ],
         }
       })
     )
+  }
+
+  function extractStreamFailureDetail(error: unknown): string {
+    if (error instanceof ChatStreamError) return error.message
+    if (axios.isAxiosError(error)) {
+      if (typeof error.response?.data?.detail === 'string') return error.response.data.detail
+      return error.message || 'Falha no streaming.'
+    }
+    if (error instanceof Error) return error.message || 'Falha no streaming.'
+    return 'Falha no streaming.'
+  }
+
+  function isRecoverableStreamFailure(error: unknown): boolean {
+    if (error instanceof ChatStreamError) return error.recoverable
+    if ((error as { name?: string } | null)?.name === 'AbortError') return false
+
+    if (axios.isAxiosError(error)) {
+      const status = error.response?.status
+      if (!status) return true
+      return status >= 500 || status === 408 || status === 429
+    }
+
+    if (error instanceof Error) {
+      const detail = error.message.toLowerCase()
+      if (
+        detail.includes('timeout')
+        || detail.includes('timed out')
+        || detail.includes('failed to fetch')
+        || detail.includes('network')
+        || detail.includes('stream encerrado')
+      ) {
+        return true
+      }
+      if (
+        detail.includes('401')
+        || detail.includes('403')
+        || detail.includes('unauthorized')
+        || detail.includes('forbidden')
+      ) {
+        return false
+      }
+    }
+
+    return true
   }
 
   const flashcardBatchMut = useMutation({
@@ -1036,25 +1630,50 @@ export function Chat() {
 
   const mutation = useMutation<ChatResponse, Error, ChatRunPayload>({
     mutationFn: async (payload) => {
-      appendStreamingAssistantPlaceholder(payload.sessionId)
+      appendStreamingAssistantPlaceholder(payload.sessionId, payload.displayMessage, payload.activeContext)
 
       if (streamAbortRef.current) {
         streamAbortRef.current.abort()
       }
       const controller = new AbortController()
       streamAbortRef.current = controller
+      let fallbackAttempted = false
 
       try {
+        if (!isStreamingEnabled) {
+          updateStreamingStage(
+            payload.sessionId,
+            'retrieving',
+            'Streaming indisponivel. Gerando resposta completa.',
+          )
+          return await apiClient.chat(
+            payload.message,
+            payload.sessionId,
+            undefined,
+            payload.docIds,
+            payload.strictGrounding && isStrictGroundingEnabled,
+            payload.history,
+            payload.activeContext,
+          )
+        }
         return await apiClient.chatStream(
           payload.message,
           payload.sessionId,
           undefined,
           payload.docIds,
-          payload.strictGrounding,
+          payload.strictGrounding && isStrictGroundingEnabled,
           payload.history,
           payload.activeContext,
           {
+            onStart: () => updateStreamingStage(payload.sessionId, 'analyzing'),
+            onStatus: status => updateStreamingStage(payload.sessionId, status.stage, status.detail),
             onDelta: delta => appendDeltaToStreamingMessage(payload.sessionId, delta),
+            onError: detail => {
+              markStreamingInterruption(
+                payload.sessionId,
+                `${detail}. Alternando para modo de recuperacao.`,
+              )
+            },
           },
           controller.signal,
         )
@@ -1062,15 +1681,40 @@ export function Chat() {
         if (controller.signal.aborted || streamError?.name === 'AbortError') {
           throw streamError
         }
-        return apiClient.chat(
-          payload.message,
+        if (!isRecoverableStreamFailure(streamError) || fallbackAttempted) {
+          throw streamError
+        }
+        fallbackAttempted = true
+
+        const streamFailureDetail = extractStreamFailureDetail(streamError)
+        markStreamingInterruption(
           payload.sessionId,
-          undefined,
-          payload.docIds,
-          payload.strictGrounding,
-          payload.history,
-          payload.activeContext,
+          `${streamFailureDetail} Continuando em modo padrao.`,
         )
+        updateStreamingStage(
+          payload.sessionId,
+          'finalizing',
+          'Recuperando resposta final sem streaming.',
+        )
+        try {
+          return await apiClient.chat(
+            payload.message,
+            payload.sessionId,
+            undefined,
+            payload.docIds,
+            payload.strictGrounding && isStrictGroundingEnabled,
+            payload.history,
+            payload.activeContext,
+            { streamFallback: true },
+          )
+        } catch (fallbackError: any) {
+          const fallbackDetail = extractStreamFailureDetail(fallbackError)
+          markStreamingInterruption(
+            payload.sessionId,
+            `${fallbackDetail} Nao consegui recuperar automaticamente. Reenvie a pergunta para tentar de novo.`,
+          )
+          throw fallbackError
+        }
       } finally {
         if (streamAbortRef.current === controller) {
           streamAbortRef.current = null
@@ -1078,7 +1722,7 @@ export function Chat() {
       }
     },
     onSuccess: (data, variables) => {
-      finalizeStreamingAssistantMessage(variables.sessionId, data)
+      finalizeStreamingAssistantMessage(variables.sessionId, data, variables.displayMessage)
       updateSessionActiveContext(variables.sessionId, normalizeActiveContext(data.active_context))
 
       if (data.sources.length > 0) {
@@ -1092,9 +1736,63 @@ export function Chat() {
       }
     },
     onError: (err: any, variables) => {
+      if (err?.name === 'AbortError') return
       const errorText = err?.response?.data?.detail ?? err?.message ?? 'Erro ao consultar o agente'
       toast.error(errorText)
-      failStreamingAssistantMessage(variables.sessionId, 'Ocorreu um erro ao processar sua mensagem.')
+      failStreamingAssistantMessage(
+        variables.sessionId,
+        'Nao consegui concluir esta resposta agora. Verifique sua conexao e clique em enviar novamente.',
+      )
+    },
+  })
+
+  const saveChatArtifactMut = useMutation({
+    mutationFn: async (payload: {
+      turnRef: string
+      message: Message
+      userPrompt: string
+      sessionId: string
+    }) => {
+      const contextSnapshot = normalizeActiveContext(
+        payload.message.active_context_snapshot ?? activeContext,
+      )
+      const mergedDocIds = Array.from(
+        new Set([
+          ...selectedDocs.map(doc => doc.doc_id),
+          ...contextSnapshot.active_doc_ids,
+        ].map(value => String(value || '').trim()).filter(Boolean)),
+      )
+      const mergedDocNames = Array.from(
+        new Set([
+          ...selectedDocs.map(doc => doc.file_name),
+          ...contextSnapshot.active_doc_names,
+        ].map(value => String(value || '').trim()).filter(Boolean)),
+      )
+
+      return apiClient.createArtifactFromChat({
+        answer: payload.message.content,
+        title: payload.userPrompt || 'Resumo aprofundado do chat',
+        user_prompt: payload.userPrompt,
+        session_id: payload.sessionId,
+        turn_ref: payload.turnRef,
+        doc_ids: mergedDocIds,
+        doc_names: mergedDocNames,
+        artifact_type: 'summary',
+        generation_profile: 'chat:deep_summary:one_click',
+        confidence_level: payload.message.quality_signal?.level ?? undefined,
+        confidence_score: payload.message.quality_signal?.score ?? undefined,
+      })
+    },
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: ['artifacts'] })
+      qc.invalidateQueries({ queryKey: ['artifact-filter-options'] })
+      toast.success(`Artefato salvo: ${result.filename}`)
+      setSavingArtifactTurnRef(null)
+    },
+    onError: (error: any) => {
+      const detail = error?.response?.data?.detail ?? error?.message ?? 'Falha ao salvar artefato.'
+      toast.error(String(detail))
+      setSavingArtifactTurnRef(null)
     },
   })
 
@@ -1198,15 +1896,29 @@ export function Chat() {
       .filter(m => !m.streaming)
       .slice(-6)
       .map(m => ({ role: m.role, content: m.content }))
+    const strictGroundingFromPreferences = (
+      isPersonalizationEnabled
+      && resolvedComposerPreferences.strictness_preference === 'strict'
+      && isStrictGroundingEnabled
+    )
+    const strictGroundingForRequest = (
+      isStrictGroundingEnabled
+      && (strictGrounding || strictGroundingFromPreferences)
+    )
+    const messageForBackend = isPersonalizationEnabled
+      ? `${text}${buildPreferenceInstructionBlock(resolvedComposerPreferences)}`
+      : text
 
     mutation.mutate({
-      message: text,
+      message: messageForBackend,
+      displayMessage: text,
       sessionId: targetSession?.id ?? activeSessionId,
       docIds: selectedDocs.map(doc => doc.doc_id),
-      strictGrounding,
+      strictGrounding: strictGroundingForRequest,
       history: recentHistory,
       activeContext: targetSession?.activeContext ?? emptyActiveContext(),
     })
+    setComposerOverrides(emptyComposerOverrides())
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -1241,6 +1953,24 @@ export function Chat() {
   const hasSources = activeSources.length > 0
   const isStreaming = messages.some(m => m.streaming)
   const isPending = mutation.isPending || flashcardBatchMut.isPending
+  const isPersonalizationLoading = isPersonalizationEnabled && preferencesQuery.isLoading
+  const personalizationLoadFailed = isPersonalizationEnabled && preferencesQuery.isError
+  const strictGroundingFromPreferences = (
+    isPersonalizationEnabled
+    && resolvedComposerPreferences.strictness_preference === 'strict'
+    && isStrictGroundingEnabled
+  )
+  const effectiveStrictGrounding = strictGrounding || strictGroundingFromPreferences
+  const personalizationBannerText = !isPersonalizationEnabled
+    ? ''
+    : isPersonalizationLoading
+      ? 'Carregando suas preferencias...'
+      : personalizationLoadFailed
+        ? 'Nao foi possivel carregar preferencias. Usando defaults seguros.'
+        : `Usando suas preferencias: ${DEPTH_LABELS[resolvedComposerPreferences.default_depth]}, `
+          + `${TONE_LABELS[resolvedComposerPreferences.tone]}, `
+          + `rigor ${STRICTNESS_LABELS[resolvedComposerPreferences.strictness_preference]} `
+          + `e rotina ${SCHEDULE_LABELS[userPreferences.schedule_preference]}.`
   const contextLabels = [
     ...activeContext.active_doc_names.slice(0, 2).map(name => ({ key: `doc-${name}`, label: name, tone: 'doc' as const })),
     activeContext.active_deck_title ? { key: `deck-${activeContext.active_deck_title}`, label: `Deck: ${activeContext.active_deck_title}`, tone: 'deck' as const } : null,
@@ -1323,6 +2053,20 @@ export function Chat() {
             </Badge>
           )}
         </div>
+        {isPersonalizationEnabled && (
+          <div className="flex items-start gap-2 border-b app-divider bg-[color:var(--ui-bg)] px-4 py-2 text-xs text-zinc-400">
+            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-400" />
+            <div className="min-w-0">
+              <p className="font-medium text-zinc-300">Memoria ativa</p>
+              <p className="text-zinc-500">{personalizationBannerText}</p>
+              {composerHasOverrides && (
+                <p className="mt-1 text-[11px] text-blue-300">
+                  Override desta mensagem ativo.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
 
         {hasActiveContext && (
           <div className="flex flex-wrap items-center gap-2 border-b app-divider bg-[color:var(--ui-bg)] px-4 py-2">
@@ -1375,20 +2119,44 @@ export function Chat() {
             </div>
           )}
 
-          {messages.map((msg, i) => (
-            <MessageBubble
-              key={i}
-              message={msg}
-              onSourceClick={sources => {
-                setActiveSources(sources)
-                setSelectedSource(null)
-              }}
-              onCitationClick={(source, sources) => {
-                setActiveSources(sources)
-                setSelectedSource(source)
-              }}
-            />
-          ))}
+          {messages.map((msg, i) => {
+            const previousUserPrompt = [...messages.slice(0, i)]
+              .reverse()
+              .find(item => item.role === 'user')
+              ?.content ?? msg.prompt_hint ?? ''
+            const turnRef = `${activeSessionId}:${i}`
+            const canSaveAsArtifact = isChatToArtifactEnabled && shouldOfferChatArtifactCTA({
+              ...msg,
+              prompt_hint: previousUserPrompt,
+            })
+
+            return (
+              <MessageBubble
+                key={i}
+                message={{ ...msg, prompt_hint: previousUserPrompt }}
+                canSaveAsArtifact={canSaveAsArtifact}
+                savingAsArtifact={savingArtifactTurnRef === turnRef}
+                onSaveAsArtifact={() => {
+                  if (!canSaveAsArtifact || saveChatArtifactMut.isPending) return
+                  setSavingArtifactTurnRef(turnRef)
+                  saveChatArtifactMut.mutate({
+                    turnRef,
+                    message: { ...msg, prompt_hint: previousUserPrompt },
+                    userPrompt: previousUserPrompt,
+                    sessionId: activeSessionId,
+                  })
+                }}
+                onSourceClick={sources => {
+                  setActiveSources(sources)
+                  setSelectedSource(null)
+                }}
+                onCitationClick={(source, sources) => {
+                  setActiveSources(sources)
+                  setSelectedSource(source)
+                }}
+              />
+            )
+          })}
 
           {pendingFlashcardCommand && (
             <div className="flex gap-3">
@@ -1459,10 +2227,103 @@ export function Chat() {
             <SlidersHorizontal className="h-3 w-3" />
             Opções avançadas
             <ChevronDown className={cn('h-3 w-3 transition-transform', filtersOpen && 'rotate-180')} />
-            {(selectedDocs.length > 0 || strictGrounding) && (
+            {(selectedDocs.length > 0 || effectiveStrictGrounding) && (
               <span className="ml-1 h-1.5 w-1.5 rounded-full bg-blue-500" />
             )}
           </button>
+
+          {isPersonalizationEnabled && (
+            <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium text-zinc-300">Override desta mensagem</p>
+                <button
+                  type="button"
+                  onClick={() => setComposerOverrides(emptyComposerOverrides())}
+                  disabled={isPending || isStreaming}
+                  className="text-[11px] text-zinc-500 transition-colors hover:text-zinc-200 disabled:opacity-50"
+                >
+                  Limpar overrides
+                </button>
+              </div>
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-zinc-500">Profundidade</span>
+                  {DEPTH_OPTIONS.map(option => {
+                    const active = (composerOverrides.default_depth ?? userPreferences.default_depth) === option.value
+                    const overridden = composerOverrides.default_depth === option.value
+                    return (
+                      <button
+                        key={`depth-${option.value}`}
+                        type="button"
+                        disabled={isPending || isStreaming}
+                        onClick={() => setComposerOverrides(prev => ({
+                          ...prev,
+                          default_depth: prev.default_depth === option.value ? null : option.value,
+                        }))}
+                        className={cn(
+                          'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                          active ? 'border-blue-800 bg-blue-950/40 text-blue-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400',
+                          overridden && 'ring-1 ring-blue-700/70',
+                        )}
+                      >
+                        {DEPTH_LABELS[option.value]}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-zinc-500">Tom</span>
+                  {TONE_OPTIONS.map(option => {
+                    const active = (composerOverrides.tone ?? userPreferences.tone) === option.value
+                    const overridden = composerOverrides.tone === option.value
+                    return (
+                      <button
+                        key={`tone-${option.value}`}
+                        type="button"
+                        disabled={isPending || isStreaming}
+                        onClick={() => setComposerOverrides(prev => ({
+                          ...prev,
+                          tone: prev.tone === option.value ? null : option.value,
+                        }))}
+                        className={cn(
+                          'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                          active ? 'border-blue-800 bg-blue-950/40 text-blue-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400',
+                          overridden && 'ring-1 ring-blue-700/70',
+                        )}
+                      >
+                        {TONE_LABELS[option.value]}
+                      </button>
+                    )
+                  })}
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[11px] text-zinc-500">Rigor</span>
+                  {STRICTNESS_OPTIONS.map(option => {
+                    const active = (composerOverrides.strictness_preference ?? userPreferences.strictness_preference) === option.value
+                    const overridden = composerOverrides.strictness_preference === option.value
+                    return (
+                      <button
+                        key={`strictness-${option.value}`}
+                        type="button"
+                        disabled={isPending || isStreaming}
+                        onClick={() => setComposerOverrides(prev => ({
+                          ...prev,
+                          strictness_preference: prev.strictness_preference === option.value ? null : option.value,
+                        }))}
+                        className={cn(
+                          'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                          active ? 'border-blue-800 bg-blue-950/40 text-blue-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400',
+                          overridden && 'ring-1 ring-blue-700/70',
+                        )}
+                      >
+                        {STRICTNESS_LABELS[option.value]}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
 
           {filtersOpen && (
             <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
@@ -1546,11 +2407,25 @@ export function Chat() {
                   type="checkbox"
                   checked={strictGrounding}
                   onChange={e => setStrictGrounding(e.target.checked)}
-                  disabled={isPending || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)}
+                  disabled={
+                    !isStrictGroundingEnabled
+                    || isPending
+                    || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)
+                  }
                   className="accent-blue-600"
                 />
                 Modo strict grounding (respostas só com evidência forte)
               </label>
+              {isStrictGroundingEnabled && strictGroundingFromPreferences && !strictGrounding && (
+                <p className="text-[11px] text-zinc-500">
+                  Strict grounding desta mensagem está ativo por preferência de rigor.
+                </p>
+              )}
+              {!isStrictGroundingEnabled && (
+                <p className="text-[11px] text-zinc-500">
+                  Strict grounding está desativado por configuração do workspace.
+                </p>
+              )}
             </div>
           )}
 

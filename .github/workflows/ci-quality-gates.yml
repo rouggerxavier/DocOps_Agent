@@ -31,6 +31,12 @@ jobs:
             pip install -r requirements.txt
           fi
 
+      - name: Run API contract tests
+        env:
+          GEMINI_API_KEY: "ci-fake-key"
+          JWT_SECRET_KEY: "ci-jwt-secret-key-32chars-minimum"
+        run: python -m pytest -q tests/contracts
+
       - name: Run pytest
         env:
           GEMINI_API_KEY: "ci-fake-key"

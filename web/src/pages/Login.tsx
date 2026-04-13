@@ -1,22 +1,56 @@
 import { useState, type FormEvent } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { toast } from 'sonner'
-import {
-  BookOpen, Loader2, MessageSquare, Layers, KanbanSquare,
-  GraduationCap, Brain, FileText,
-} from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Loader2 } from 'lucide-react'
+import { useGoogleLogin } from '@react-oauth/google'
 import { useAuth } from '@/auth/AuthProvider'
 
-const HIGHLIGHTS = [
-  { icon: MessageSquare, color: 'text-blue-400', title: 'Chat com RAG', desc: 'Pergunte aos seus documentos com citações.' },
-  { icon: FileText, color: 'text-violet-400', title: 'Resumos Deep', desc: 'Pipeline multi-etapas com grounding semântico.' },
-  { icon: Layers, color: 'text-amber-400', title: 'Flashcards', desc: 'Gerados automaticamente com revisão espaçada.' },
-  { icon: KanbanSquare, color: 'text-emerald-400', title: 'Kanban de Leitura', desc: 'Organize e acompanhe sua leitura.' },
-  { icon: GraduationCap, color: 'text-pink-400', title: 'Plano de Estudos', desc: 'Roadmap personalizado pelos seus materiais.' },
-  { icon: Brain, color: 'text-cyan-400', title: 'Pergunta do Dia', desc: 'IA avalia suas respostas em tempo real.' },
-]
+const GOOGLE_CONFIGURED = !!import.meta.env.VITE_GOOGLE_CLIENT_ID
+
+// Componente isolado para que useGoogleLogin só seja chamado
+// quando o GoogleOAuthProvider está devidamente configurado
+function GoogleButton({ disabled }: { disabled: boolean }) {
+  const { loginWithGoogle } = useAuth()
+  const navigate = useNavigate()
+  const [loading, setLoading] = useState(false)
+
+  const handleGoogle = useGoogleLogin({
+    onSuccess: async tokenResponse => {
+      setLoading(true)
+      try {
+        await loginWithGoogle(tokenResponse.access_token)
+        navigate('/dashboard', { replace: true })
+      } catch {
+        toast.error('Erro ao autenticar com Google.')
+      } finally {
+        setLoading(false)
+      }
+    },
+    onError: () => toast.error('Login com Google cancelado ou falhou.'),
+  })
+
+  return (
+    <button
+      type="button"
+      onClick={() => handleGoogle()}
+      disabled={loading || disabled}
+      className="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-lg text-[#e5e2e1] transition-colors active:scale-95 duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
+      style={{ backgroundColor: '#2a2a2a' }}
+      onMouseEnter={e => { if (!loading && !disabled) (e.currentTarget).style.backgroundColor = '#3a3939' }}
+      onMouseLeave={e => { (e.currentTarget).style.backgroundColor = '#2a2a2a' }}
+    >
+      {loading
+        ? <Loader2 className="h-[18px] w-[18px] animate-spin shrink-0" />
+        : (
+          <svg className="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+            <path fill="currentColor" d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z" />
+          </svg>
+        )
+      }
+      <span className="text-sm font-medium">Continuar com Google</span>
+    </button>
+  )
+}
 
 export function Login() {
   const { login } = useAuth()
@@ -44,122 +78,243 @@ export function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      {/* Background */}
-      <div className="pointer-events-none fixed inset-0 overflow-hidden">
-        <div className="absolute -top-40 -left-40 h-[600px] w-[600px] rounded-full bg-blue-700/20 blur-[140px]" />
-        <div className="absolute -bottom-40 -right-32 h-[500px] w-[500px] rounded-full bg-violet-700/15 blur-[120px]" />
-        <div
-          className="absolute inset-0 opacity-[0.025]"
-          style={{ backgroundImage: 'radial-gradient(circle, #a1a1aa 1px, transparent 1px)', backgroundSize: '28px 28px' }}
-        />
+    <div
+      className="min-h-screen text-[#e5e2e1] selection:bg-[#d0e4ff]/30 selection:text-[#d0e4ff]"
+      style={{ backgroundColor: '#131313', fontFamily: "'Inter', sans-serif" }}
+    >
+      {/* Background — cinematic light leaks */}
+      <div className="fixed inset-0 overflow-hidden pointer-events-none z-0">
+        <div className="absolute -top-[10%] -left-[10%] w-[50%] h-[50%] rounded-full blur-[120px]"
+          style={{ backgroundColor: 'rgba(208, 228, 255, 0.05)' }} />
+        <div className="absolute top-[20%] -right-[5%] w-[40%] h-[40%] rounded-full blur-[100px]"
+          style={{ backgroundColor: 'rgba(254, 183, 133, 0.05)' }} />
+        <div className="absolute -bottom-[10%] left-[20%] w-[60%] h-[40%] rounded-full blur-[120px]"
+          style={{ backgroundColor: 'rgba(163, 201, 248, 0.05)' }} />
       </div>
 
-      {/* Login section — full viewport height */}
-      <div className="relative flex min-h-screen flex-col items-center justify-center px-4 py-16">
-        <div className="w-full max-w-sm space-y-8">
-          {/* Logo */}
-          <div className="flex flex-col items-center gap-3">
-            <Link to="/" className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 shadow-lg shadow-blue-600/30 hover:bg-blue-500 transition-colors">
-              <BookOpen className="h-6 w-6 text-white" />
-            </Link>
-            <div className="text-center">
-              <h1 className="text-xl font-bold text-zinc-100">DocOps Agent</h1>
-              <p className="mt-1 text-sm text-zinc-500">Faça login para continuar</p>
+      {/* Main content */}
+      <main className="relative z-10 min-h-screen flex flex-col items-center justify-center px-4 py-12 sm:p-8">
+
+        {/* Brand header */}
+        <header className="mb-10 sm:mb-12 text-center">
+          <div className="inline-flex items-center gap-2 mb-6 sm:mb-8">
+            <span
+              className="text-xl sm:text-2xl font-extrabold tracking-tighter text-[#d0e4ff]"
+              style={{ fontFamily: "'Manrope', sans-serif" }}
+            >
+              Editorial Intelligence
+            </span>
+          </div>
+          <h1
+            className="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-[#e5e2e1] tracking-tight mb-3"
+            style={{ fontFamily: "'Manrope', sans-serif" }}
+          >
+            Bem-vindo de volta.
+          </h1>
+          <p className="text-[#c2c7cf] text-base sm:text-lg max-w-sm sm:max-w-md mx-auto">
+            Acesse sua inteligência editorial personalizada.
+          </p>
+        </header>
+
+        {/* Glass card */}
+        <div
+          className="w-full max-w-sm sm:max-w-md rounded-xl p-6 sm:p-8 lg:p-10"
+          style={{
+            background: 'rgba(53, 53, 52, 0.6)',
+            backdropFilter: 'blur(24px)',
+            WebkitBackdropFilter: 'blur(24px)',
+            border: '1px solid rgba(208, 228, 255, 0.1)',
+            boxShadow: '0 20px 50px rgba(0, 0, 0, 0.5), 0 0 15px rgba(208, 228, 255, 0.03)',
+          }}
+        >
+          <form onSubmit={handleSubmit} className="space-y-5 sm:space-y-6">
+            {/* Email */}
+            <div className="space-y-2">
+              <label
+                htmlFor="email"
+                className="block text-[11px] font-semibold uppercase tracking-widest text-[#c2c7cf]"
+                style={{ fontFamily: "'Inter', sans-serif" }}
+              >
+                E-mail
+              </label>
+              <input
+                id="email"
+                type="email"
+                name="email"
+                placeholder="nome@exemplo.com"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                disabled={loading}
+                autoComplete="email"
+                required
+                className="w-full rounded-lg py-3.5 sm:py-4 px-4 text-[#e5e2e1] outline-none transition-all disabled:opacity-50"
+                style={{
+                  backgroundColor: '#1c1b1b',
+                  border: '1px solid transparent',
+                  fontFamily: "'Inter', sans-serif",
+                }}
+                onFocus={e => {
+                  e.currentTarget.style.backgroundColor = '#2a2a2a'
+                  e.currentTarget.style.border = '1px solid rgba(208, 228, 255, 0.3)'
+                }}
+                onBlur={e => {
+                  e.currentTarget.style.backgroundColor = '#1c1b1b'
+                  e.currentTarget.style.border = '1px solid transparent'
+                }}
+              />
+            </div>
+
+            {/* Password */}
+            <div className="space-y-2">
+              <div className="flex justify-between items-center">
+                <label
+                  htmlFor="password"
+                  className="block text-[11px] font-semibold uppercase tracking-widest text-[#c2c7cf]"
+                  style={{ fontFamily: "'Inter', sans-serif" }}
+                >
+                  Senha
+                </label>
+                <span className="text-xs text-[#d0e4ff]/60 cursor-default select-none">
+                  Esqueceu a senha?
+                </span>
+              </div>
+              <input
+                id="password"
+                type="password"
+                name="password"
+                placeholder="••••••••"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                disabled={loading}
+                autoComplete="current-password"
+                required
+                className="w-full rounded-lg py-3.5 sm:py-4 px-4 text-[#e5e2e1] outline-none transition-all disabled:opacity-50"
+                style={{
+                  backgroundColor: '#1c1b1b',
+                  border: '1px solid transparent',
+                  fontFamily: "'Inter', sans-serif",
+                }}
+                onFocus={e => {
+                  e.currentTarget.style.backgroundColor = '#2a2a2a'
+                  e.currentTarget.style.border = '1px solid rgba(208, 228, 255, 0.3)'
+                }}
+                onBlur={e => {
+                  e.currentTarget.style.backgroundColor = '#1c1b1b'
+                  e.currentTarget.style.border = '1px solid transparent'
+                }}
+              />
+            </div>
+
+            {/* Submit */}
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full font-semibold py-3.5 sm:py-4 rounded-xl transition-all disabled:opacity-60 disabled:cursor-not-allowed flex items-center justify-center gap-2 active:scale-[0.98]"
+              style={{
+                backgroundColor: '#d0e4ff',
+                color: '#003258',
+                boxShadow: '0 4px 24px rgba(208, 228, 255, 0.1)',
+                fontFamily: "'Inter', sans-serif",
+              }}
+              onMouseEnter={e => {
+                if (!loading) (e.currentTarget as HTMLButtonElement).style.filter = 'brightness(1.1)'
+              }}
+              onMouseLeave={e => {
+                (e.currentTarget as HTMLButtonElement).style.filter = ''
+              }}
+            >
+              {loading && <Loader2 className="h-4 w-4 animate-spin" />}
+              Entrar
+            </button>
+          </form>
+
+          {/* Divider */}
+          <div className="relative my-7 sm:my-8">
+            <div className="absolute inset-0 flex items-center" aria-hidden="true">
+              <div className="w-full" style={{ borderTop: '1px solid rgba(66, 71, 78, 0.3)' }} />
+            </div>
+            <div className="relative flex justify-center">
+              <span
+                className="px-4 text-[10px] uppercase tracking-widest text-[#c2c7cf]"
+                style={{ backgroundColor: 'rgba(42, 42, 42, 0.9)', fontFamily: "'Inter', sans-serif" }}
+              >
+                Ou continue com
+              </span>
             </div>
           </div>
 
-          {/* Form */}
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/80 p-6 shadow-xl backdrop-blur-sm">
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-zinc-300">E-mail</label>
-                <Input
-                  type="email"
-                  placeholder="voce@exemplo.com"
-                  value={email}
-                  onChange={e => setEmail(e.target.value)}
-                  disabled={loading}
-                  autoComplete="email"
-                  required
-                />
-              </div>
-              <div className="space-y-2">
-                <label className="block text-sm font-medium text-zinc-300">Senha</label>
-                <Input
-                  type="password"
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  disabled={loading}
-                  autoComplete="current-password"
-                  required
-                />
-              </div>
-              <Button type="submit" className="w-full" disabled={loading}>
-                {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Entrar
-              </Button>
-            </form>
+          {/* Google OAuth — só renderiza o hook quando o Client ID está configurado */}
+          {GOOGLE_CONFIGURED ? (
+            <GoogleButton disabled={loading} />
+          ) : (
+            <button
+              type="button"
+              disabled
+              title="Configure VITE_GOOGLE_CLIENT_ID para ativar"
+              className="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-lg text-[#e5e2e1] opacity-40 cursor-not-allowed"
+              style={{ backgroundColor: '#2a2a2a' }}
+            >
+              <svg className="h-[18px] w-[18px] shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="currentColor" d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z" />
+              </svg>
+              <span className="text-sm font-medium">Continuar com Google</span>
+            </button>
+          )}
 
-            <p className="mt-5 text-center text-sm text-zinc-500">
-              Não tem conta?{' '}
-              <Link to="/register" className="text-blue-400 hover:underline">
-                Criar conta
-              </Link>
-            </p>
-          </div>
-
-          <p className="text-center text-xs text-zinc-700">
-            <Link to="/" className="hover:text-zinc-500 transition-colors">← Voltar ao início</Link>
+          {/* Footer link */}
+          <p className="mt-8 sm:mt-10 text-center text-sm text-[#c2c7cf]">
+            Não tem uma conta?{' '}
+            <Link
+              to="/register"
+              className="font-semibold ml-1 transition-colors hover:underline underline-offset-4"
+              style={{ color: '#feb785' }}
+            >
+              Criar conta
+            </Link>
           </p>
         </div>
-      </div>
 
-      {/* Features section — below the fold */}
-      <div className="relative border-t border-zinc-800/60 bg-zinc-900/30 px-6 py-20">
-        <div className="mx-auto max-w-4xl">
-          <div className="mb-12 text-center">
-            <h2 className="text-2xl font-bold text-zinc-100">O que você encontrará aqui</h2>
-            <p className="mt-2 text-sm text-zinc-500">Ferramentas integradas para transformar documentos em conhecimento ativo.</p>
-          </div>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {HIGHLIGHTS.map(h => {
-              const Icon = h.icon
-              return (
-                <div key={h.title} className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-2">
-                  <div className="flex items-center gap-2">
-                    <Icon className={`h-4 w-4 shrink-0 ${h.color}`} />
-                    <span className="text-sm font-semibold text-zinc-200">{h.title}</span>
-                  </div>
-                  <p className="text-xs text-zinc-500 leading-relaxed">{h.desc}</p>
-                </div>
-              )
-            })}
-          </div>
-
-          <div className="mt-16 rounded-xl border border-zinc-800/60 bg-zinc-900/40 p-6">
-            <h3 className="text-sm font-semibold text-zinc-300 mb-4">Como funciona</h3>
-            <div className="grid gap-4 sm:grid-cols-3 text-xs text-zinc-500">
-              <div className="space-y-1">
-                <p className="text-zinc-400 font-medium">1. Insira seus materiais</p>
-                <p>PDF, Markdown, texto, planilha, foto com OCR, URL ou vídeo do YouTube — tudo indexado localmente no ChromaDB.</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-zinc-400 font-medium">2. Converse e estude</p>
-                <p>Faça perguntas, peça resumos com citações, gere flashcards e planos de estudo baseados nos seus próprios documentos.</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-zinc-400 font-medium">3. Acompanhe o aprendizado</p>
-                <p>Kanban de leitura, análise de gaps, revisão espaçada e pergunta diária com avaliação por IA mantêm você progredindo.</p>
-              </div>
-            </div>
-          </div>
+        {/* Gradient accent line */}
+        <div className="mt-14 sm:mt-16 max-w-4xl w-full hidden md:block opacity-30">
+          <div className="h-px bg-gradient-to-r from-transparent via-[#d0e4ff]/40 to-transparent" />
         </div>
-      </div>
 
-      <footer className="relative border-t border-zinc-800/60 py-6 text-center text-xs text-zinc-700">
-        DocOps Agent · RAG Local · Gemini + ChromaDB
+        {/* Voltar ao início */}
+        <p className="mt-6 text-center text-xs text-[#c2c7cf]/40">
+          <Link to="/" className="hover:text-[#c2c7cf]/70 transition-colors">← Voltar ao início</Link>
+        </p>
+      </main>
+
+      {/* Footer */}
+      <footer className="w-full py-10 sm:py-12 relative z-10" style={{ backgroundColor: '#131313' }}>
+        <div className="flex flex-col items-center gap-5 max-w-7xl mx-auto px-6 sm:px-8">
+          <div
+            className="font-bold text-[#e5e2e1]"
+            style={{ fontFamily: "'Manrope', sans-serif" }}
+          >
+            Editorial Intelligence
+          </div>
+          <div className="flex flex-wrap justify-center gap-6 sm:gap-8">
+            {['Privacidade', 'Termos', 'Documentação', 'Suporte'].map(item => (
+              <a
+                key={item}
+                href="#"
+                className="text-xs text-[#c2c7cf]/50 transition-colors"
+                style={{ fontFamily: "'Inter', sans-serif" }}
+                onMouseEnter={e => (e.currentTarget.style.color = 'rgba(254, 183, 133, 0.7)')}
+                onMouseLeave={e => (e.currentTarget.style.color = 'rgba(194, 199, 207, 0.5)')}
+              >
+                {item}
+              </a>
+            ))}
+          </div>
+          <p
+            className="text-xs text-[#c2c7cf]/40"
+            style={{ fontFamily: "'Inter', sans-serif" }}
+          >
+            © 2025 Editorial Intelligence. The Cognitive Luminary.
+          </p>
+        </div>
       </footer>
     </div>
   )

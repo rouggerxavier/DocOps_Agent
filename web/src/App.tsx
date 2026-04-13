@@ -4,6 +4,7 @@ import { Toaster } from 'sonner'
 import { useEffect } from 'react'
 import { AuthProvider, useAuth } from '@/auth/AuthProvider'
 import { Layout } from '@/components/layout/Layout'
+import { CapabilitiesProvider } from '@/features/CapabilitiesProvider'
 import { Artifacts } from '@/pages/Artifacts'
 import { Chat } from '@/pages/Chat'
 import { Dashboard } from '@/pages/Dashboard'
@@ -16,6 +17,7 @@ import { Notes } from '@/pages/Notes'
 import { ReadingKanban } from '@/pages/ReadingKanban'
 import { Register } from '@/pages/Register'
 import { Schedule } from '@/pages/Schedule'
+import { Preferences } from '@/pages/Preferences'
 import { StudyPlan } from '@/pages/StudyPlan'
 import { Tasks } from '@/pages/Tasks'
 
@@ -31,6 +33,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/tasks': 'Tarefas',
   '/flashcards': 'Flashcards',
   '/studyplan': 'Plano de Estudos',
+  '/settings': 'Configurações',
   '/kanban': 'Kanban de Leitura',
   '/login': 'Login',
   '/register': 'Criar conta',
@@ -78,7 +81,7 @@ export default function App() {
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<RedirectIfAuth><Login /></RedirectIfAuth>} />
             <Route path="/register" element={<RedirectIfAuth><Register /></RedirectIfAuth>} />
-            <Route element={<RequireAuth><Layout /></RequireAuth>}>
+            <Route element={<RequireAuth><CapabilitiesProvider><Layout /></CapabilitiesProvider></RequireAuth>}>
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/ingest" element={<Ingest />} />
               <Route path="/chat" element={<Chat />} />
@@ -89,6 +92,7 @@ export default function App() {
               <Route path="/tasks" element={<Tasks />} />
               <Route path="/flashcards" element={<Flashcards />} />
               <Route path="/studyplan" element={<StudyPlan />} />
+              <Route path="/settings" element={<Preferences />} />
               <Route path="/kanban" element={<ReadingKanban />} />
             </Route>
           </Routes>

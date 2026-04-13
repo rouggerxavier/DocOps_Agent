@@ -241,6 +241,7 @@ async def create_study_plan(
                 filename=md_final_name,
                 path=str(md_path),
                 title=f"Plano de Estudos — {payload.topic}",
+                generation_profile="study_plan:standard",
             )
 
         # 2. Generate and save .pdf artifact
@@ -263,6 +264,7 @@ async def create_study_plan(
                 filename=pdf_final_name,
                 path=str(pdf_full_path),
                 title=f"Plano de Estudos (PDF) — {payload.topic}",
+                generation_profile="study_plan:pdf",
             )
         except Exception as pdf_err:
             logger.warning("Falha ao gerar PDF do plano: %s", pdf_err)

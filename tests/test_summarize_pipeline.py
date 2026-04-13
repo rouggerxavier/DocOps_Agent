@@ -578,15 +578,19 @@ class TestBriefModeRegression:
             side_effect=fake_deep_summary,
         ):
             with patch("docops.graph.graph.run", side_effect=fake_graph_run):
-                from docops.api.routes.summarize import _run_summarize
+                with patch(
+                    "docops.api.routes.summarize.apply_template_layout",
+                    side_effect=lambda answer, **_: answer,
+                ):
+                    from docops.api.routes.summarize import _run_summarize
 
-                result = _run_summarize(
-                    file_name="test.pdf",
-                    doc_id="test-uuid",
-                    save=False,
-                    summary_mode="deep",
-                    user_id=1,
-                )
+                    result = _run_summarize(
+                        file_name="test.pdf",
+                        doc_id="test-uuid",
+                        save=False,
+                        summary_mode="deep",
+                        user_id=1,
+                    )
 
         assert len(pipeline_called) == 1, "run_deep_summary() must be called for deep mode"
         assert len(graph_called) == 0, "graph.run() must NOT be called for deep mode"

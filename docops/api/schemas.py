@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 from pydantic import BaseModel, EmailStr, Field
 
 
@@ -37,6 +37,15 @@ class MeResponse(BaseModel):
     name: str
     email: str
     created_at: datetime
+
+
+class GoogleAuthRequest(BaseModel):
+    access_token: str
+
+
+class GoogleAuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
 
 
 # ── Common ────────────────────────────────────────────────────────────────────
@@ -117,6 +126,10 @@ class ChatQualitySignal(BaseModel):
     score: float = Field(ge=0.0, le=1.0)
     label: str
     reasons: List[str] = Field(default_factory=list)
+    reason_codes: List[str] = Field(default_factory=list)
+    score_components: dict[str, float] = Field(default_factory=dict)
+    support_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    unsupported_claim_count: int = 0
     suggested_action: Optional[str] = None
     source_count: int = 0
     retrieved_count: int = 0
@@ -137,6 +150,47 @@ class ChatResponse(BaseModel):
     quality_signal: Optional[ChatQualitySignal] = None
 
 
+# ── /api/capabilities ─────────────────────────────────────────────────────────
+
+class CapabilityFlag(BaseModel):
+    key: str
+    enabled: bool
+    env_var: str
+    default_enabled: bool
+    description: str
+    owner: str
+
+
+class CapabilitiesResponse(BaseModel):
+    flags: List[CapabilityFlag] = Field(default_factory=list)
+    map: dict[str, bool] = Field(default_factory=dict)
+    disable_all: bool = False
+    enable_all: bool = False
+
+
+# -- /api/preferences ---------------------------------------------------------
+
+PreferenceDefaultDepth = Literal["brief", "balanced", "deep"]
+PreferenceTone = Literal["neutral", "didactic", "objective", "encouraging"]
+PreferenceStrictness = Literal["relaxed", "balanced", "strict"]
+PreferenceSchedule = Literal["flexible", "fixed", "intensive"]
+
+
+class UserPreferencesResponse(BaseModel):
+    schema_version: int = Field(ge=1)
+    default_depth: PreferenceDefaultDepth
+    tone: PreferenceTone
+    strictness_preference: PreferenceStrictness
+    schedule_preference: PreferenceSchedule
+
+
+class UserPreferencesUpdateRequest(BaseModel):
+    default_depth: Optional[PreferenceDefaultDepth] = None
+    tone: Optional[PreferenceTone] = None
+    strictness_preference: Optional[PreferenceStrictness] = None
+    schedule_preference: Optional[PreferenceSchedule] = None
+
+
 # ── /api/summarize ────────────────────────────────────────────────────────────
 
 class SummarizeRequest(BaseModel):
@@ -145,6 +199,10 @@ class SummarizeRequest(BaseModel):
     summary_mode: str = Field(
         default="brief",
         description="'brief' for a short synthesis, 'deep' for a full detailed analysis",
+    )
+    template_id: Optional[str] = Field(
+        default=None,
+        description="Artifact template id (brief | exam_pack | deep_dossier).",
     )
     debug_summary: bool = Field(
         default=False,
@@ -164,6 +222,9 @@ class SummarizeResponse(BaseModel):
     answer: str
     artifact_path: Optional[str] = None
     artifact_filename: Optional[str] = None
+    template_id: Optional[str] = None
+    template_label: Optional[str] = None
+    template_description: Optional[str] = None
     summary_diagnostics: Optional[dict[str, Any]] = None
 
 
@@ -190,13 +251,56 @@ class ArtifactRequest(BaseModel):
         description="Optional list of document names/ids to constrain generation",
     )
     output: Optional[str] = None
+    template_id: Optional[str] = Field(
+        default=None,
+        description="Artifact template id (brief | exam_pack | deep_dossier).",
+    )
 
 
 class ArtifactResponse(BaseModel):
     answer: str
     filename: str
     path: str
+    template_id: Optional[str] = None
+    template_label: Optional[str] = None
+    template_description: Optional[str] = None
     artifact_id: Optional[int] = None
+
+
+class ChatArtifactCreateRequest(BaseModel):
+    answer: str = Field(min_length=1, max_length=200_000)
+    title: Optional[str] = Field(default=None, max_length=512)
+    user_prompt: Optional[str] = Field(default=None, max_length=4096)
+    session_id: Optional[str] = Field(default=None, max_length=128)
+    turn_ref: Optional[str] = Field(default=None, max_length=64)
+    doc_ids: List[str] = Field(default_factory=list)
+    doc_names: List[str] = Field(default_factory=list)
+    template_id: Optional[str] = Field(
+        default=None,
+        description="Artifact template id (brief | exam_pack | deep_dossier).",
+    )
+    artifact_type: str = Field(default="summary", max_length=64)
+    generation_profile: Optional[str] = Field(default=None, max_length=128)
+    confidence_level: Optional[str] = Field(default=None, max_length=16)
+    confidence_score: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+
+class ChatArtifactCreateResponse(ArtifactResponse):
+    conversation_session_id: Optional[str] = None
+    conversation_turn_ref: Optional[str] = None
+
+
+class ArtifactTemplateItem(BaseModel):
+    template_id: str
+    label: str
+    short_description: str
+    long_description: str
+    preview_title: str
+    preview_sections: List[str] = Field(default_factory=list)
+    artifact_types: List[str] = Field(default_factory=list)
+    summary_modes: List[str] = Field(default_factory=list)
+    default_for_summary_modes: List[str] = Field(default_factory=list)
+    default_for_artifact_types: List[str] = Field(default_factory=list)
 
 
 # ── /api/artifacts ────────────────────────────────────────────────────────────
@@ -208,6 +312,23 @@ class ArtifactItem(BaseModel):
     created_at: str
     artifact_type: str = ""
     title: Optional[str] = None
+    template_id: Optional[str] = None
+    generation_profile: Optional[str] = None
+    confidence_level: Optional[str] = None
+    confidence_score: Optional[float] = None
+    metadata_version: int = 1
+    source_doc_ids: List[str] = Field(default_factory=list)
+    source_doc_count: int = 0
+    conversation_session_id: Optional[str] = None
+    conversation_turn_ref: Optional[str] = None
+
+
+class ArtifactFilterOptionsResponse(BaseModel):
+    artifact_types: List[str] = Field(default_factory=list)
+    template_ids: List[str] = Field(default_factory=list)
+    generation_profiles: List[str] = Field(default_factory=list)
+    source_doc_ids: List[str] = Field(default_factory=list)
+    confidence_levels: List[str] = Field(default_factory=list)
 
 
 # ── /api/health ───────────────────────────────────────────────────────────────

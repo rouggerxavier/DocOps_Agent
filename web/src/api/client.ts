@@ -33,6 +33,15 @@ export interface ChatQualitySignal {
   score: number
   label: string
   reasons: string[]
+  reason_codes?: string[]
+  score_components?: {
+    support_rate: number
+    source_breadth: number
+    unsupported_claims: number
+    retrieval_depth: number
+  }
+  support_rate?: number | null
+  unsupported_claim_count?: number
   suggested_action?: string | null
   source_count: number
   retrieved_count: number
@@ -52,9 +61,67 @@ export interface ChatResponse {
   active_context?: Record<string, any> | null
 }
 
+export interface CapabilityFlag {
+  key: string
+  enabled: boolean
+  env_var: string
+  default_enabled: boolean
+  description: string
+  owner: string
+}
+
+export interface CapabilitiesResponse {
+  flags: CapabilityFlag[]
+  map: Record<string, boolean>
+  disable_all: boolean
+  enable_all: boolean
+}
+
+export interface UserPreferences {
+  schema_version: number
+  default_depth: 'brief' | 'balanced' | 'deep'
+  tone: 'neutral' | 'didactic' | 'objective' | 'encouraging'
+  strictness_preference: 'relaxed' | 'balanced' | 'strict'
+  schedule_preference: 'flexible' | 'fixed' | 'intensive'
+}
+
+export interface UserPreferencesUpdatePayload {
+  default_depth?: UserPreferences['default_depth']
+  tone?: UserPreferences['tone']
+  strictness_preference?: UserPreferences['strictness_preference']
+  schedule_preference?: UserPreferences['schedule_preference']
+}
+
 export interface ChatStreamCallbacks {
   onStart?: () => void
+  onStatus?: (status: { stage: string; detail?: string | null }) => void
   onDelta?: (delta: string) => void
+  onError?: (detail: string) => void
+}
+
+export interface ChatRequestOptions {
+  streamFallback?: boolean
+}
+
+export class ChatStreamError extends Error {
+  statusCode: number | null
+  recoverable: boolean
+  reason: string
+
+  constructor(
+    message: string,
+    options?: {
+      statusCode?: number | null
+      recoverable?: boolean
+      reason?: string
+    },
+  ) {
+    super(message)
+    this.name = 'ChatStreamError'
+    this.statusCode = options?.statusCode ?? null
+    this.recoverable = options?.recoverable ?? true
+    this.reason = options?.reason ?? 'stream_failure'
+  }
 }
 
 export interface JobCreateResponse {
@@ -88,24 +155,91 @@ export interface ArtifactItem {
   created_at: string
   artifact_type: string
   title: string | null
+  template_id?: string | null
+  generation_profile?: string | null
+  confidence_level?: 'high' | 'medium' | 'low' | string | null
+  confidence_score?: number | null
+  metadata_version?: number
+  source_doc_ids?: string[]
+  source_doc_count?: number
+  conversation_session_id?: string | null
+  conversation_turn_ref?: string | null
 }
 
 export interface ArtifactResponse {
   answer: string
   filename: string
   path: string
+  template_id?: string | null
+  template_label?: string | null
+  template_description?: string | null
   artifact_id?: number | null
+}
+
+export interface ChatArtifactCreatePayload {
+  answer: string
+  title?: string
+  user_prompt?: string
+  session_id?: string
+  turn_ref?: string
+  doc_ids?: string[]
+  doc_names?: string[]
+  template_id?: string
+  artifact_type?: string
+  generation_profile?: string
+  confidence_level?: string
+  confidence_score?: number
+}
+
+export interface ChatArtifactResponse extends ArtifactResponse {
+  conversation_session_id?: string | null
+  conversation_turn_ref?: string | null
 }
 
 export interface SummarizeResponse {
   answer: string
   artifact_path: string | null
   artifact_filename?: string | null
+  template_id?: string | null
+  template_label?: string | null
+  template_description?: string | null
 }
 
 export interface CompareResponse {
   answer: string
   artifact_path: string | null
+}
+
+export interface ArtifactTemplate {
+  template_id: string
+  label: string
+  short_description: string
+  long_description: string
+  preview_title: string
+  preview_sections: string[]
+  artifact_types: string[]
+  summary_modes: string[]
+  default_for_summary_modes: string[]
+  default_for_artifact_types: string[]
+}
+
+export interface ArtifactFilterOptions {
+  artifact_types: string[]
+  template_ids: string[]
+  generation_profiles: string[]
+  source_doc_ids: string[]
+  confidence_levels: string[]
+}
+
+export interface ArtifactListQuery {
+  artifact_type?: string
+  source_doc_id?: string
+  conversation_session_id?: string
+  template_id?: string
+  generation_profile?: string
+  search?: string
+  sort_by?: 'created_at' | 'updated_at' | 'title' | 'artifact_type' | 'confidence_score' | 'filename' | string
+  sort_order?: 'asc' | 'desc'
 }
 
 export interface ReminderItem {
@@ -329,6 +463,18 @@ export const apiClient = {
   listDocs: (): Promise<DocItem[]> =>
     api.get('/api/docs').then(r => r.data),
 
+  getCapabilities: (): Promise<CapabilitiesResponse> =>
+    api.get('/api/capabilities').then(r => r.data),
+
+  getPreferences: (): Promise<UserPreferences> =>
+    api.get('/api/preferences').then(r => r.data),
+
+  updatePreferences: (payload: UserPreferencesUpdatePayload): Promise<UserPreferences> =>
+    api.put('/api/preferences', payload).then(r => r.data),
+
+  resetPreferences: (): Promise<UserPreferences> =>
+    api.post('/api/preferences/reset').then(r => r.data),
+
   deleteDoc: (docId: string): Promise<void> =>
     api.delete(`/api/docs/${encodeURIComponent(docId)}`).then(() => undefined),
 
@@ -339,9 +485,17 @@ export const apiClient = {
     doc_names?: string[],
     strict_grounding?: boolean,
     history?: Array<{ role: 'user' | 'assistant'; content: string }>,
-    active_context?: Record<string, any> | null
+    active_context?: Record<string, any> | null,
+    options?: ChatRequestOptions,
   ): Promise<ChatResponse> =>
-    api.post('/api/chat', { message, session_id, top_k, doc_names, strict_grounding, history, active_context }, { timeout: 180000 }).then(r => r.data),
+    api.post(
+      '/api/chat',
+      { message, session_id, top_k, doc_names, strict_grounding, history, active_context },
+      {
+        timeout: 180000,
+        headers: options?.streamFallback ? { 'X-DocOps-Stream-Fallback': '1' } : undefined,
+      },
+    ).then(r => r.data),
 
   chatStream: async (
     message: string,
@@ -374,16 +528,33 @@ export const apiClient = {
       signal,
     })
 
+    const isRecoverableStatus = (statusCode: number): boolean => (
+      statusCode >= 500 || statusCode === 408 || statusCode === 429
+    )
+
     if (!resp.ok) {
       const detail = await resp.text().catch(() => '')
-      throw new Error(detail || `HTTP ${resp.status}`)
+      throw new ChatStreamError(
+        detail || `HTTP ${resp.status}`,
+        {
+          statusCode: resp.status,
+          recoverable: isRecoverableStatus(resp.status),
+          reason: 'http_error',
+        },
+      )
     }
-    if (!resp.body) throw new Error('Stream indisponivel no navegador.')
+    if (!resp.body) {
+      throw new ChatStreamError(
+        'Stream indisponivel no navegador.',
+        { recoverable: true, reason: 'missing_body' },
+      )
+    }
 
     const reader = resp.body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
     let finalResponse: ChatResponse | null = null
+    let doneReceived = false
 
     const flushBlocks = () => {
       const blocks = buffer.split(/\r?\n\r?\n/)
@@ -411,6 +582,13 @@ export const apiClient = {
         callbacks?.onStart?.()
         return
       }
+      if (type === 'status') {
+        callbacks?.onStatus?.({
+          stage: String(payload?.stage ?? ''),
+          detail: payload?.detail != null ? String(payload.detail) : null,
+        })
+        return
+      }
       if (type === 'delta') {
         callbacks?.onDelta?.(String(payload?.delta ?? ''))
         return
@@ -419,9 +597,22 @@ export const apiClient = {
         finalResponse = payload.response as ChatResponse
         return
       }
+      if (type === 'done') {
+        doneReceived = true
+        return
+      }
       if (type === 'error') {
+        const statusCode = Number(payload?.status_code ?? 500)
         const detail = String(payload?.detail ?? 'Erro no streaming de chat.')
-        throw new Error(detail)
+        callbacks?.onError?.(detail)
+        throw new ChatStreamError(
+          detail,
+          {
+            statusCode,
+            recoverable: isRecoverableStatus(statusCode),
+            reason: 'server_error_event',
+          },
+        )
       }
     }
 
@@ -443,7 +634,13 @@ export const apiClient = {
     }
 
     if (!finalResponse) {
-      throw new Error('Stream encerrado sem resposta final.')
+      const reason = doneReceived ? 'done_without_final' : 'abrupt_close'
+      throw new ChatStreamError(
+        doneReceived
+          ? 'Stream finalizado sem payload final.'
+          : 'Stream encerrado sem resposta final.',
+        { recoverable: true, reason },
+      )
     }
     return finalResponse
   },
@@ -462,33 +659,57 @@ export const apiClient = {
     }).then(r => r.data)
   },
 
-  summarize: (doc: string, save = true, summary_mode: 'brief' | 'deep' = 'brief'): Promise<SummarizeResponse> =>
-    api.post('/api/summarize', { doc, save, summary_mode }).then(r => r.data),
+  summarize: (
+    doc: string,
+    save = true,
+    summary_mode: 'brief' | 'deep' = 'brief',
+    template_id?: string,
+  ): Promise<SummarizeResponse> =>
+    api.post('/api/summarize', { doc, save, summary_mode, template_id }).then(r => r.data),
 
-  summarizeAsync: (doc: string, save = true, summary_mode: 'brief' | 'deep' = 'brief'): Promise<JobCreateResponse> =>
-    api.post('/api/summarize/async', { doc, save, summary_mode }).then(r => r.data),
+  summarizeAsync: (
+    doc: string,
+    save = true,
+    summary_mode: 'brief' | 'deep' = 'brief',
+    template_id?: string,
+  ): Promise<JobCreateResponse> =>
+    api.post('/api/summarize/async', { doc, save, summary_mode, template_id }).then(r => r.data),
 
   compare: (doc1: string, doc2: string, save = false): Promise<CompareResponse> =>
     api.post('/api/compare', { doc1, doc2, save }).then(r => r.data),
+
+  listArtifactTemplates: (
+    summary_mode?: 'brief' | 'deep' | string,
+    artifact_type?: string,
+  ): Promise<ArtifactTemplate[]> =>
+    api.get('/api/artifact/templates', { params: { summary_mode, artifact_type } }).then(r => r.data),
+
+  listArtifactFilterOptions: (): Promise<ArtifactFilterOptions> =>
+    api.get('/api/artifacts/filters').then(r => r.data),
 
   createArtifact: (
     type: string,
     topic: string,
     output?: string,
-    doc_names?: string[]
+    doc_names?: string[],
+    template_id?: string,
   ): Promise<ArtifactResponse> =>
-    api.post('/api/artifact', { type, topic, output, doc_names }).then(r => r.data),
+    api.post('/api/artifact', { type, topic, output, doc_names, template_id }).then(r => r.data),
 
   createArtifactAsync: (
     type: string,
     topic: string,
     output?: string,
-    doc_names?: string[]
+    doc_names?: string[],
+    template_id?: string,
   ): Promise<JobCreateResponse> =>
-    api.post('/api/artifact/async', { type, topic, output, doc_names }).then(r => r.data),
+    api.post('/api/artifact/async', { type, topic, output, doc_names, template_id }).then(r => r.data),
 
-  listArtifacts: (): Promise<ArtifactItem[]> =>
-    api.get('/api/artifacts').then(r => r.data),
+  createArtifactFromChat: (payload: ChatArtifactCreatePayload): Promise<ChatArtifactResponse> =>
+    api.post('/api/artifact/from-chat', payload).then(r => r.data),
+
+  listArtifacts: (query?: ArtifactListQuery): Promise<ArtifactItem[]> =>
+    api.get('/api/artifacts', { params: query }).then(r => r.data),
 
   getArtifactTextById: (artifactId: number): Promise<string> =>
     api

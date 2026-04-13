@@ -26,7 +26,7 @@ from sqlalchemy.pool import StaticPool
 from docops.api.app import app
 from docops.auth.dependencies import get_current_user
 from docops.db.database import Base, get_db
-from docops.db.models import User
+from docops.db.models import User, UserPreferenceRecord
 
 
 # ── Banco de dados em memória para testes ─────────────────────────────────────
@@ -55,10 +55,40 @@ app.dependency_overrides[get_db] = _override_get_db
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _ensure_db_override():
+    """Re-aplica o override do get_db antes de cada teste.
+
+    Outros módulos de teste (e.g. test_calendar_routing) também sobrescrevem
+    app.dependency_overrides[get_db] em nível de módulo com seu próprio engine.
+    Quando o pytest importa todos os arquivos antes de rodar os testes, o último
+    a importar vence e a rota passa a usar um banco diferente do setup do teste.
+    Este fixture garante que o engine correto seja restaurado para cada teste.
+    """
+    app.dependency_overrides[get_db] = _override_get_db
+    yield
+
+
 def _make_auth_client():
     """Retorna um TestClient com usuário fake autenticado via dependency override."""
     fake_user = User(id=1, name="Tester", email="tester@example.com",
                      password_hash="x", is_active=True)
+
+    def _fake_auth():
+        return fake_user
+
+    app.dependency_overrides[get_current_user] = _fake_auth
+    return TestClient(app), fake_user
+
+
+def _make_auth_client_for_user(user_id: int):
+    fake_user = User(
+        id=int(user_id),
+        name=f"Tester {int(user_id)}",
+        email=f"tester{int(user_id)}@example.com",
+        password_hash="x",
+        is_active=True,
+    )
 
     def _fake_auth():
         return fake_user
@@ -199,6 +229,12 @@ def test_chat_sem_token():
     assert resp.status_code == 401
 
 
+def test_capabilities_sem_token():
+    _clear_auth_override()
+    resp = client.get("/api/capabilities")
+    assert resp.status_code == 401
+
+
 # ── Testes existentes com autenticação via override ───────────────────────────
 
 def test_docs_empty(monkeypatch):
@@ -267,6 +303,55 @@ def test_chat_success(monkeypatch):
     _clear_auth_override()
 
 
+def test_chat_response_has_correlation_id_header(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: {
+            "answer": "ok",
+            "intent": "qa",
+            "retrieved_chunks": [],
+        },
+    )
+
+    resp = auth_client.post("/api/chat", json={"message": "hello"})
+    assert resp.status_code == 200
+    correlation_id = resp.headers.get("x-correlation-id")
+    assert correlation_id is not None
+    assert len(correlation_id) >= 8
+    _clear_auth_override()
+
+
+def test_chat_propagates_correlation_id_to_worker_thread(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    expected_cid = "tracecid-12345678"
+
+    def _fake_run(_msg, _top_k, user_id=0, doc_names=None, strict_grounding=False):
+        from docops.observability import get_correlation_id
+
+        return {
+            "answer": f"cid={get_correlation_id()}",
+            "intent": "qa",
+            "retrieved_chunks": [],
+        }
+
+    monkeypatch.setattr("docops.api.routes.chat._run_chat", _fake_run)
+    monkeypatch.setattr(
+        "docops.api.routes.chat._apply_low_confidence_guardrail",
+        lambda answer, quality_signal: (answer, False),
+    )
+
+    resp = auth_client.post(
+        "/api/chat",
+        json={"message": "hello"},
+        headers={"X-Correlation-ID": expected_cid},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["answer"] == f"cid={expected_cid}"
+    assert resp.headers.get("x-correlation-id") == expected_cid
+    _clear_auth_override()
+
+
 def test_chat_stream_success(monkeypatch):
     from langchain_core.documents import Document
 
@@ -306,6 +391,93 @@ def test_chat_stream_success(monkeypatch):
     _clear_auth_override()
 
 
+def test_chat_stream_has_single_final_and_single_terminal_in_repeated_runs(monkeypatch):
+    from docops.api.contracts import validate_chat_stream_sequence
+
+    auth_client, _ = _make_auth_client()
+    fake_state = {"answer": "ok", "intent": "qa", "retrieved_chunks": []}
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    for idx in range(10):
+        resp = auth_client.post(
+            "/api/chat/stream",
+            json={"message": f"hello {idx}", "session_id": f"s-{idx}"},
+        )
+        assert resp.status_code == 200
+
+        events = [
+            json.loads(line[6:])
+            for line in resp.text.splitlines()
+            if line.startswith("data: ")
+        ]
+        errors = validate_chat_stream_sequence(events)
+        assert not errors, f"invalid stream sequence on run {idx}: {errors}"
+
+        final_count = sum(1 for event in events if event.get("type") == "final")
+        terminal_count = sum(1 for event in events if event.get("type") in {"done", "error"})
+        assert final_count == 1
+        assert terminal_count == 1
+        assert events[-1]["type"] == "done"
+
+    _clear_auth_override()
+
+
+def test_chat_stream_status_progression(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    fake_state = {"answer": "ok", "intent": "qa", "retrieved_chunks": []}
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    resp = auth_client.post("/api/chat/stream", json={"message": "hello", "session_id": "s1"})
+    assert resp.status_code == 200
+
+    events = [
+        json.loads(line[6:])
+        for line in resp.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    status_events = [event for event in events if event.get("type") == "status"]
+    stages = [str(event.get("stage", "")) for event in status_events]
+    assert stages, "expected status events in stream"
+
+    required = ["analyzing", "retrieving", "drafting", "finalizing"]
+    positions = [stages.index(stage) for stage in required]
+    assert positions == sorted(positions)
+    _clear_auth_override()
+
+
+def test_chat_stream_events_include_correlation_id(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    expected_cid = "streamcid-12345678"
+    fake_state = {"answer": "ok", "intent": "qa", "retrieved_chunks": []}
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    resp = auth_client.post(
+        "/api/chat/stream",
+        json={"message": "hello", "session_id": "s1"},
+        headers={"X-Correlation-ID": expected_cid},
+    )
+    assert resp.status_code == 200
+    assert resp.headers.get("x-correlation-id") == expected_cid
+
+    events = [
+        json.loads(line[6:])
+        for line in resp.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert events
+    assert all(event.get("correlation_id") == expected_cid for event in events)
+    _clear_auth_override()
+
+
 def test_chat_stream_emits_error_event_on_environment_error(monkeypatch):
     auth_client, _ = _make_auth_client()
 
@@ -324,6 +496,317 @@ def test_chat_stream_emits_error_event_on_environment_error(monkeypatch):
     error_event = next(event for event in events if event.get("type") == "error")
     assert error_event["status_code"] == 503
     assert "GEMINI_API_KEY" in error_event["detail"]
+    _clear_auth_override()
+
+
+def test_chat_stream_emits_timeout_error_event(monkeypatch):
+    auth_client, _ = _make_auth_client()
+
+    async def _raise_timeout(*_args, **_kwargs):
+        raise TimeoutError("model timed out")
+
+    monkeypatch.setattr("docops.api.routes.chat._build_chat_response", _raise_timeout)
+    resp = auth_client.post("/api/chat/stream", json={"message": "hello"})
+    assert resp.status_code == 200
+
+    events = [
+        json.loads(line[6:])
+        for line in resp.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    error_event = next(event for event in events if event.get("type") == "error")
+    assert error_event["status_code"] == 504
+    assert "timed out" in error_event["detail"].lower()
+    assert events[-1]["type"] == "error"
+    _clear_auth_override()
+
+
+def test_chat_stream_handles_many_small_chunks_without_breaking_sequence(monkeypatch):
+    from docops.api.contracts import validate_chat_stream_sequence
+
+    auth_client, _ = _make_auth_client()
+    answer = "0123456789" * 25
+    fake_state = {"answer": answer, "intent": "qa", "retrieved_chunks": []}
+
+    monkeypatch.setattr("docops.api.routes.chat._STREAM_DELAY_SECONDS", 0.0)
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+    monkeypatch.setattr(
+        "docops.api.routes.chat._apply_low_confidence_guardrail",
+        lambda answer, quality_signal: (answer, False),
+    )
+
+    resp = auth_client.post("/api/chat/stream", json={"message": "hello", "session_id": "s-jitter"})
+    assert resp.status_code == 200
+
+    events = [
+        json.loads(line[6:])
+        for line in resp.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    errors = validate_chat_stream_sequence(events)
+    assert not errors, f"invalid stream sequence under many chunks: {errors}"
+
+    delta_chunks = [event.get("delta", "") for event in events if event.get("type") == "delta"]
+    assert len(delta_chunks) >= 50
+    assert "".join(delta_chunks) == answer
+    _clear_auth_override()
+
+
+def test_capabilities_returns_feature_flags():
+    auth_client, _ = _make_auth_client()
+    resp = auth_client.get("/api/capabilities")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert "map" in payload
+    assert payload["map"]["chat_streaming_enabled"] is True
+    assert payload["map"]["strict_grounding_enabled"] is True
+    assert "flags" in payload and len(payload["flags"]) >= 3
+    _clear_auth_override()
+
+
+def test_preferences_endpoint_requires_feature_flag(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.delenv("FEATURE_PERSONALIZATION_ENABLED", raising=False)
+
+    resp = auth_client.get("/api/preferences")
+    assert resp.status_code == 503
+    assert "disabled" in str(resp.json().get("detail", "")).lower()
+    _clear_auth_override()
+
+
+def test_preferences_endpoints_require_auth_for_read_write_delete(monkeypatch):
+    monkeypatch.setenv("FEATURE_PERSONALIZATION_ENABLED", "true")
+    _clear_auth_override()
+
+    get_resp = client.get("/api/preferences")
+    assert get_resp.status_code == 401
+
+    put_resp = client.put("/api/preferences", json={"tone": "objective"})
+    assert put_resp.status_code == 401
+
+    reset_resp = client.post("/api/preferences/reset")
+    assert reset_resp.status_code == 401
+
+    delete_resp = client.delete("/api/preferences")
+    assert delete_resp.status_code == 401
+
+
+def test_preferences_get_returns_defaults_and_persists(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PERSONALIZATION_ENABLED", "true")
+    Base.metadata.create_all(bind=_test_engine)
+
+    db = _TestSession()
+    try:
+        db.query(UserPreferenceRecord).filter(UserPreferenceRecord.user_id == 1).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    response = auth_client.get("/api/preferences")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == 1
+    assert payload["default_depth"] == "brief"
+    assert payload["tone"] == "neutral"
+    assert payload["strictness_preference"] == "balanced"
+    assert payload["schedule_preference"] == "flexible"
+
+    db = _TestSession()
+    try:
+        record = db.query(UserPreferenceRecord).filter(UserPreferenceRecord.user_id == 1).first()
+        assert record is not None
+        assert record.default_depth == "brief"
+        assert record.tone == "neutral"
+        assert record.strictness_preference == "balanced"
+        assert record.schedule_preference == "flexible"
+    finally:
+        db.close()
+    _clear_auth_override()
+
+
+def test_preferences_retention_policy_purges_stale_record(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PERSONALIZATION_ENABLED", "true")
+    monkeypatch.setenv("PREFERENCES_RETENTION_DAYS", "30")
+    Base.metadata.create_all(bind=_test_engine)
+
+    captured_events: list[str] = []
+
+    def _capture_emit(_logger, event, *args, **kwargs):
+        captured_events.append(str(event))
+        return {"event": event}
+
+    monkeypatch.setattr("docops.api.routes.preferences.emit_event", _capture_emit)
+
+    stale_ts = datetime.now(timezone.utc) - timedelta(days=45)
+    db = _TestSession()
+    try:
+        db.query(UserPreferenceRecord).filter(UserPreferenceRecord.user_id == 1).delete()
+        db.add(
+            UserPreferenceRecord(
+                user_id=1,
+                schema_version=1,
+                default_depth="deep",
+                tone="didactic",
+                strictness_preference="strict",
+                schedule_preference="intensive",
+                created_at=stale_ts,
+                updated_at=stale_ts,
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = auth_client.get("/api/preferences")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["default_depth"] == "brief"
+    assert payload["tone"] == "neutral"
+    assert payload["strictness_preference"] == "balanced"
+    assert payload["schedule_preference"] == "flexible"
+    assert "preferences.retention.purged" in captured_events
+
+    _clear_auth_override()
+
+
+def test_preferences_update_and_reset_flow(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PERSONALIZATION_ENABLED", "true")
+    Base.metadata.create_all(bind=_test_engine)
+
+    update_response = auth_client.put(
+        "/api/preferences",
+        json={
+            "default_depth": "deep",
+            "tone": "didactic",
+            "strictness_preference": "strict",
+            "schedule_preference": "intensive",
+        },
+    )
+    assert update_response.status_code == 200
+    update_payload = update_response.json()
+    assert update_payload["default_depth"] == "deep"
+    assert update_payload["tone"] == "didactic"
+    assert update_payload["strictness_preference"] == "strict"
+    assert update_payload["schedule_preference"] == "intensive"
+
+    get_response = auth_client.get("/api/preferences")
+    assert get_response.status_code == 200
+    get_payload = get_response.json()
+    assert get_payload["default_depth"] == "deep"
+    assert get_payload["tone"] == "didactic"
+    assert get_payload["strictness_preference"] == "strict"
+    assert get_payload["schedule_preference"] == "intensive"
+
+    reset_response = auth_client.post("/api/preferences/reset")
+    assert reset_response.status_code == 200
+    reset_payload = reset_response.json()
+    assert reset_payload["schema_version"] == 1
+    assert reset_payload["default_depth"] == "brief"
+    assert reset_payload["tone"] == "neutral"
+    assert reset_payload["strictness_preference"] == "balanced"
+    assert reset_payload["schedule_preference"] == "flexible"
+    _clear_auth_override()
+
+
+def test_preferences_delete_endpoint_clears_only_current_user(monkeypatch):
+    monkeypatch.setenv("FEATURE_PERSONALIZATION_ENABLED", "true")
+    Base.metadata.create_all(bind=_test_engine)
+
+    db = _TestSession()
+    try:
+        db.query(UserPreferenceRecord).filter(UserPreferenceRecord.user_id.in_([101, 202])).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    client_user_101, _ = _make_auth_client_for_user(101)
+    response_101 = client_user_101.put(
+        "/api/preferences",
+        json={
+            "default_depth": "deep",
+            "tone": "didactic",
+            "strictness_preference": "strict",
+            "schedule_preference": "intensive",
+        },
+    )
+    assert response_101.status_code == 200
+    _clear_auth_override()
+
+    client_user_202, _ = _make_auth_client_for_user(202)
+    user_202_get = client_user_202.get("/api/preferences")
+    assert user_202_get.status_code == 200
+    assert user_202_get.json()["default_depth"] == "brief"
+
+    user_202_delete = client_user_202.delete("/api/preferences")
+    assert user_202_delete.status_code == 204
+    _clear_auth_override()
+
+    client_user_101_again, _ = _make_auth_client_for_user(101)
+    user_101_get = client_user_101_again.get("/api/preferences")
+    assert user_101_get.status_code == 200
+    assert user_101_get.json()["default_depth"] == "deep"
+    assert user_101_get.json()["tone"] == "didactic"
+    _clear_auth_override()
+
+
+def test_preferences_get_migrates_legacy_schema_values(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PERSONALIZATION_ENABLED", "true")
+    Base.metadata.create_all(bind=_test_engine)
+
+    db = _TestSession()
+    try:
+        db.query(UserPreferenceRecord).filter(UserPreferenceRecord.user_id == 1).delete()
+        db.commit()
+        db.add(
+            UserPreferenceRecord(
+                user_id=1,
+                schema_version=0,
+                default_depth="invalid",
+                tone="unknown",
+                strictness_preference="x",
+                schedule_preference="y",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    response = auth_client.get("/api/preferences")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["schema_version"] == 1
+    assert payload["default_depth"] == "brief"
+    assert payload["tone"] == "neutral"
+    assert payload["strictness_preference"] == "balanced"
+    assert payload["schedule_preference"] == "flexible"
+
+    db = _TestSession()
+    try:
+        migrated = db.query(UserPreferenceRecord).filter(UserPreferenceRecord.user_id == 1).first()
+        assert migrated is not None
+        assert migrated.schema_version == 1
+        assert migrated.default_depth == "brief"
+        assert migrated.tone == "neutral"
+        assert migrated.strictness_preference == "balanced"
+        assert migrated.schedule_preference == "flexible"
+    finally:
+        db.close()
+    _clear_auth_override()
+
+
+def test_chat_stream_disabled_by_feature_flag(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_CHAT_STREAMING_ENABLED", "false")
+    resp = auth_client.post("/api/chat/stream", json={"message": "hello"})
+    assert resp.status_code == 503
+    assert "feature flag" in resp.json()["detail"].lower()
     _clear_auth_override()
 
 
@@ -403,6 +886,214 @@ def test_chat_quality_signal_uses_support_rate_when_available(monkeypatch):
     assert signal["level"] == "high"
     assert signal["score"] >= 0.8
     assert "support_rate=0.91" in signal["reasons"]
+    assert "reason_codes" in signal
+    assert "score_components" in signal
+    _clear_auth_override()
+
+
+def test_chat_quality_signal_v2_reason_codes_and_components(monkeypatch):
+    from langchain_core.documents import Document
+
+    auth_client, _ = _make_auth_client()
+    fake_state = {
+        "answer": "Resposta com suporte [Fonte 1]",
+        "intent": "qa",
+        "retrieved_chunks": [
+            Document(
+                page_content="evidencia forte",
+                metadata={"file_name": "manual.pdf", "page": "1", "chunk_id": "abc"},
+            )
+        ],
+        "grounding_info": {"support_rate": 0.91, "unsupported_claims": []},
+    }
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    resp = auth_client.post("/api/chat", json={"message": "hello"})
+    assert resp.status_code == 200
+    signal = resp.json()["quality_signal"]
+
+    assert set(signal["reason_codes"]) == {
+        "support_rate_strong",
+        "source_breadth_single",
+        "unsupported_claims_none",
+        "retrieval_depth_shallow",
+    }
+    components = signal["score_components"]
+    assert set(components.keys()) == {
+        "support_rate",
+        "source_breadth",
+        "unsupported_claims",
+        "retrieval_depth",
+    }
+    assert all(0.0 <= float(value) <= 1.0 for value in components.values())
+    assert signal["support_rate"] == 0.91
+    assert signal["unsupported_claim_count"] == 0
+    _clear_auth_override()
+
+
+def test_chat_low_confidence_guardrail_applies_constrained_answer(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    fake_state = {
+        "answer": (
+            "Resposta longa potencialmente especulativa sem evidencias claras. "
+            * 30
+        ),
+        "intent": "qa",
+        "retrieved_chunks": [],
+        "grounding_info": {"support_rate": 0.21, "unsupported_claims": ["c1", "c2"]},
+    }
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    resp = auth_client.post("/api/chat", json={"message": "hello"})
+    assert resp.status_code == 200
+    payload = resp.json()
+    signal = payload["quality_signal"]
+
+    assert signal["level"] == "low"
+    assert "low_confidence_guardrail_applied" in signal["reason_codes"]
+    assert "Confiabilidade baixa: resposta em modo conservador." in payload["answer"]
+    assert "Proximos passos recomendados:" in payload["answer"]
+    assert "Ative o modo strict grounding" in payload["answer"]
+    assert len(payload["answer"]) < len(fake_state["answer"])
+    assert "Especifique melhor a pergunta" in signal["suggested_action"]
+    assert "Adicione ou selecione documentos" in signal["suggested_action"]
+    assert "Ative o modo strict grounding" in signal["suggested_action"]
+    _clear_auth_override()
+
+
+def test_chat_low_confidence_guardrail_not_applied_for_high_confidence(monkeypatch):
+    from langchain_core.documents import Document
+
+    auth_client, _ = _make_auth_client()
+    fake_answer = "Resposta com suporte forte [Fonte 1]"
+    fake_state = {
+        "answer": fake_answer,
+        "intent": "qa",
+        "retrieved_chunks": [
+            Document(
+                page_content="evidencia forte",
+                metadata={"file_name": "manual.pdf", "page": "1", "chunk_id": "abc"},
+            )
+        ],
+        "grounding_info": {"support_rate": 0.91, "unsupported_claims": []},
+    }
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    resp = auth_client.post("/api/chat", json={"message": "hello"})
+    assert resp.status_code == 200
+    payload = resp.json()
+    signal = payload["quality_signal"]
+    assert signal["level"] == "high"
+    assert payload["answer"] == fake_answer
+    assert "low_confidence_guardrail_applied" not in signal["reason_codes"]
+    _clear_auth_override()
+
+
+def test_chat_quality_signal_v2_is_deterministic_for_fixed_input(monkeypatch):
+    from langchain_core.documents import Document
+
+    auth_client, _ = _make_auth_client()
+    fake_state = {
+        "answer": "Resposta deterministica [Fonte 1]",
+        "intent": "qa",
+        "retrieved_chunks": [
+            Document(
+                page_content="evidencia deterministica",
+                metadata={"file_name": "manual.pdf", "page": "1", "chunk_id": "abc"},
+            )
+        ],
+        "grounding_info": {"support_rate": 0.73, "unsupported_claims": ["claim-1"]},
+    }
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: fake_state,
+    )
+
+    resp_a = auth_client.post("/api/chat", json={"message": "hello"})
+    resp_b = auth_client.post("/api/chat", json={"message": "hello"})
+    assert resp_a.status_code == 200
+    assert resp_b.status_code == 200
+
+    signal_a = resp_a.json()["quality_signal"]
+    signal_b = resp_b.json()["quality_signal"]
+    assert signal_a["score"] == signal_b["score"]
+    assert signal_a["level"] == signal_b["level"]
+    assert signal_a["reason_codes"] == signal_b["reason_codes"]
+    assert signal_a["score_components"] == signal_b["score_components"]
+    assert signal_a["suggested_action"] == signal_b["suggested_action"]
+    _clear_auth_override()
+
+
+def test_chat_completed_event_includes_quality_component_metrics(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    captured_events: list[dict] = []
+
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: {
+            "answer": "ok",
+            "intent": "qa",
+            "retrieved_chunks": [],
+            "grounding_info": {"support_rate": 0.4, "unsupported_claims": ["c1", "c2"]},
+        },
+    )
+
+    def _capture_emit_event(_logger, event, level="info", **fields):
+        captured_events.append({"event": event, "level": level, **fields})
+        return {"event": event, "level": level, **fields}
+
+    monkeypatch.setattr("docops.api.routes.chat.emit_event", _capture_emit_event)
+
+    resp = auth_client.post("/api/chat", json={"message": "hello"})
+    assert resp.status_code == 200
+
+    completed = next(evt for evt in captured_events if evt.get("event") == "chat.request.completed")
+    assert "quality_reason_codes" in completed
+    assert "quality_component_support_rate" in completed
+    assert "quality_component_source_breadth" in completed
+    assert "quality_component_unsupported_claims" in completed
+    assert "quality_component_retrieval_depth" in completed
+    assert "quality_unsupported_claim_count" in completed
+    _clear_auth_override()
+
+
+def test_chat_emits_guardrail_event_when_low_confidence(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    captured_events: list[dict] = []
+
+    monkeypatch.setattr(
+        "docops.api.routes.chat._run_chat",
+        lambda msg, top_k, user_id=0, doc_names=None, strict_grounding=False: {
+            "answer": "resposta fraca",
+            "intent": "qa",
+            "retrieved_chunks": [],
+            "grounding_info": {"support_rate": 0.1, "unsupported_claims": ["c1"]},
+        },
+    )
+
+    def _capture_emit_event(_logger, event, level="info", **fields):
+        captured_events.append({"event": event, "level": level, **fields})
+        return {"event": event, "level": level, **fields}
+
+    monkeypatch.setattr("docops.api.routes.chat.emit_event", _capture_emit_event)
+
+    resp = auth_client.post("/api/chat", json={"message": "hello", "session_id": "guardrail-s1"})
+    assert resp.status_code == 200
+
+    guardrail_event = next(evt for evt in captured_events if evt.get("event") == "chat.low_confidence_guardrail.applied")
+    assert guardrail_event["category"] == "chat_quality"
+    assert guardrail_event["session_id"] == "guardrail-s1"
+    assert guardrail_event["quality_score"] < 0.55
+    assert "low_confidence_guardrail_applied" in guardrail_event["quality_reason_codes"]
     _clear_auth_override()
 
 
@@ -473,6 +1164,53 @@ def test_artifact_not_found():
     _clear_auth_override()
 
 
+def test_artifact_template_catalog_returns_expected_blueprints():
+    auth_client, _ = _make_auth_client()
+    resp = auth_client.get("/api/artifact/templates")
+    assert resp.status_code == 200
+    data = resp.json()
+    template_ids = {item["template_id"] for item in data}
+    assert {"brief", "exam_pack", "deep_dossier"}.issubset(template_ids)
+
+    filtered = auth_client.get("/api/artifact/templates", params={"summary_mode": "deep"})
+    assert filtered.status_code == 200
+    for item in filtered.json():
+        assert "deep" in item["summary_modes"]
+    _clear_auth_override()
+
+
+def test_create_artifact_forwards_template_id_and_returns_template_metadata(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    captured: dict = {}
+
+    def _fake_run(*args, **kwargs):
+        if len(args) >= 5:
+            captured["template_id"] = args[4]
+        else:
+            captured["template_id"] = kwargs.get("template_id")
+        return {
+            "answer": "# Conteudo\n\nChecklist pronto.",
+            "filename": "checklist_template.md",
+            "path": "artifacts/checklist_template.md",
+            "template_id": "exam_pack",
+            "template_label": "Exam Prep Pack",
+            "template_description": "Pacote para prova",
+        }
+
+    monkeypatch.setattr("docops.api.routes.artifact._run_artifact", _fake_run)
+
+    resp = auth_client.post(
+        "/api/artifact",
+        json={"type": "checklist", "topic": "Revisao final", "template_id": "exam_pack"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["template_id"] == "exam_pack"
+    assert data["template_label"] == "Exam Prep Pack"
+    assert captured["template_id"] == "exam_pack"
+    _clear_auth_override()
+
+
 def test_artifact_duplicate_filename_requires_id_for_legacy_routes():
     from docops.db import crud
 
@@ -536,6 +1274,256 @@ def test_artifact_duplicate_filename_requires_id_for_legacy_routes():
     app.dependency_overrides[get_db] = _override_get_db
 
 
+def test_artifacts_list_supports_metadata_filters_and_sort():
+    from docops.db import crud
+
+    app.dependency_overrides[get_db] = _override_get_db
+    Base.metadata.create_all(bind=_test_engine)
+    auth_client, _ = _make_auth_client()
+
+    scope = uuid.uuid4().hex[:10]
+    source_doc_a = f"{scope}-doc-a"
+    source_doc_b = f"{scope}-doc-b"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        path_a = Path(tmpdir) / f"{scope}_a.md"
+        path_b = Path(tmpdir) / f"{scope}_b.md"
+        path_c = Path(tmpdir) / f"{scope}_c.md"
+        path_a.write_text("artifact a", encoding="utf-8")
+        path_b.write_text("artifact b", encoding="utf-8")
+        path_c.write_text("artifact c", encoding="utf-8")
+
+        db = _TestSession()
+        try:
+            rec_a = crud.create_artifact_record(
+                db,
+                user_id=1,
+                artifact_type="summary",
+                title=f"[{scope}] Alpha",
+                filename=f"{scope}_alpha.md",
+                path=str(path_a),
+                template_id="brief",
+                generation_profile="summary:brief:brief",
+                confidence_level="high",
+                confidence_score=0.91,
+                source_doc_ids=[source_doc_a],
+            )
+            rec_b = crud.create_artifact_record(
+                db,
+                user_id=1,
+                artifact_type="checklist",
+                title=f"[{scope}] Beta",
+                filename=f"{scope}_beta.md",
+                path=str(path_b),
+                template_id="exam_pack",
+                generation_profile="artifact:checklist:exam_pack",
+                confidence_level="low",
+                confidence_score=0.31,
+                source_doc_id=source_doc_b,
+                source_doc_ids=[source_doc_b],
+            )
+            rec_c = crud.create_artifact_record(
+                db,
+                user_id=1,
+                artifact_type="summary",
+                title=f"[{scope}] Gamma",
+                filename=f"{scope}_gamma.md",
+                path=str(path_c),
+                template_id="deep_dossier",
+                generation_profile="summary:deep:deep_dossier",
+                confidence_level="medium",
+                confidence_score=0.67,
+                source_doc_id=source_doc_a,
+                source_doc_ids=[source_doc_a, source_doc_b],
+            )
+            rec_a_id = rec_a.id
+            rec_b_id = rec_b.id
+            rec_c_id = rec_c.id
+        finally:
+            db.close()
+
+        filtered_template = auth_client.get(
+            "/api/artifacts",
+            params={"template_id": "exam_pack", "search": scope},
+        )
+        assert filtered_template.status_code == 200
+        filtered_template_ids = {item["id"] for item in filtered_template.json()}
+        assert rec_b_id in filtered_template_ids
+        assert rec_a_id not in filtered_template_ids
+        assert rec_c_id not in filtered_template_ids
+
+        filtered_source = auth_client.get(
+            "/api/artifacts",
+            params={
+                "source_doc_id": source_doc_a,
+                "sort_by": "confidence_score",
+                "sort_order": "desc",
+            },
+        )
+        assert filtered_source.status_code == 200
+        filtered_source_ids = [item["id"] for item in filtered_source.json()]
+        assert filtered_source_ids[:2] == [rec_a_id, rec_c_id]
+
+        first_item = filtered_source.json()[0]
+        assert first_item["generation_profile"] == "summary:brief:brief"
+        assert first_item["confidence_level"] == "high"
+        assert first_item["confidence_score"] == pytest.approx(0.91, rel=1e-6)
+        assert source_doc_a in first_item["source_doc_ids"]
+        assert first_item["source_doc_count"] >= 1
+
+        filtered_profile = auth_client.get(
+            "/api/artifacts",
+            params={"generation_profile": "summary:deep:deep_dossier", "search": scope},
+        )
+        assert filtered_profile.status_code == 200
+        filtered_profile_ids = {item["id"] for item in filtered_profile.json()}
+        assert rec_c_id in filtered_profile_ids
+        assert rec_a_id not in filtered_profile_ids
+        assert rec_b_id not in filtered_profile_ids
+
+    _clear_auth_override()
+    app.dependency_overrides[get_db] = _override_get_db
+
+
+def test_artifact_filter_options_endpoint_returns_metadata_dimensions():
+    from docops.db import crud
+
+    app.dependency_overrides[get_db] = _override_get_db
+    Base.metadata.create_all(bind=_test_engine)
+    auth_client, _ = _make_auth_client()
+
+    scope = uuid.uuid4().hex[:10]
+    source_doc_a = f"{scope}-opt-a"
+    source_doc_b = f"{scope}-opt-b"
+    profile = f"summary:deep:{scope}"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        file_path = Path(tmpdir) / f"{scope}_options.md"
+        file_path.write_text("artifact options", encoding="utf-8")
+
+        db = _TestSession()
+        try:
+            crud.create_artifact_record(
+                db,
+                user_id=1,
+                artifact_type=f"summary_{scope}",
+                title=f"[{scope}] Filter Options",
+                filename=f"{scope}_options.md",
+                path=str(file_path),
+                template_id=f"template_{scope}",
+                generation_profile=profile,
+                confidence_level="high",
+                confidence_score=0.88,
+                source_doc_id=source_doc_a,
+                source_doc_ids=[source_doc_a, source_doc_b],
+            )
+        finally:
+            db.close()
+
+        response = auth_client.get("/api/artifacts/filters")
+        assert response.status_code == 200
+        payload = response.json()
+        assert f"summary_{scope}" in payload["artifact_types"]
+        assert f"template_{scope}" in payload["template_ids"]
+        assert profile in payload["generation_profiles"]
+        assert source_doc_a in payload["source_doc_ids"]
+        assert source_doc_b in payload["source_doc_ids"]
+        assert "high" in payload["confidence_levels"]
+
+    _clear_auth_override()
+    app.dependency_overrides[get_db] = _override_get_db
+
+
+def test_chat_to_artifact_endpoint_requires_feature_flag(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.delenv("FEATURE_PREMIUM_CHAT_TO_ARTIFACT_ENABLED", raising=False)
+
+    resp = auth_client.post(
+        "/api/artifact/from-chat",
+        json={"answer": "Resumo de teste", "session_id": "session-flag-off", "turn_ref": "turn-1"},
+    )
+    assert resp.status_code == 503
+    assert "disabled" in str(resp.json().get("detail", "")).lower()
+    _clear_auth_override()
+
+
+def test_chat_to_artifact_one_click_creates_linked_artifact(monkeypatch):
+    from docops.db import crud
+
+    app.dependency_overrides[get_db] = _override_get_db
+    Base.metadata.create_all(bind=_test_engine)
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PREMIUM_CHAT_TO_ARTIFACT_ENABLED", "true")
+
+    scope = uuid.uuid4().hex[:10]
+    session_ref = f"session-{scope}"
+    turn_ref = f"{session_ref}:7"
+    doc_id = f"{scope}-doc-id"
+    doc_name = f"{scope}-manual.md"
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        base_dir = Path(tmpdir)
+
+        def _fake_writer(filename: str, content: str, user_id: int) -> Path:
+            out = base_dir / filename
+            out.write_text(content, encoding="utf-8")
+            return out
+
+        monkeypatch.setattr("docops.tools.doc_tools.tool_write_artifact", _fake_writer)
+
+        db = _TestSession()
+        try:
+            crud.create_document_record(
+                db,
+                user_id=1,
+                doc_id=doc_id,
+                file_name=doc_name,
+                source_path=str(base_dir / "source.txt"),
+                storage_path=str(base_dir / "stored.txt"),
+                file_type="md",
+                chunk_count=10,
+            )
+        finally:
+            db.close()
+
+        response = auth_client.post(
+            "/api/artifact/from-chat",
+            json={
+                "answer": "## Resumo Aprofundado\n\nConteudo detalhado do chat.",
+                "title": f"{scope} resumo aprofundado",
+                "user_prompt": "faca um resumo aprofundado deste documento",
+                "session_id": session_ref,
+                "turn_ref": turn_ref,
+                "doc_ids": [doc_id],
+                "doc_names": [doc_name],
+                "confidence_level": "high",
+                "confidence_score": 0.93,
+            },
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["artifact_id"] is not None
+        assert payload["filename"].endswith(".md")
+        assert payload["conversation_session_id"] == session_ref
+        assert payload["conversation_turn_ref"] == turn_ref
+
+        listed = auth_client.get(
+            "/api/artifacts",
+            params={"conversation_session_id": session_ref},
+        )
+        assert listed.status_code == 200
+        items = listed.json()
+        assert any(item["id"] == payload["artifact_id"] for item in items)
+
+        created = next(item for item in items if item["id"] == payload["artifact_id"])
+        assert created["conversation_session_id"] == session_ref
+        assert created["conversation_turn_ref"] == turn_ref
+        assert doc_id in created["source_doc_ids"]
+
+    _clear_auth_override()
+    app.dependency_overrides[get_db] = _override_get_db
+
+
 def test_alembic_upgrade_creates_supported_schema(tmp_path):
     from docops.db.database import run_db_migrations
 
@@ -581,6 +1569,46 @@ def test_summarize_debug_true_includes_diagnostics(monkeypatch):
     assert data["answer"] == "Resumo profundo."
     assert data["summary_diagnostics"] is not None
     assert data["summary_diagnostics"]["coverage"]["overall_coverage_score"] == 0.92
+    _clear_auth_override()
+
+
+def test_summarize_forwards_template_id_and_returns_template_metadata(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    fake_doc = MagicMock(file_name="manual.pdf", doc_id="doc-uuid-1")
+    monkeypatch.setattr("docops.api.routes.summarize.require_user_document", lambda *_a, **_k: fake_doc)
+    captured: dict = {}
+
+    def _fake_run(*args, **kwargs):
+        if len(args) >= 6:
+            captured["template_id"] = args[5]
+        else:
+            captured["template_id"] = kwargs.get("template_id")
+        return {
+            "answer": "Resumo com template.",
+            "artifact_path": None,
+            "artifact_filename": None,
+            "template_id": "deep_dossier",
+            "template_label": "Dossie Analitico",
+            "template_description": "Analise profunda",
+            "diagnostics": None,
+        }
+
+    monkeypatch.setattr("docops.api.routes.summarize._run_summarize", _fake_run)
+
+    resp = auth_client.post(
+        "/api/summarize",
+        json={
+            "doc": "manual.pdf",
+            "summary_mode": "deep",
+            "template_id": "deep_dossier",
+            "debug_summary": False,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert captured["template_id"] == "deep_dossier"
+    assert data["template_id"] == "deep_dossier"
+    assert data["template_label"] == "Dossie Analitico"
     _clear_auth_override()
 
 

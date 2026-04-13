@@ -58,6 +58,10 @@ class Config:
         return _require_env("GEMINI_API_KEY")
 
     @property
+    def google_client_id(self) -> str | None:
+        return os.getenv("GOOGLE_CLIENT_ID") or None
+
+    @property
     def chroma_dir(self) -> Path:
         return _path_env("CHROMA_DIR", "./data/chroma")
 
@@ -107,7 +111,10 @@ class Config:
 
     @property
     def cors_allow_headers(self) -> list[str]:
-        return _csv_env("CORS_ALLOW_HEADERS", "Authorization,Content-Type,Accept,Origin")
+        return _csv_env(
+            "CORS_ALLOW_HEADERS",
+            "Authorization,Content-Type,Accept,Origin,X-Correlation-ID,X-DocOps-Stream-Fallback",
+        )
 
     @property
     def cors_allow_credentials(self) -> bool:
@@ -705,6 +712,11 @@ class Config:
     @property
     def jwt_expires_minutes(self) -> int:
         return int(os.getenv("JWT_ACCESS_TOKEN_EXPIRES_MINUTES", "60"))
+
+    @property
+    def preferences_retention_days(self) -> int:
+        """Retention window in days for persisted user preferences (default: 365)."""
+        return max(0, int(os.getenv("PREFERENCES_RETENTION_DAYS", "365")))
 
     @property
     def ingest_allowed_dirs(self) -> list[Path]:
