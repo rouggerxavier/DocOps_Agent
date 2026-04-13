@@ -55,6 +55,20 @@ app.dependency_overrides[get_db] = _override_get_db
 client = TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _ensure_db_override():
+    """Re-aplica o override do get_db antes de cada teste.
+
+    Outros módulos de teste (e.g. test_calendar_routing) também sobrescrevem
+    app.dependency_overrides[get_db] em nível de módulo com seu próprio engine.
+    Quando o pytest importa todos os arquivos antes de rodar os testes, o último
+    a importar vence e a rota passa a usar um banco diferente do setup do teste.
+    Este fixture garante que o engine correto seja restaurado para cada teste.
+    """
+    app.dependency_overrides[get_db] = _override_get_db
+    yield
+
+
 def _make_auth_client():
     """Retorna um TestClient com usuário fake autenticado via dependency override."""
     fake_user = User(id=1, name="Tester", email="tester@example.com",
