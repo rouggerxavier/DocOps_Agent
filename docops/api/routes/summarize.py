@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import re
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.encoders import jsonable_encoder
@@ -22,6 +23,88 @@ from docops.services.jobs import create_job, run_thread_with_progress, schedule_
 
 logger = get_logger("docops.api.summarize")
 router = APIRouter()
+
+_TRAILING_SOURCES_RE = re.compile(r"(?ims)(?:\n|^)\s*(?:\*\*)?fontes:\s*(?:\*\*)?.*$")
+_INLINE_SOURCE_RE = re.compile(r"\s*\[Fonte\s*\d+\]", re.IGNORECASE)
+_SOURCE_LINE_RE = re.compile(r"^\s*-?\s*\[Fonte\s*(\d+)\]\s*(.+?)\s*$", re.IGNORECASE)
+_SOURCE_INLINE_RE = re.compile(
+    r"\[Fonte\s*(\d+)\]\s*([^\[]+?)(?=\s*\[Fonte\s*\d+\]|\s*$)",
+    re.IGNORECASE,
+)
+
+
+def _split_body_and_sources(text: str) -> tuple[str, str]:
+    normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    match = _TRAILING_SOURCES_RE.search(normalized)
+    if not match:
+        return normalized, ""
+    body = normalized[: match.start()].rstrip()
+    sources = normalized[match.start():].strip()
+    return body, sources
+
+
+def _strip_inline_sources(text: str) -> str:
+    cleaned = _INLINE_SOURCE_RE.sub("", str(text or ""))
+    cleaned = re.sub(r"\(\s*\)", "", cleaned)
+    cleaned = re.sub(r",\s*,+", ", ", cleaned)
+    cleaned = re.sub(r",\s*\.", ".", cleaned)
+    cleaned = re.sub(r";\s*\.", ".", cleaned)
+    cleaned = re.sub(r":\s*\.", ".", cleaned)
+    cleaned = re.sub(r"[ \t]+([,.;:])", r"\1", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned)
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+def _simplify_sources_section(text: str) -> str:
+    normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not normalized:
+        return ""
+
+    lines: list[tuple[int, str]] = []
+    seen: set[int] = set()
+    for raw in normalized.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if re.match(r"^(?:\*\*)?fontes:\s*(?:\*\*)?$", line, re.IGNORECASE):
+            continue
+        match = _SOURCE_LINE_RE.match(line)
+        if not match:
+            continue
+        idx = int(match.group(1))
+        if idx in seen:
+            continue
+        seen.add(idx)
+        location = match.group(2)
+        location = re.sub(r"\*\*", "", location)
+        location = re.sub(r"_", "", location)
+        location = re.sub(r"\s+—\s+.*$", "", location).strip()
+        lines.append((idx, f"- [Fonte {idx}] {location}"))
+
+    # Fallback para formatos compactos: "Fontes: [Fonte 1] ... [Fonte 2] ..."
+    if not lines:
+        for match in _SOURCE_INLINE_RE.finditer(normalized):
+            idx = int(match.group(1))
+            if idx in seen:
+                continue
+            seen.add(idx)
+            location = match.group(2)
+            location = re.sub(r"\*\*", "", location)
+            location = re.sub(r"_", "", location)
+            location = re.sub(r"^\s*[-:]+\s*", "", location).strip()
+            location = re.sub(r"\s+—\s+.*$", "", location).strip()
+            if not location:
+                continue
+            lines.append((idx, f"- [Fonte {idx}] {location}"))
+
+    if not lines:
+        return ""
+
+    lines.sort(key=lambda item: item[0])
+    rendered = "\n".join(item[1] for item in lines)
+    return f"Fontes:\n{rendered}"
 
 
 def _confidence_level_from_score(score: float | None) -> str | None:
@@ -66,6 +149,7 @@ def _run_summarize(
         artifact_type="summary",
     )
     diagnostics = None
+    sources_section = ""
     if summary_mode == "deep":
         # Multi-step pipeline: treats the document as a closed, ordered corpus
         from docops.summarize.pipeline import run_deep_summary
@@ -79,6 +163,7 @@ def _run_summarize(
         )
         answer = result_dict.get("answer", "")
         diagnostics = result_dict.get("diagnostics")
+        sources_section = str(result_dict.get("sources_section") or "")
     else:
         # Brief mode: existing single-shot graph flow (no regression)
         from docops.graph.graph import run
@@ -99,13 +184,19 @@ def _run_summarize(
             )
         )
         answer = state.get("answer", "")
+        sources_section = str(state.get("sources_section") or "")
 
     mode_label = "Resumo breve" if summary_mode == "brief" else "Resumo aprofundado"
+    answer_body, extracted_sources = _split_body_and_sources(answer)
+    answer_body = _strip_inline_sources(answer_body)
+    rendered_sources = _simplify_sources_section(sources_section or extracted_sources)
+    answer = answer_body if not rendered_sources else f"{answer_body}\n\n{rendered_sources}"
     answer = apply_template_layout(
         answer,
         template=template,
         heading=f"{mode_label} - {Path(file_name).stem}",
         context_line=f"Documento-base: {file_name}",
+        include_scaffold=False,
     )
     confidence_level, confidence_score = _extract_summary_confidence(diagnostics)
     generation_profile = f"summary:{summary_mode}:{template.template_id}"

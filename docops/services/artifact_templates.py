@@ -181,12 +181,16 @@ def apply_template_layout(
     template: ArtifactTemplate,
     heading: str,
     context_line: str,
+    include_scaffold: bool = True,
 ) -> str:
     normalized = _normalize_whitespace(body)
     if "<!-- docops_template_id:" in normalized:
         return normalized
     if not normalized:
         normalized = "Sem conteudo suficiente para gerar este artefato."
+
+    if not include_scaffold:
+        return f"{normalized}\n"
 
     sections = "\n".join(f"- {item}" for item in template.preview_sections)
     return (
