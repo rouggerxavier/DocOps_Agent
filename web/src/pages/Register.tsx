@@ -127,7 +127,7 @@ export function Register() {
               className="text-xl sm:text-2xl font-extrabold tracking-tighter text-[#d0e4ff]"
               style={{ fontFamily: "'Manrope', sans-serif" }}
             >
-              Editorial Intelligence
+              DocOps Agent
             </span>
           </div>
           <h1
@@ -344,7 +344,7 @@ export function Register() {
             className="font-bold text-[#e5e2e1]"
             style={{ fontFamily: "'Manrope', sans-serif" }}
           >
-            Editorial Intelligence
+            DocOps Agent
           </div>
           <div className="flex flex-wrap justify-center gap-6 sm:gap-8">
             {['Privacidade', 'Termos', 'Documentação', 'Suporte'].map(item => (
@@ -364,7 +364,7 @@ export function Register() {
             className="text-xs text-[#c2c7cf]/40"
             style={{ fontFamily: "'Inter', sans-serif" }}
           >
-            © 2025 Editorial Intelligence. The Cognitive Luminary.
+            © 2025 DocOps Agent. The Cognitive Luminary.
           </p>
         </div>
       </footer>

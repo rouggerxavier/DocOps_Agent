@@ -1,6 +1,44 @@
-@import url('https://fonts.googleapis.com/css2?family=EB+Garamond:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
 @import "tailwindcss";
 
+@theme {
+  --color-secondary-container: #93C5FD; /* Pastel Blue */
+  --color-surface-container-low: #111111;
+  --color-surface-dim: #0a0a0a;
+  --color-on-primary-fixed: #EFF6FF;
+  --color-surface-container-high: #1e1e1e;
+  --color-primary: #93C5FD; /* Pastel Blue */
+  --color-surface-container: #151515;
+  --color-error-container: #93000a;
+  --color-surface-bright: #222222;
+  --color-surface-tint: #93C5FD; /* Pastel Blue */
+  --color-outline: #8e9099;
+  --color-primary-fixed: #DBEAFE;
+  --color-error: #ffb4ab;
+  --color-surface-container-highest: #282828;
+  --color-surface-container-lowest: #050505;
+  --color-surface: #0a0a0a;
+  --color-secondary: #93C5FD; /* Pastel Blue */
+  --color-surface-variant: #454652;
+  --color-on-error-container: #ffdad6;
+  --color-secondary-fixed: #BFDBFE; /* Lighter Pastel Blue */
+  --color-background: #0a0a0a;
+  --color-on-error: #690005;
+  --color-primary-fixed-dim: #93C5FD;
+  --color-on-surface-variant: #c6c5d4;
+  --color-outline-variant: #454652;
+  --color-inverse-primary: #1E3A8A;
+  --color-on-primary-container: #EFF6FF;
+  --color-on-surface: #e1e3e4;
+  --color-on-background: #e1e3e4;
+  --color-on-secondary-container: #000000;
+  --color-on-primary: #000000;
+  --color-secondary-fixed-dim: #93C5FD;
+  --color-primary-container: #1D4ED8;
+
+  --font-headline: 'Manrope', sans-serif;
+  --font-body: 'Inter', sans-serif;
+  --font-label: 'Inter', sans-serif;
+}
 @layer base {
   :root {
     color-scheme: dark;

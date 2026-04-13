@@ -2,366 +2,196 @@ import { Link } from 'react-router-dom'
 import { motion, MotionConfig } from 'framer-motion'
 import { ArrowRight, BookOpen, CalendarDays, CheckCircle2, FileText, Layers, Shield } from 'lucide-react'
 import { HeroFuturistic } from '@/components/HeroFuturistic'
-import { BackgroundWrapper } from '@/components/BackgroundWrapper'
-import { Button } from '@/components/ui/button'
 
 const EASE = [0.2, 0.8, 0.2, 1] as const
 const VIEWPORT = { once: true, margin: '-48px' } as const
-const FOCUS_VISIBLE =
-  'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ui-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--ui-bg)]'
-
-type LandingIcon = typeof BookOpen
-
-type ProofChip = {
-  icon: LandingIcon
-  label: string
-}
-
-type Pillar = {
-  n: string
-  icon: LandingIcon
-  title: string
-  description: string
-}
-
-type EvidenceCard = {
-  icon: LandingIcon
-  eyebrow: string
-  title: string
-  description: string
-  lines: string[]
-}
-
-const PROOF_CHIPS: ProofChip[] = [
-  { icon: FileText, label: 'PDF, Word, texto' },
-  { icon: Shield, label: 'Execução local' },
-  { icon: CalendarDays, label: 'Agenda integrada' },
-]
-
-const PILLARS: Pillar[] = [
-  {
-    n: '01',
-    icon: FileText,
-    title: 'Suba seus documentos',
-    description: 'PDF, Word ou texto puro. O agente indexa, fragmenta e mantém tudo pronto para consulta.',
-  },
-  {
-    n: '02',
-    icon: CheckCircle2,
-    title: 'Pergunte em linguagem natural',
-    description: 'A resposta vem com a fonte exata — página e documento — para você conferir antes de agir.',
-  },
-  {
-    n: '03',
-    icon: CalendarDays,
-    title: 'Planeje e agende',
-    description: 'Peça um plano de estudos ou crie lembretes. O agente organiza na sua agenda direto pelo chat.',
-  },
-]
-
-const EVIDENCE_CARDS: EvidenceCard[] = [
-  {
-    icon: FileText,
-    eyebrow: 'Resposta rastreável',
-    title: 'Fonte junto da resposta',
-    description: 'Cada resposta indica o documento e o trecho exato que a sustenta.',
-    lines: ['"O prazo de entrega é de 30 dias corridos após assinatura."', 'Contrato_servicos.pdf · pág. 4'],
-  },
-  {
-    icon: CalendarDays,
-    eyebrow: 'Agenda',
-    title: 'Lembretes pelo chat',
-    description: 'Crie, edite e consulte eventos sem sair da conversa.',
-    lines: ['Criar lembrete para amanhã às 9h', '→ Lembrete criado: Revisão de contrato · seg 09:00'],
-  },
-  {
-    icon: Layers,
-    eyebrow: 'Plano de estudos',
-    title: 'Material vira cronograma',
-    description: 'O agente distribui o conteúdo dos seus documentos em sessões de estudo com prazo definido.',
-    lines: ['Seg · Cap. 1 — Fundamentos (2h)', 'Qua · Cap. 2 — Aplicações (2h)', 'Sex · Revisão geral (1h)'],
-  },
-]
-
-const FOOTER_LINKS = [
-  { label: 'GitHub', href: 'https://github.com/DocOps-Agent/DocOps_Agent' },
-  { label: 'Licença MIT', href: 'https://github.com/DocOps-Agent/DocOps_Agent/blob/main/LICENSE' },
-] as const
-
-function scrollToSection(id: string) {
-  const element = document.getElementById(id)
-  if (!element) return
-
-  const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  element.scrollIntoView({ behavior: prefersReducedMotion ? 'auto' : 'smooth', block: 'start' })
-}
-
-function ProofChip({ chip, index }: { chip: ProofChip; index: number }) {
-  const Icon = chip.icon
-
-  return (
-    <motion.li
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.34, delay: index * 0.06, ease: EASE }}
-      className="inline-flex items-center gap-2 rounded-full border border-[color:var(--ui-border)] bg-[rgba(255,255,255,0.03)] px-4 py-2 text-sm text-[color:var(--ui-text-dim)] backdrop-blur"
-    >
-      <Icon className="h-4 w-4 text-[color:var(--ui-accent)]" aria-hidden="true" />
-      <span>{chip.label}</span>
-    </motion.li>
-  )
-}
-
-function PillarCard({ pillar, index }: { pillar: Pillar; index: number }) {
-  const Icon = pillar.icon
-
-  return (
-    <motion.article
-      initial={{ opacity: 0, y: 18 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={VIEWPORT}
-      transition={{ duration: 0.4, delay: index * 0.08, ease: EASE }}
-      className="rounded-[1.75rem] border border-[color:var(--ui-border)] bg-[color:var(--ui-surface)] p-6 shadow-[0_18px_48px_rgba(0,0,0,0.22)]"
-    >
-      <div className="flex items-center justify-between gap-3">
-        <span className="font-meta text-[11px] tracking-[0.18em] text-[color:var(--ui-text-meta)]">{pillar.n}</span>
-        <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[color:var(--ui-border)] bg-[color:var(--ui-surface-2)]">
-          <Icon className="h-4 w-4 text-[color:var(--ui-accent)]" aria-hidden="true" />
-        </div>
-      </div>
-      <h3 className="mt-8 text-2xl font-semibold text-[color:var(--ui-text)]">{pillar.title}</h3>
-      <p className="mt-3 max-w-[28ch] text-sm leading-7 text-[color:var(--ui-text-dim)]">{pillar.description}</p>
-    </motion.article>
-  )
-}
-
-function EvidenceCard({ card, index }: { card: EvidenceCard; index: number }) {
-  const Icon = card.icon
-
-  return (
-    <motion.article
-      initial={{ opacity: 0, y: 18 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={VIEWPORT}
-      transition={{ duration: 0.42, delay: index * 0.08, ease: EASE }}
-      className="rounded-[1.75rem] border border-[color:var(--ui-border)] bg-[rgba(255,255,255,0.02)] p-6"
-    >
-      <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-full border border-[color:var(--ui-border)] bg-[color:var(--ui-surface-2)]">
-          <Icon className="h-4 w-4 text-[color:var(--ui-accent)]" aria-hidden="true" />
-        </div>
-        <p className="font-meta text-[11px] tracking-[0.16em] text-[color:var(--ui-text-meta)]">{card.eyebrow}</p>
-      </div>
-      <h3 className="mt-6 text-xl font-semibold text-[color:var(--ui-text)]">{card.title}</h3>
-      <p className="mt-3 text-sm leading-7 text-[color:var(--ui-text-dim)]">{card.description}</p>
-      <div className="mt-6 rounded-[1.4rem] border border-[color:var(--ui-border)] bg-[rgba(0,0,0,0.18)] p-4">
-        <div className="space-y-3 text-sm leading-6 text-[color:var(--ui-text)]">
-          {card.lines.map((line) => (
-            <p key={line}>{line}</p>
-          ))}
-        </div>
-      </div>
-    </motion.article>
-  )
-}
 
 export function Landing() {
   return (
     <MotionConfig reducedMotion="user">
-      <BackgroundWrapper>
-        <a
-          href="#content"
-          className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-50 focus:rounded-full focus:bg-[color:var(--ui-accent)] focus:px-4 focus:py-2 focus:text-sm focus:text-[#0e1012] focus:outline-none"
-        >
-          Pular para conteúdo
-        </a>
-
-        <header className="sticky top-0 z-30 border-b border-[color:var(--ui-border)] bg-[rgba(14,16,18,0.78)] backdrop-blur-xl">
-          <div className="mx-auto flex h-18 max-w-[1280px] items-center justify-between px-6 sm:px-8 lg:px-10">
-            <Link to="/" className={`flex items-center gap-3 text-[color:var(--ui-text)] ${FOCUS_VISIBLE} rounded-full`}>
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[color:var(--ui-accent)] text-[#0e1012] shadow-[0_10px_30px_rgba(201,139,94,0.24)]">
-                <BookOpen className="h-4 w-4" aria-hidden="true" />
-              </div>
-              <span className="text-sm font-semibold tracking-[0.08em]">DocOps Agent</span>
-            </Link>
-
-            <div className="flex items-center gap-2 sm:gap-3">
-              <Button asChild variant="ghost" size="sm" className="rounded-full px-4 text-[color:var(--ui-text-dim)]">
-                <Link to="/login">Entrar</Link>
-              </Button>
-              <Button
-                asChild
-                size="sm"
-                className="rounded-full border-[color:var(--ui-accent)] bg-[color:var(--ui-accent)] px-5 text-[#0e1012] hover:border-[color:var(--ui-accent-strong)] hover:bg-[color:var(--ui-accent-strong)]"
-              >
-                <Link to="/register">Criar conta</Link>
-              </Button>
+      <div className="bg-surface text-on-surface font-body selection:bg-secondary-container selection:text-on-secondary-container min-h-screen">
+        
+        {/* TopNavBar */}
+        <header className="fixed top-0 left-0 w-full z-50 bg-surface/80 backdrop-blur-xl border-b border-white/5">
+          <div className="flex justify-between items-center px-6 md:px-12 py-6 max-w-[1440px] mx-auto">
+            <div className="flex items-center gap-2">
+              <span className="text-2xl font-extrabold tracking-tighter text-primary">DocOps Agent</span>
+            </div>
+            <nav className="hidden md:flex items-center gap-8">
+              <a className="text-on-surface/70 font-headline font-semibold tracking-tight hover:text-primary transition-all duration-300" href="#features">Funcionalidades</a>
+              <a className="text-on-surface/70 font-headline font-semibold tracking-tight hover:text-primary transition-all duration-300" href="#how-it-works">Como funciona</a>
+            </nav>
+            <div className="flex items-center gap-4">
+              <Link to="/login" className="px-5 py-2 text-on-surface font-semibold font-headline transition-transform active:scale-95">Entrar</Link>
+              <Link to="/register" className="px-6 py-2 bg-primary text-on-primary rounded-xl font-headline font-bold shadow-lg shadow-primary/20 hover:shadow-primary/40 transition-all duration-300 active:scale-95">Criar conta</Link>
             </div>
           </div>
         </header>
 
-        <main id="content">
-          <section className="mx-auto flex max-w-[1280px] items-start px-6 py-6 sm:px-8 sm:py-10 lg:min-h-[calc(100svh-73px)] lg:items-center lg:px-10 lg:py-16">
-            <div className="grid w-full items-start gap-6 sm:gap-8 lg:grid-cols-[minmax(0,1.05fr)_minmax(420px,0.95fr)] lg:items-center lg:gap-14">
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.55, ease: EASE }}
-                className="max-w-[38rem] pt-3 sm:pt-4 lg:pt-0"
-              >
-                <p className="font-meta text-[11px] uppercase tracking-[0.22em] text-[color:var(--ui-accent)]">
-                  Agente de documentos com IA
-                </p>
-                <h1 className="font-display mt-4 text-[2.65rem] leading-[0.95] text-[color:var(--ui-text)] sm:mt-5 sm:text-[4.5rem] lg:text-[5.5rem]">
-                  Os documentos tem a resposta. Com fonte.
+        <main className="pt-32">
+          {/* Hero Section */}
+          <section className="px-6 md:px-12 max-w-[1440px] mx-auto mb-32">
+            <div className="grid lg:grid-cols-2 gap-16 items-center">
+              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.55, ease: EASE }} className="space-y-8">
+                <div className="inline-flex items-center gap-2 px-3 py-1 bg-surface-container-high rounded-full border-l-4 border-secondary">
+                  <Shield className="text-secondary w-4 h-4" />
+                  <span className="text-[11px] font-bold tracking-widest text-secondary font-label uppercase">AGENTE DE DOCUMENTOS COM IA</span>
+                </div>
+                <h1 className="text-5xl md:text-7xl font-extrabold font-headline leading-[1.1] text-on-surface tracking-tight">
+                  Os documentos tem a resposta. <span className="text-secondary">Com fonte.</span>
                 </h1>
-                <p className="mt-5 max-w-[34rem] text-[0.98rem] leading-7 text-[color:var(--ui-text-dim)] sm:mt-6 sm:text-[1.08rem] sm:leading-8">
+                <p className="text-lg md:text-xl text-on-surface-variant leading-relaxed max-w-xl">
                   Suba PDFs e textos, faça perguntas em linguagem natural e receba respostas rastreáveis. O DocOps Agent ainda cria planos de estudo e gerencia sua agenda pelo chat.
                 </p>
-
-                <div className="mt-6 flex flex-col gap-3 sm:mt-8 sm:flex-row sm:items-center">
-                  <Button
-                    asChild
-                    size="lg"
-                    className="rounded-full border-[color:var(--ui-accent)] bg-[color:var(--ui-accent)] px-7 text-[#0e1012] hover:border-[color:var(--ui-accent-strong)] hover:bg-[color:var(--ui-accent-strong)]"
-                  >
-                    <Link to="/register">
-                      Criar conta
-                      <ArrowRight className="h-4 w-4" aria-hidden="true" />
-                    </Link>
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="lg"
-                    onClick={() => scrollToSection('prova')}
-                    className="rounded-full border-[color:var(--ui-border-strong)] px-7"
-                  >
-                    Ver como funciona
-                  </Button>
+                <div className="flex flex-wrap gap-4">
+                  <Link to="/register" className="px-8 py-4 bg-primary text-on-primary rounded-xl font-headline font-bold text-lg shadow-[0_10px_40px_-10px_rgba(147,197,253,0.3)] transition-all duration-300 hover:-translate-y-1">Criar conta</Link>
+                  <a href="#how-it-works" className="px-8 py-4 bg-surface-container-highest text-on-surface rounded-xl font-headline font-bold text-lg border-b-2 border-outline-variant/30 hover:bg-surface-container transition-all duration-300">Ver como funciona</a>
                 </div>
-
-                <ul className="mt-6 flex flex-wrap gap-2.5 sm:mt-8 sm:gap-3">
-                  {PROOF_CHIPS.map((chip, index) => (
-                    <ProofChip key={chip.label} chip={chip} index={index} />
-                  ))}
-                </ul>
+                <div className="flex flex-wrap gap-6 pt-4">
+                  <div className="flex items-center gap-2 opacity-70">
+                    <FileText className="text-primary w-5 h-5" />
+                    <span className="text-sm font-semibold">PDF, Word, texto</span>
+                  </div>
+                  <div className="flex items-center gap-2 opacity-70">
+                    <Layers className="text-primary w-5 h-5" />
+                    <span className="text-sm font-semibold">Execução local</span>
+                  </div>
+                  <div className="flex items-center gap-2 opacity-70">
+                    <CalendarDays className="text-primary w-5 h-5" />
+                    <span className="text-sm font-semibold">Agenda integrada</span>
+                  </div>
+                </div>
               </motion.div>
-
-              <motion.div
-                initial={{ opacity: 0, y: 24 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: 0.08, ease: EASE }}
-                className="order-last mt-1 lg:order-none lg:mt-0"
-              >
-                <HeroFuturistic className="h-[260px] sm:h-[380px] lg:h-[620px]" interactive fallbackMode="still" />
+              
+              <motion.div initial={{ opacity: 0, y: 24 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.08, ease: EASE }} className="relative group h-full min-h-[400px]">
+                <div className="absolute -inset-4 bg-primary/10 rounded-[2rem] blur-3xl"></div>
+                <div className="relative w-full h-[400px] sm:h-[500px] lg:h-[620px] bg-surface-container-lowest rounded-[2rem] border border-outline-variant/20 flex items-center justify-center overflow-hidden">
+                  <HeroFuturistic className="w-full h-full" interactive fallbackMode="still" />
+                  <div className="absolute inset-0 bg-gradient-to-tr from-primary/5 to-transparent pointer-events-none"></div>
+                </div>
               </motion.div>
             </div>
           </section>
 
-          <section id="valor" className="mx-auto max-w-[1280px] scroll-mt-28 px-6 py-8 sm:px-8 sm:py-12 lg:px-10 lg:py-16" aria-labelledby="valor-heading">
-            <motion.div
-              initial={{ opacity: 0, y: 16 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={VIEWPORT}
-              transition={{ duration: 0.44, ease: EASE }}
-              className="mb-8 max-w-[38rem] sm:mb-10"
-            >
-              <p className="font-meta text-[11px] uppercase tracking-[0.2em] text-[color:var(--ui-text-meta)]">Como funciona</p>
-              <h2 id="valor-heading" className="font-display mt-4 text-[2.7rem] leading-[0.96] text-[color:var(--ui-text)] sm:text-[3.4rem]">
-                Do documento à resposta em três passos.
-              </h2>
-            </motion.div>
-
-            <div className="grid gap-5 lg:grid-cols-3">
-              {PILLARS.map((pillar, index) => (
-                <PillarCard key={pillar.title} pillar={pillar} index={index} />
-              ))}
-            </div>
-          </section>
-
-          <section id="prova" className="mx-auto max-w-[1280px] scroll-mt-28 px-6 py-8 sm:px-8 sm:py-12 lg:px-10 lg:py-16" aria-labelledby="prova-heading">
-            <div className="rounded-[2rem] border border-[color:var(--ui-border)] bg-[linear-gradient(180deg,rgba(21,24,27,0.9),rgba(16,18,20,0.96))] p-6 shadow-[0_24px_80px_rgba(0,0,0,0.3)] sm:p-8 lg:p-10">
-              <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                viewport={VIEWPORT}
-                transition={{ duration: 0.44, ease: EASE }}
-                className="mb-8 max-w-[40rem]"
-              >
-                <p className="font-meta text-[11px] uppercase tracking-[0.2em] text-[color:var(--ui-accent)]">Na prática</p>
-                <h2 id="prova-heading" className="font-display mt-4 text-[2.7rem] leading-[0.98] text-[color:var(--ui-text)] sm:text-[3.4rem]">
-                  O que o agente entrega no dia a dia.
-                </h2>
-                <p className="mt-4 max-w-[36rem] text-sm leading-7 text-[color:var(--ui-text-dim)] sm:text-base">
-                  Respostas com fonte, agenda pelo chat e planos de estudo gerados direto do seu material.
-                </p>
+          {/* Steps Section */}
+          <section id="how-it-works" className="bg-surface-container py-32 px-6 md:px-12 relative overflow-hidden">
+            <div className="absolute top-0 right-0 w-1/3 h-full bg-gradient-to-l from-primary/5 to-transparent"></div>
+            <div className="max-w-[1440px] mx-auto relative z-10">
+              <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={VIEWPORT} className="mb-20">
+                <h2 className="text-sm font-bold text-secondary tracking-[0.3em] uppercase mb-4">Como funciona</h2>
+                <h3 className="text-4xl md:text-5xl font-headline font-extrabold text-on-surface max-w-2xl">Do documento à resposta em três passos</h3>
               </motion.div>
-
-              <div className="grid gap-5 lg:grid-cols-3">
-                {EVIDENCE_CARDS.map((card, index) => (
-                  <EvidenceCard key={card.title} card={card} index={index} />
+              <div className="grid md:grid-cols-3 gap-12">
+                {[
+                  { n: '01', title: 'Suba seus documentos', desc: 'PDF, Word ou texto puro. Arraste e solte seus arquivos em uma infraestrutura segura e privada.' },
+                  { n: '02', title: 'Pergunte em linguagem natural', desc: 'A resposta vem com a fonte exata. Clique na referência para abrir o documento no parágrafo citado.' },
+                  { n: '03', title: 'Planeje e agende', desc: 'Peça um plano de estudos ou extraia datas importantes. O DocOps cria cronogramas automaticamente.' },
+                ].map((step, idx) => (
+                  <motion.div key={step.n} initial={{ opacity: 0, y: 18 }} whileInView={{ opacity: 1, y: 0 }} viewport={VIEWPORT} transition={{ delay: idx * 0.1 }} className="space-y-6 group">
+                    <div className="text-6xl font-extrabold font-headline text-primary/20 group-hover:text-primary transition-colors">{step.n}</div>
+                    <h4 className="text-2xl font-bold font-headline text-on-surface">{step.title}</h4>
+                    <p className="text-on-surface-variant leading-relaxed">{step.desc}</p>
+                    <div className="h-1 w-12 bg-secondary group-hover:w-full transition-all duration-500"></div>
+                  </motion.div>
                 ))}
               </div>
             </div>
           </section>
 
-          <section className="mx-auto max-w-[1280px] px-6 py-10 sm:px-8 sm:py-14 lg:px-10 lg:py-18" aria-labelledby="cta-heading">
-            <motion.div
-              initial={{ opacity: 0, y: 16 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={VIEWPORT}
-              transition={{ duration: 0.44, ease: EASE }}
-              className="flex flex-col gap-6 rounded-[2rem] border border-[color:var(--ui-border)] bg-[rgba(255,255,255,0.03)] p-7 sm:p-9 lg:flex-row lg:items-end lg:justify-between"
-            >
-              <div className="max-w-[36rem]">
-                <p className="font-meta text-[11px] uppercase tracking-[0.2em] text-[color:var(--ui-text-meta)]">Comece agora</p>
-                <h2 id="cta-heading" className="font-display mt-4 text-[2.5rem] leading-[0.98] text-[color:var(--ui-text)] sm:text-[3.2rem]">
+          {/* Features/Proof Section */}
+          <section id="features" className="py-32 px-6 md:px-12 max-w-[1440px] mx-auto">
+            <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={VIEWPORT} className="text-center mb-24">
+              <h2 className="text-sm font-bold text-secondary tracking-[0.3em] uppercase mb-4">Na prática</h2>
+              <h3 className="text-4xl md:text-5xl font-headline font-extrabold text-on-surface">O que o agente entrega no dia a dia</h3>
+            </motion.div>
+            <div className="grid lg:grid-cols-12 gap-8 items-stretch">
+              
+              {/* Main Feature: Bento Style */}
+              <motion.div initial={{ opacity: 0, y: 18 }} whileInView={{ opacity: 1, y: 0 }} viewport={VIEWPORT} className="lg:col-span-8 bg-surface-container-low p-10 rounded-[2rem] border border-outline-variant/10 shadow-sm flex flex-col justify-between group hover:border-primary/30 transition-all">
+                <div>
+                  <div className="w-14 h-14 bg-secondary-container/10 border border-secondary-container/20 rounded-2xl flex items-center justify-center mb-8 group-hover:scale-110 transition-transform">
+                    <CheckCircle2 className="text-secondary-container w-8 h-8" />
+                  </div>
+                  <h4 className="text-3xl font-bold font-headline text-on-surface mb-4">Resposta rastreável</h4>
+                  <p className="text-on-surface-variant text-lg max-w-md">Chega de alucinações de IA. Cada palavra dita pelo DocOps Agent é vinculada a um fragmento real dos seus arquivos.</p>
+                </div>
+                <div className="mt-12 bg-surface-container-highest rounded-2xl p-6 overflow-hidden">
+                  <div className="rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-6 text-on-surface font-mono text-sm leading-6 relative shadow-[0_10px_40px_-20px_rgba(0,0,0,0.5)]">
+                    <div className="absolute top-4 right-4 w-2 h-2 bg-green-500 rounded-full shadow-[0_0_10px_rgba(74,222,128,0.8)]"></div>
+                    <p>"O prazo de entrega é de 30 dias corridos."</p>
+                    <p className="mt-4 text-primary opacity-80">Fonte: Contrato_servicos.pdf · pag. 4</p>
+                  </div>
+                </div>
+              </motion.div>
+
+              <div className="lg:col-span-4 flex flex-col gap-8">
+                {/* Feature Card 1 */}
+                <motion.div initial={{ opacity: 0, y: 18 }} whileInView={{ opacity: 1, y: 0 }} viewport={VIEWPORT} transition={{ delay: 0.1 }} className="flex-1 bg-surface-container-high p-8 rounded-[2rem] border border-outline-variant/10 flex flex-col justify-between group overflow-hidden relative">
+                  <div className="absolute -right-4 -bottom-4 w-32 h-32 bg-primary/10 rounded-full blur-2xl"></div>
+                  <div>
+                    <CalendarDays className="text-secondary-container w-10 h-10 mb-6 block" />
+                    <h4 className="text-2xl font-bold font-headline text-on-surface mb-3">Agenda</h4>
+                    <p className="text-on-surface-variant text-sm">Lembretes extraídos diretamente do contexto.</p>
+                  </div>
+                  <div className="mt-8 bg-primary/5 p-3 rounded-lg text-[11px] font-mono border border-primary/20">
+                    <span className="text-secondary-container">&gt; </span> Agendando: Revisão (15/10)
+                  </div>
+                </motion.div>
+
+                {/* Feature Card 2 */}
+                <motion.div initial={{ opacity: 0, y: 18 }} whileInView={{ opacity: 1, y: 0 }} viewport={VIEWPORT} transition={{ delay: 0.2 }} className="flex-1 bg-surface-container-highest p-8 rounded-[2rem] flex flex-col justify-between group border border-outline-variant/20">
+                  <div>
+                    <BookOpen className="text-primary w-10 h-10 mb-6 block" />
+                    <h4 className="text-2xl font-bold font-headline text-on-surface mb-3">Plano de estudos</h4>
+                    <p className="text-on-surface-variant text-sm">Cronogramas de aprendizado estruturados automaticamente.</p>
+                  </div>
+                  <div className="mt-8 flex gap-2 overflow-hidden">
+                    <div className="px-3 py-1 bg-surface-container-low border border-outline-variant/20 rounded-full text-[10px] font-bold text-on-surface shadow-sm">Semana 1</div>
+                    <div className="px-3 py-1 bg-surface-container-low border border-outline-variant/20 rounded-full text-[10px] font-bold text-on-surface shadow-sm">Semana 2</div>
+                  </div>
+                </motion.div>
+              </div>
+            </div>
+          </section>
+
+          {/* Bottom CTA (Refactored to look horizontal like the old one) */}
+          <section className="py-12 px-6 md:px-12 max-w-[1440px] mx-auto mb-20">
+            <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={VIEWPORT} className="flex flex-col gap-6 rounded-[2rem] bg-surface-container-high border border-outline-variant/10 p-7 sm:p-9 lg:flex-row lg:items-end lg:justify-between relative overflow-hidden">
+              <div className="absolute inset-4 bg-primary/5 blur-3xl opacity-30 pointer-events-none"></div>
+              <div className="relative z-10 max-w-[36rem]">
+                <p className="text-[11px] uppercase tracking-[0.2em] text-primary font-bold">Comece agora</p>
+                <h2 className="mt-4 text-3xl sm:text-[2.8rem] leading-[1.05] font-headline font-bold text-on-surface">
                   Crie a conta e suba seu primeiro documento.
                 </h2>
-                <p className="mt-4 text-sm leading-7 text-[color:var(--ui-text-dim)] sm:text-base">
+                <p className="mt-4 text-sm leading-7 text-on-surface-variant sm:text-base">
                   Em minutos o agente já responde perguntas sobre o seu material, com a fonte de cada informação.
                 </p>
               </div>
 
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <Button
-                  asChild
-                  size="lg"
-                  className="rounded-full border-[color:var(--ui-accent)] bg-[color:var(--ui-accent)] px-7 text-[#0e1012] hover:border-[color:var(--ui-accent-strong)] hover:bg-[color:var(--ui-accent-strong)]"
-                >
-                  <Link to="/register">
-                    Criar conta
-                    <ArrowRight className="h-4 w-4" aria-hidden="true" />
-                  </Link>
-                </Button>
-                <Button asChild variant="ghost" size="lg" className="rounded-full px-6 text-[color:var(--ui-text)]">
-                  <Link to="/login">Entrar</Link>
-                </Button>
+              <div className="relative z-10 flex flex-col gap-3 sm:flex-row sm:items-center">
+                <Link to="/register" className="px-7 py-3.5 bg-primary text-on-primary rounded-full font-headline font-bold shadow-[0_10px_30px_-5px_rgba(147,197,253,0.3)] hover:-translate-y-1 transition-transform flex items-center justify-center">
+                   Criar conta
+                   <ArrowRight className="ml-2 w-4 h-4" />
+                </Link>
+                <Link to="/login" className="px-6 py-3.5 text-on-surface rounded-full font-headline font-bold hover:bg-surface-container-highest transition-colors flex items-center justify-center">
+                  Entrar
+                </Link>
               </div>
             </motion.div>
           </section>
         </main>
 
-        <footer className="border-t border-[color:var(--ui-border)]" role="contentinfo">
-          <div className="mx-auto flex max-w-[1280px] flex-col gap-4 px-6 py-6 text-sm text-[color:var(--ui-text-dim)] sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10">
+        {/* Footer (Aligned like the old one) */}
+        <footer className="border-t border-outline-variant/10 mt-12 bg-surface">
+          <div className="mx-auto flex max-w-[1440px] flex-col gap-4 px-6 py-8 text-sm text-on-surface-variant sm:flex-row sm:items-center sm:justify-between md:px-12">
             <p>© {new Date().getFullYear()} DocOps Agent. Agente de documentos com IA.</p>
-            <div className="flex flex-wrap items-center gap-4">
-              {FOOTER_LINKS.map((link) => (
-                <a
-                  key={link.label}
-                  href={link.href}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className={`transition-colors hover:text-[color:var(--ui-text)] ${FOCUS_VISIBLE} rounded-full`}
-                >
-                  {link.label}
-                </a>
-              ))}
+            <div className="flex flex-wrap items-center gap-6">
+              <a href="https://github.com/DocOps-Agent/DocOps_Agent" className="hover:text-primary transition-colors">GitHub</a>
+              <a href="#" className="hover:text-primary transition-colors">Licença MIT</a>
             </div>
           </div>
         </footer>
-      </BackgroundWrapper>
+      </div>
     </MotionConfig>
   )
 }
