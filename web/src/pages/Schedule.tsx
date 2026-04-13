@@ -158,7 +158,7 @@ function ReminderCard({ reminder, onDelete }: { reminder: ReminderItem; onDelete
       </div>
       <button
         onClick={onDelete}
-        className="shrink-0 text-[color:var(--ui-text-meta)] opacity-0 transition-opacity hover:text-rose-400 group-hover:opacity-100"
+        className="shrink-0 text-[color:var(--ui-text-meta)] transition-opacity hover:text-rose-400 sm:opacity-0 sm:group-hover:opacity-100"
       >
         <X className="h-3.5 w-3.5" />
       </button>
@@ -183,7 +183,7 @@ function ScheduleCard({ item, onDelete, colorIdx }: { item: ScheduleItem; onDele
       </div>
       <button
         onClick={onDelete}
-        className="shrink-0 text-[color:var(--ui-text-meta)] opacity-0 transition-opacity hover:text-rose-400 group-hover:opacity-100"
+        className="shrink-0 text-[color:var(--ui-text-meta)] transition-opacity hover:text-rose-400 sm:opacity-0 sm:group-hover:opacity-100"
       >
         <X className="h-3.5 w-3.5" />
       </button>
@@ -637,6 +637,7 @@ export function Schedule() {
   const [selectedDate, setSelectedDate] = useState(() => toDateKey(new Date()))
   const [view, setView] = useState<'month' | 'week'>('month')
   const [selectedBlock, setSelectedBlock] = useState<SelectedBlock | null>(null)
+  const [mobilePanel, setMobilePanel] = useState<'calendar' | 'detail'>('calendar')
 
   // Cursor de semana: segunda-feira da semana que contém selectedDate
   const weekCursor = useMemo(() => startOfWeek(new Date(`${selectedDate}T00:00:00`)), [selectedDate])
@@ -869,28 +870,29 @@ export function Schedule() {
     setReminderDate(key)
     const d = new Date(`${key}T00:00:00`)
     setMonthCursor(startOfMonth(d))
+    if (window.innerWidth < 768) setMobilePanel('detail')
   }
 
   return (
-    <div className="relative flex h-[calc(100vh-4rem)] gap-0 overflow-hidden rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-bg)] shadow-[0_24px_60px_rgba(0,0,0,0.42)]">
+    <div className="relative flex h-[calc(100vh-4rem)] flex-col gap-0 overflow-hidden rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-bg)] shadow-[0_24px_60px_rgba(0,0,0,0.42)] md:flex-row">
       {/* ── COLUNA ESQUERDA: Calendário ─────────────────────────────────────── */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className={`${mobilePanel === 'calendar' ? 'flex' : 'hidden'} md:flex flex-1 flex-col overflow-hidden`}>
         {/* Header do calendário */}
-        <div className="flex items-center justify-between border-b border-[color:var(--ui-border-soft)]/70 bg-[color:var(--ui-bg)] px-6 py-4">
-          <div className="flex items-center gap-4">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[color:var(--ui-accent-soft)]">
+        <div className="flex items-center justify-between border-b border-[color:var(--ui-border-soft)]/70 bg-[color:var(--ui-bg)] px-3 py-3 sm:px-6 sm:py-4">
+          <div className="flex items-center gap-2 sm:gap-4">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[color:var(--ui-accent-soft)] sm:h-9 sm:w-9">
               <Calendar className="h-4 w-4 text-[color:var(--ui-accent)]" />
             </div>
             <div>
-              <h1 className="font-headline text-xl font-bold text-[color:var(--ui-text)]">
+              <h1 className="font-headline text-base font-bold text-[color:var(--ui-text)] sm:text-xl">
                 {view === 'week' ? weekLabel : `${MONTH_NAMES[monthCursor.getMonth()]} ${monthCursor.getFullYear()}`}
               </h1>
-              <p className="app-kicker mt-0.5">Calendário pessoal</p>
+              <p className="app-kicker mt-0.5 hidden sm:block">Calendário pessoal</p>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            {/* Toggle view */}
-            <div className="flex rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] p-0.5">
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            {/* Toggle view — semana só em telas maiores */}
+            <div className="hidden rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] p-0.5 sm:flex">
               <button
                 onClick={() => setView('month')}
                 className={cn(
@@ -916,7 +918,7 @@ export function Schedule() {
                 if (view === 'week') prevWeek()
                 else setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth() - 1, 1))
               }}
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)]"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)]"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -926,7 +928,7 @@ export function Schedule() {
                 setMonthCursor(startOfMonth(now))
                 setSelectedDate(toDateKey(now))
               }}
-              className="rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] px-3 py-1.5 text-xs font-semibold text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)]"
+              className="rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] px-2.5 py-1.5 text-xs font-semibold text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)] sm:px-3"
             >
               Hoje
             </button>
@@ -935,7 +937,7 @@ export function Schedule() {
                 if (view === 'week') nextWeek()
                 else setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 1))
               }}
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)]"
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)]"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
@@ -944,7 +946,7 @@ export function Schedule() {
 
         {/* Conteúdo da view */}
         {view === 'month' ? (
-          <div className="flex-1 overflow-auto p-5">
+          <div className="flex-1 overflow-auto p-3 pb-16 sm:p-5 md:pb-5">
             {/* Cabeçalho dos dias da semana */}
             <div className="mb-3 grid grid-cols-7">
               {WEEKDAY_LABELS.map((label, i) => (
@@ -977,7 +979,7 @@ export function Schedule() {
                     key={key}
                     onClick={() => handleSelectDate(key)}
                     className={cn(
-                      'group relative flex min-h-[132px] cursor-pointer flex-col p-3 text-left transition-all duration-150',
+                      'group relative flex min-h-[64px] cursor-pointer flex-col p-1.5 text-left transition-all duration-150 sm:min-h-[132px] sm:p-3',
                       isSelected
                         ? 'bg-[color:var(--ui-accent-soft)] ring-1 ring-inset ring-[color:var(--ui-accent)]/45'
                         : isTodayCell
@@ -1009,7 +1011,7 @@ export function Schedule() {
                     </div>
 
                     {(() => {
-                      const MAX_PILLS = 4
+                      const MAX_PILLS = window.innerWidth < 640 ? 1 : 4
                       type CellEvent = { key: string; title: string; colorIdx: number; durationMin: number }
                       const allEvents: CellEvent[] = [
                         ...daySchedules.map((s, i) => ({
@@ -1062,14 +1064,14 @@ export function Schedule() {
       </div>
 
       {/* ── COLUNA DIREITA: Detalhes + Formulários ───────────────────────────── */}
-      <div className="flex w-[380px] shrink-0 flex-col gap-0 overflow-hidden border-l border-[color:var(--ui-border-soft)]/70 bg-[color:var(--ui-surface)]">
+      <div className={`${mobilePanel === 'detail' ? 'flex' : 'hidden'} md:flex w-full md:w-[380px] shrink-0 flex-col gap-0 overflow-hidden border-t md:border-t-0 border-l-0 md:border-l border-[color:var(--ui-border-soft)]/70 bg-[color:var(--ui-surface)]`}>
         {/* Cabeçalho do painel lateral */}
         <div className="border-b border-[color:var(--ui-border-soft)]/70 px-5 py-5">
           <p className="app-kicker">Selecionado</p>
           <p className="mt-1 font-headline text-base font-bold capitalize text-[color:var(--ui-text)]">{selectedDateLabel}</p>
         </div>
 
-        <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
+        <div className="flex-1 space-y-5 overflow-y-auto px-5 pb-16 pt-5 md:pb-5">
           {/* Resumo atual */}
           {overview && (overview.current_schedule_item || overview.next_schedule_item) && (
             <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/8 p-3.5">
@@ -1266,6 +1268,34 @@ export function Schedule() {
             </Button>
           </CollapsibleForm>
         </div>
+      </div>
+
+      {/* ── Mobile panel switcher ──────────────────────────────────────────── */}
+      <div className="absolute bottom-0 left-0 right-0 flex border-t border-[color:var(--ui-border-soft)]/70 bg-[color:var(--ui-bg)] md:hidden">
+        <button
+          onClick={() => setMobilePanel('calendar')}
+          className={cn(
+            'flex flex-1 items-center justify-center gap-2 py-3 text-xs font-semibold transition-colors',
+            mobilePanel === 'calendar'
+              ? 'text-[color:var(--ui-accent)]'
+              : 'text-[color:var(--ui-text-meta)]'
+          )}
+        >
+          <Calendar className="h-4 w-4" />
+          Calendário
+        </button>
+        <button
+          onClick={() => setMobilePanel('detail')}
+          className={cn(
+            'flex flex-1 items-center justify-center gap-2 py-3 text-xs font-semibold transition-colors',
+            mobilePanel === 'detail'
+              ? 'text-[color:var(--ui-accent)]'
+              : 'text-[color:var(--ui-text-meta)]'
+          )}
+        >
+          <Bell className="h-4 w-4" />
+          Detalhes
+        </button>
       </div>
 
       {selectedBlock && (
