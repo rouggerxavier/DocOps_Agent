@@ -166,12 +166,12 @@ function TaskCard({
         }
       }}
       className={cn(
-        'group cursor-pointer rounded-2xl bg-[#1c1b1b] p-5 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#90caf9]/50',
+        'group cursor-pointer rounded-2xl bg-[#1c1b1b] p-4 transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#90caf9]/50 sm:p-5',
         'hover:bg-[#2a2a2a] hover:shadow-[0_20px_32px_rgba(0,0,0,0.32)]',
         done && 'opacity-75',
       )}
     >
-      <div className="mb-4 flex items-start justify-between gap-3">
+      <div className="mb-3 flex items-start justify-between gap-3 sm:mb-4">
         <TaskPriorityBadge priority={task.priority} />
         <button
           type="button"
@@ -187,7 +187,7 @@ function TaskCard({
         </button>
       </div>
 
-      <h3 className={cn('font-headline text-xl font-bold tracking-tight text-[#e5e2e1]', done && 'line-through decoration-[#596068]')}>
+      <h3 className={cn('font-headline text-base font-bold tracking-tight text-[#e5e2e1] sm:text-xl', done && 'line-through decoration-[#596068]')}>
         {task.title}
       </h3>
       {task.note ? <p className="mt-2 line-clamp-2 text-sm leading-relaxed text-[#c1c7cf]">{task.note}</p> : null}
@@ -426,7 +426,7 @@ function TaskDrawer({
                       {item.done ? <CheckSquare className="h-4 w-4 text-[#8ad6a0]" /> : <Square className="h-4 w-4" />}
                     </button>
                     <span className={cn('flex-1 text-sm', item.done ? 'text-[#8b9199] line-through' : 'text-[#e5e2e1]')}>{item.text}</span>
-                    <button type="button" onClick={() => deleteChecklistMut.mutate(item.id)} className="opacity-0 text-[#8b9199] transition-opacity hover:text-[#ef9d9d] group-hover:opacity-100">
+                    <button type="button" onClick={() => deleteChecklistMut.mutate(item.id)} className="text-[#8b9199] transition-opacity hover:text-[#ef9d9d] sm:opacity-0 sm:group-hover:opacity-100">
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
                   </div>
@@ -475,7 +475,7 @@ function TaskDrawer({
                           minute: '2-digit',
                         })}
                       </span>
-                      <button type="button" onClick={() => deleteActivityMut.mutate(activity.id)} className="opacity-0 text-[#8b9199] transition-opacity hover:text-[#ef9d9d] group-hover:opacity-100">
+                      <button type="button" onClick={() => deleteActivityMut.mutate(activity.id)} className="text-[#8b9199] transition-opacity hover:text-[#ef9d9d] sm:opacity-0 sm:group-hover:opacity-100">
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
                     </div>
@@ -577,7 +577,28 @@ export function Tasks() {
         />
 
         <section className="app-surface p-2">
-          <div className="grid gap-2 md:grid-cols-[1fr_auto_auto_auto]">
+          {/* Mobile: title + button in one row */}
+          <div className="flex gap-2 md:hidden">
+            <div className="flex flex-1 items-center gap-2 rounded-xl bg-[color:var(--ui-bg-alt)] px-3">
+              <Plus className="h-4 w-4 shrink-0 text-[color:var(--ui-accent)]" />
+              <input
+                value={quickTitle}
+                onChange={event => setQuickTitle(event.target.value)}
+                onKeyDown={event => { if (event.key === 'Enter') submitQuickTask() }}
+                placeholder="Nova tarefa..."
+                className="h-11 w-full bg-transparent text-sm text-[color:var(--ui-text)] outline-none placeholder:text-[color:var(--ui-text-meta)]"
+              />
+            </div>
+            <Button
+              onClick={submitQuickTask}
+              disabled={!quickTitle.trim() || createTaskMut.isPending}
+              className="h-11 rounded-xl border-0 bg-[color:var(--ui-accent)] px-4 text-[color:var(--ui-bg)]"
+            >
+              Criar
+            </Button>
+          </div>
+          {/* Desktop: full form */}
+          <div className="hidden gap-2 md:grid md:grid-cols-[1fr_auto_auto_auto]">
             <div className="flex items-center gap-2 rounded-xl bg-[color:var(--ui-bg-alt)] px-3">
               <Plus className="h-4 w-4 text-[color:var(--ui-accent)]" />
               <input
@@ -604,22 +625,24 @@ export function Tasks() {
           </div>
         </section>
 
-        <section className="flex flex-wrap gap-2">
-          {FILTER_ORDER.map(item => (
-            <button
-              key={item}
-              type="button"
-              onClick={() => setFilter(item)}
-              className={cn(
-                'rounded-full px-5 py-2 text-sm font-semibold transition-colors',
-                filter === item
-                  ? 'bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)]'
-                  : 'bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-dim)] hover:bg-[color:var(--ui-surface-3)] hover:text-[color:var(--ui-text)]',
-              )}
-            >
-              {FILTER_LABELS[item]} ({counts[item]})
-            </button>
-          ))}
+        <section className="-mx-4 overflow-x-auto px-4 sm:mx-0 sm:overflow-visible sm:px-0">
+          <div className="flex gap-2 pb-1 sm:flex-wrap sm:pb-0">
+            {FILTER_ORDER.map(item => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => setFilter(item)}
+                className={cn(
+                  'shrink-0 rounded-full px-4 py-2 text-sm font-semibold transition-colors sm:px-5',
+                  filter === item
+                    ? 'bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)]'
+                    : 'bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-dim)] hover:bg-[color:var(--ui-surface-3)] hover:text-[color:var(--ui-text)]',
+                )}
+              >
+                {FILTER_LABELS[item]} ({counts[item]})
+              </button>
+            ))}
+          </div>
         </section>
 
         <section>
@@ -636,7 +659,7 @@ export function Tasks() {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">
+            <div className="grid grid-cols-1 gap-4 sm:gap-5 md:grid-cols-2">
               {filteredTasks.map(task => (
                 <TaskCard
                   key={task.id}
