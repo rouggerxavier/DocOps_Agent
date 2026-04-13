@@ -25,7 +25,7 @@ logger = get_logger("docops.api.summarize")
 router = APIRouter()
 
 _TRAILING_SOURCES_RE = re.compile(r"(?ims)(?:\n|^)\s*(?:\*\*)?fontes:\s*(?:\*\*)?.*$")
-_INLINE_SOURCE_RE = re.compile(r"\s*\[Fonte\s*\d+\]", re.IGNORECASE)
+_INLINE_SOURCE_RE = re.compile(r"\s*\[[^\]]*fonte[^\]]*\]", re.IGNORECASE)
 _SOURCE_LINE_RE = re.compile(r"^\s*-?\s*\[Fonte\s*(\d+)\]\s*(.+?)\s*$", re.IGNORECASE)
 _SOURCE_INLINE_RE = re.compile(
     r"\[Fonte\s*(\d+)\]\s*([^\[]+?)(?=\s*\[Fonte\s*\d+\]|\s*$)",
@@ -189,7 +189,11 @@ def _run_summarize(
     mode_label = "Resumo breve" if summary_mode == "brief" else "Resumo aprofundado"
     answer_body, extracted_sources = _split_body_and_sources(answer)
     answer_body = _strip_inline_sources(answer_body)
-    rendered_sources = _simplify_sources_section(sources_section or extracted_sources)
+    rendered_sources = (
+        ""
+        if summary_mode == "brief"
+        else _simplify_sources_section(sources_section or extracted_sources)
+    )
     answer = answer_body if not rendered_sources else f"{answer_body}\n\n{rendered_sources}"
     answer = apply_template_layout(
         answer,

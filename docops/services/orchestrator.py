@@ -497,7 +497,6 @@ def _build_flashcard_confirmation_answer(entities: dict, docs: list) -> dict:
     doc_hint = entities.get("doc_hint") or entities.get("deck_hint") or ""
     if docs:
         sample = "\n".join(f"- {doc.file_name}" for doc in docs[:5])
-        note_title = getattr(note, "title", title) or title
         return {
             "answer": (
                 "Posso gerar flashcards, mas preciso saber se você quer um documento específico "
@@ -584,7 +583,7 @@ def _llm_parse(
         )
         logger.info("Orchestrator: chamando LLM parser (model=%s)", model)
         response = client.models.generate_content(model=model, contents=prompt)
-        raw = response.text.strip()
+        raw = str(getattr(response, "text", "") or "").strip()
         logger.info("Orchestrator: LLM raw=%r", raw[:200])
         # Extrai JSON mesmo se vier com markdown ao redor
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
@@ -1189,7 +1188,7 @@ def _exec_cascade_study_plan(entities: dict, user_id: int, db: Session) -> dict:
 
     # Verifica se faltam informações → pergunta ao usuário
     missing = []
-    if not hours_per_day:
+    if hours_per_day is None:
         missing.append("quantas horas por dia você pode dedicar (ex: 2h)")
     if not deadline_iso:
         missing.append("até quando quer concluir o estudo (ex: 20/04, em 2 semanas)")
@@ -1213,6 +1212,19 @@ def _exec_cascade_study_plan(entities: dict, user_id: int, db: Session) -> dict:
                 "active_intent": "cascade_study_plan_ask",
                 "last_action": "cascade_study_plan_ask",
             },
+        }
+
+    if not isinstance(deadline_iso, str):
+        _pending_study_plans.pop(user_id, None)
+        return {
+            "answer": "Nao consegui interpretar a data. Tente novamente com formato DD/MM ou 'em X dias'.",
+            "intent": "cascade_study_plan",
+        }
+    if hours_per_day is None:
+        _pending_study_plans.pop(user_id, None)
+        return {
+            "answer": "Nao consegui interpretar as horas por dia. Tente novamente com algo como `2h por dia`.",
+            "intent": "cascade_study_plan",
         }
 
     # Temos tudo — localiza documento
