@@ -176,13 +176,22 @@ function OnboardingSteps() {
 function DailyQuestionPanel({
   data,
   loading,
+  compact = false,
 }: {
   data: DailyQuestionResponse | undefined
   loading: boolean
+  compact?: boolean
 }) {
   const [showHint, setShowHint] = useState(false)
   const [userAnswer, setUserAnswer] = useState('')
   const [evaluation, setEvaluation] = useState<EvaluateAnswerResponse | null>(null)
+  const [showComposer, setShowComposer] = useState(!compact)
+
+  useEffect(() => {
+    if (!compact) {
+      setShowComposer(true)
+    }
+  }, [compact])
 
   const evaluateMutation = useMutation({
     mutationFn: () => apiClient.evaluateAnswer(data!.question!, userAnswer, data?.answer_hint ?? ''),
@@ -209,31 +218,55 @@ function DailyQuestionPanel({
           ) : null}
         </div>
 
-        <p className="font-headline text-xl font-bold leading-tight text-[color:var(--ui-text)] sm:text-2xl">
+        <p className={cn(
+          'font-headline text-xl font-bold leading-tight text-[color:var(--ui-text)] sm:text-2xl',
+          compact && 'max-h-[4.8rem] overflow-hidden',
+        )}>
           {data.question}
         </p>
 
         {!evaluation ? (
-          <div className="mt-6 space-y-3">
-            <textarea
-              value={userAnswer}
-              onChange={(event) => setUserAnswer(event.target.value)}
-              placeholder="Articule sua resposta aqui..."
-              rows={3}
-              className="w-full resize-none rounded-xl border border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-2)] px-4 py-3 text-sm text-[color:var(--ui-text)] placeholder:text-[color:var(--ui-text-meta)] outline-none transition-colors focus:border-[color:var(--ui-accent)]"
-            />
-            <div className="flex justify-end">
+          <div className="mt-5 space-y-3">
+            {compact && !showComposer ? (
               <Button
-                onClick={() => evaluateMutation.mutate()}
-                disabled={userAnswer.trim().length < 3 || evaluateMutation.isPending}
-                className="w-full bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)] sm:w-auto"
+                onClick={() => setShowComposer(true)}
+                className="w-full bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)]"
               >
-                {evaluateMutation.isPending ? 'Avaliando...' : 'Avaliar resposta'}
+                Responder agora
               </Button>
-            </div>
+            ) : (
+              <>
+                <textarea
+                  value={userAnswer}
+                  onChange={(event) => setUserAnswer(event.target.value)}
+                  placeholder="Articule sua resposta aqui..."
+                  rows={compact ? 2 : 3}
+                  className="w-full resize-none rounded-xl border border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-2)] px-4 py-3 text-sm text-[color:var(--ui-text)] placeholder:text-[color:var(--ui-text-meta)] outline-none transition-colors focus:border-[color:var(--ui-accent)]"
+                />
+                <div className={cn('flex justify-end', compact && 'flex-col gap-2')}>
+                  <Button
+                    onClick={() => evaluateMutation.mutate()}
+                    disabled={userAnswer.trim().length < 3 || evaluateMutation.isPending}
+                    className="w-full bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)] sm:w-auto"
+                  >
+                    {evaluateMutation.isPending ? 'Avaliando...' : 'Avaliar resposta'}
+                  </Button>
+                  {compact ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setShowComposer(false)}
+                      className="w-full text-xs text-[color:var(--ui-text-meta)]"
+                    >
+                      Minimizar
+                    </Button>
+                  ) : null}
+                </div>
+              </>
+            )}
           </div>
         ) : (
-          <div className={cn('mt-6 rounded-xl border p-4', SCORE_STYLE[evaluation.score] ?? SCORE_STYLE.parcial)}>
+          <div className={cn('mt-5 rounded-xl border p-4', SCORE_STYLE[evaluation.score] ?? SCORE_STYLE.parcial)}>
             <div className="mb-2 flex items-center justify-between gap-4">
               <span className="text-[11px] font-semibold uppercase tracking-[0.12em]">
                 {SCORE_LABEL[evaluation.score] ?? evaluation.score}
@@ -243,6 +276,7 @@ function DailyQuestionPanel({
                 onClick={() => {
                   setEvaluation(null)
                   setUserAnswer('')
+                  if (compact) setShowComposer(false)
                 }}
                 className="text-xs text-[color:var(--ui-text-meta)] transition-colors hover:text-[color:var(--ui-text)]"
               >
@@ -279,6 +313,9 @@ export function Dashboard() {
   const { user } = useAuth()
   const [now, setNow] = useState(() => new Date())
   const [isSyncing, setIsSyncing] = useState(false)
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window !== 'undefined' ? window.matchMedia('(max-width: 639px)').matches : false,
+  )
 
   const { data: docs, isLoading: isDocsLoading, error: docsError } = useQuery<DocItem[]>({
     queryKey: ['docs'],
@@ -330,6 +367,19 @@ export function Dashboard() {
     return () => window.clearInterval(timer)
   }, [])
 
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 639px)')
+    const handler = (event: MediaQueryListEvent) => setIsMobile(event.matches)
+
+    setIsMobile(media.matches)
+    if (typeof media.addEventListener === 'function') {
+      media.addEventListener('change', handler)
+      return () => media.removeEventListener('change', handler)
+    }
+    media.addListener(handler)
+    return () => media.removeListener(handler)
+  }, [])
+
   const firstName = user?.name?.trim().split(/\s+/)[0] || 'arquiteto'
   const todayLabel = now.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })
   const currentTimeLabel = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -345,6 +395,9 @@ export function Dashboard() {
 
   const todaySchedule = calendar?.today_schedule ?? []
   const todayReminders = calendar?.today_reminders ?? []
+  const docsPreviewCount = isMobile ? 3 : 5
+  const schedulePreviewCount = isMobile ? 2 : 4
+  const remindersPreviewCount = isMobile ? 2 : 4
 
   const liveMomentLabel = calendar?.current_schedule_item
     ? `Agora: ${calendar.current_schedule_item.title} (${calendar.current_schedule_item.start_time} às ${calendar.current_schedule_item.end_time})`
@@ -449,7 +502,7 @@ export function Dashboard() {
 
       <div className="grid gap-4 sm:gap-6 xl:grid-cols-[minmax(0,1fr)_330px]">
         <div className="space-y-6">
-          <DailyQuestionPanel data={dailyQuestion} loading={isDailyQuestionLoading} />
+          <DailyQuestionPanel data={dailyQuestion} loading={isDailyQuestionLoading} compact={isMobile} />
 
           <SurfaceCard className="overflow-hidden bg-[color:var(--ui-surface-2)] p-0">
             <div className="flex items-center justify-between px-4 py-4 sm:px-5">
@@ -480,7 +533,7 @@ export function Dashboard() {
 
             {hasDocuments ? (
               <div className="space-y-2 px-4 pb-4 sm:px-5 sm:pb-5">
-                {docs.slice(0, 5).map((doc) => (
+                {docs.slice(0, docsPreviewCount).map((doc) => (
                   <div
                     key={doc.doc_id}
                     className="group flex flex-col items-start gap-3 rounded-xl bg-[color:var(--ui-surface-1)] px-3 py-3 transition-colors hover:bg-[color:var(--ui-surface-3)] sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-4"
@@ -491,11 +544,11 @@ export function Dashboard() {
                       </div>
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-xs font-semibold text-[color:var(--ui-text)] sm:text-sm">{doc.file_name}</p>
-                        <p className="text-[11px] text-[color:var(--ui-text-meta)]">Fonte: {doc.source || 'local'}</p>
+                        <p className="hidden text-[11px] text-[color:var(--ui-text-meta)] sm:block">Fonte: {doc.source || 'local'}</p>
                       </div>
                     </div>
                     <span className="shrink-0 rounded-full bg-[color:var(--ui-surface-3)] px-2 py-0.5 text-[11px] text-[color:var(--ui-text-dim)] sm:text-xs">
-                      {doc.chunk_count} chunks
+                      {doc.chunk_count}
                     </span>
                   </div>
                 ))}
@@ -505,7 +558,7 @@ export function Dashboard() {
         </div>
 
         <aside className="space-y-4 sm:space-y-6">
-          <SurfaceCard className="bg-[color:var(--ui-surface-2)]">
+          <SurfaceCard className="hidden bg-[color:var(--ui-surface-2)] md:block">
             <p className="mb-4 text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--ui-text-meta)]">
               Ações rápidas
             </p>
@@ -532,7 +585,7 @@ export function Dashboard() {
               </div>
             ) : todaySchedule.length ? (
               <div className="space-y-3">
-                {todaySchedule.slice(0, 4).map((item) => (
+                {todaySchedule.slice(0, schedulePreviewCount).map((item) => (
                   <div key={item.id} className="flex gap-3">
                     <p className="w-11 shrink-0 text-[11px] font-semibold text-[color:var(--ui-text-meta)] sm:w-14 sm:text-xs">{item.start_time}</p>
                     <div className="flex-1 border-l border-[color:var(--ui-border-strong)] pl-3">
@@ -565,7 +618,7 @@ export function Dashboard() {
               </div>
             ) : todayReminders.length ? (
               <div className="space-y-3">
-                {todayReminders.slice(0, 4).map((reminder) => (
+                {todayReminders.slice(0, remindersPreviewCount).map((reminder) => (
                   <div key={reminder.id} className="rounded-xl bg-[color:var(--ui-surface-1)] px-3 py-2.5">
                     <div className="flex items-start gap-2">
                       <span className="mt-1.5 h-2 w-2 rounded-full bg-amber-300" />
@@ -590,7 +643,7 @@ export function Dashboard() {
             )}
           </SurfaceCard>
 
-          <SurfaceCard className="bg-[color:var(--ui-surface)]">
+          <SurfaceCard className="hidden bg-[color:var(--ui-surface)] sm:block">
             <div className="mb-4 flex items-center gap-2">
               <div className="h-2 w-2 animate-pulse rounded-full bg-amber-300" />
               <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--ui-text-meta)]">
