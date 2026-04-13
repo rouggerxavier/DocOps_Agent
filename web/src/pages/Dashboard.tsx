@@ -220,7 +220,7 @@ function DailyQuestionPanel({
 
         <p className={cn(
           'font-headline text-xl font-bold leading-tight text-[color:var(--ui-text)] sm:text-2xl',
-          compact && 'max-h-[4.8rem] overflow-hidden',
+          compact && 'line-clamp-3',
         )}>
           {data.question}
         </p>
