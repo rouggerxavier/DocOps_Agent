@@ -218,10 +218,7 @@ function DailyQuestionPanel({
           ) : null}
         </div>
 
-        <p className={cn(
-          'font-headline text-xl font-bold leading-tight text-[color:var(--ui-text)] sm:text-2xl',
-          compact && 'line-clamp-3',
-        )}>
+        <p className="font-headline text-xl font-bold leading-tight text-[color:var(--ui-text)] sm:text-2xl">
           {data.question}
         </p>
 
