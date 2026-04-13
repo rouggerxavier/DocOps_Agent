@@ -204,18 +204,18 @@ function GenerateDialog({
   const trackPercent = ((numCards - 3) / (30 - 3)) * 100
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-6">
-      <div className="w-full max-w-4xl rounded-2xl bg-[#0e0e0e] shadow-[0_40px_100px_rgba(0,0,0,0.6)] overflow-hidden flex flex-col max-h-[90vh]"
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-sm p-0 sm:items-center sm:p-6">
+      <div className="flex h-[100dvh] max-h-[100dvh] w-full flex-col overflow-hidden rounded-none bg-[#0e0e0e] shadow-[0_40px_100px_rgba(0,0,0,0.6)] sm:h-auto sm:max-h-[90vh] sm:max-w-4xl sm:rounded-2xl"
         style={{ border: '1px solid rgba(65,71,78,0.15)' }}>
 
         {/* ── Header ── */}
-        <div className="flex items-center justify-between px-10 py-6"
+        <div className="flex items-center justify-between px-4 py-4 sm:px-10 sm:py-6"
           style={{ borderBottom: '1px solid rgba(65,71,78,0.10)' }}>
           <div className="flex items-center gap-3">
             <div className="p-1.5 bg-primary/10 rounded-lg">
               <Layers className="w-4 h-4 text-primary" />
             </div>
-            <h2 className="font-headline font-bold text-lg text-[#c5e3ff] tracking-tight">
+            <h2 className="font-headline font-bold text-base text-[#c5e3ff] tracking-tight sm:text-lg">
               Flashcard Generator
             </h2>
           </div>
@@ -229,11 +229,11 @@ function GenerateDialog({
         </div>
 
         {/* ── Body ── */}
-        <div className="overflow-y-auto flex-1 px-10 py-8">
-          <div className="grid grid-cols-12 gap-8 items-start">
+        <div className="flex-1 overflow-y-auto px-4 py-5 sm:px-10 sm:py-8">
+          <div className="grid grid-cols-1 items-start gap-6 sm:gap-8 xl:grid-cols-12">
 
             {/* ── Left: Form (8 cols) ── */}
-            <section className="col-span-8 space-y-8">
+            <section className="col-span-1 space-y-6 sm:space-y-8 xl:col-span-8">
 
               {/* Documento fonte */}
               <DocSelector docs={docs} value={selectedDoc} onChange={setSelectedDoc} />
@@ -243,12 +243,12 @@ function GenerateDialog({
                 <label className="block text-xs font-semibold tracking-widest text-primary uppercase">
                   Escopo do conteúdo
                 </label>
-                <div className="flex p-1 bg-[#0a0a0a] rounded-xl w-fit"
+                <div className="grid w-full grid-cols-2 gap-1 rounded-xl bg-[#0a0a0a] p-1 sm:w-fit"
                   style={{ border: '1px solid rgba(65,71,78,0.15)' }}>
                   <button
                     onClick={() => { setScope('full'); setContentFilter('') }}
                     className={cn(
-                      'px-5 py-2 rounded-lg text-sm font-semibold transition-all',
+                      'rounded-lg px-3 py-2 text-xs font-semibold transition-all sm:px-5 sm:text-sm',
                       scope === 'full'
                         ? 'bg-surface-container-high text-on-surface shadow-sm'
                         : 'text-on-surface-variant hover:text-on-surface font-medium',
@@ -259,7 +259,7 @@ function GenerateDialog({
                   <button
                     onClick={() => setScope('specific')}
                     className={cn(
-                      'px-5 py-2 rounded-lg text-sm font-semibold transition-all',
+                      'rounded-lg px-3 py-2 text-xs font-semibold transition-all sm:px-5 sm:text-sm',
                       scope === 'specific'
                         ? 'bg-surface-container-high text-on-surface shadow-sm'
                         : 'text-on-surface-variant hover:text-on-surface font-medium',
@@ -291,7 +291,7 @@ function GenerateDialog({
                       key={opt.value}
                       onClick={() => setDiffMode(opt.value)}
                       className={cn(
-                        'px-5 py-2 rounded-full text-sm font-semibold transition-all',
+                        'rounded-full px-4 py-2 text-xs font-semibold transition-all sm:px-5 sm:text-sm',
                         diffMode === opt.value
                           ? 'bg-[#93C5FD] text-[#001e30] font-bold shadow-lg ring-2 ring-[#93C5FD]/40'
                           : 'bg-[#1e1e1e] text-on-surface-variant hover:bg-[#282828] hover:text-on-surface',
@@ -342,7 +342,7 @@ function GenerateDialog({
                     <label className="block text-xs font-semibold tracking-widest text-primary uppercase">
                       Quantidade
                     </label>
-                    <span className="text-3xl font-headline font-extrabold text-on-surface leading-none">
+                    <span className="text-2xl font-headline font-extrabold text-on-surface leading-none sm:text-3xl">
                       {numCards}{' '}
                       <span className="text-xs font-normal text-on-surface-variant uppercase tracking-widest ml-1">
                         cards
@@ -389,7 +389,7 @@ function GenerateDialog({
                 <button
                   onClick={handleSubmit}
                   disabled={generating || !canSubmit}
-                  className="w-full py-5 rounded-xl font-headline font-extrabold text-lg tracking-tight text-[#001e30] flex items-center justify-center gap-3 transition-all duration-300 hover:-translate-y-0.5 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+                  className="flex w-full items-center justify-center gap-3 rounded-xl py-4 font-headline text-base font-extrabold tracking-tight text-[#001e30] transition-all duration-300 hover:-translate-y-0.5 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:translate-y-0 sm:py-5 sm:text-lg"
                   style={{
                     background: 'linear-gradient(135deg, #c5e3ff 0%, #90caf9 100%)',
                     boxShadow: '0 20px 50px rgba(197,227,255,0.15)',
@@ -408,10 +408,10 @@ function GenerateDialog({
             </section>
 
             {/* ── Right: Summary Panel (4 cols) ── */}
-            <aside className="col-span-4 space-y-5 sticky top-0">
+            <aside className="col-span-1 space-y-4 sm:space-y-5 xl:col-span-4 xl:sticky xl:top-0">
 
               {/* Resumo */}
-              <div className="rounded-2xl p-7 relative overflow-hidden"
+              <div className="relative overflow-hidden rounded-2xl p-5 sm:p-7"
                 style={{
                   background: '#1c1b1b',
                   borderLeft: '4px solid rgba(147,197,253,0.4)',
@@ -420,7 +420,7 @@ function GenerateDialog({
                 <div className="absolute -top-20 -right-20 w-40 h-40 rounded-full pointer-events-none"
                   style={{ background: 'radial-gradient(circle, rgba(147,197,253,0.12) 0%, transparent 70%)' }} />
 
-                <h3 className="font-headline font-bold text-lg text-on-surface mb-6 relative z-10">
+                <h3 className="relative z-10 mb-6 font-headline text-base font-bold text-on-surface sm:text-lg">
                   Resumo da Geração
                 </h3>
 
@@ -459,7 +459,7 @@ function GenerateDialog({
 
               {/* Recentes */}
               {recentDecks.length > 0 && (
-                <div className="rounded-2xl p-5"
+                <div className="rounded-2xl p-4 sm:p-5"
                   style={{ background: '#0e0e0e', border: '1px solid rgba(65,71,78,0.15)' }}>
                   <div className="flex items-center justify-between mb-4">
                     <span className="text-[10px] font-bold text-on-surface-variant uppercase tracking-widest">Recentes</span>
