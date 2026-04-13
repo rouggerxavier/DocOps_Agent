@@ -54,10 +54,6 @@ const COLUMNS: ColumnConfig[] = [
   },
 ]
 
-function compactDocId(docId: string) {
-  if (!docId) return 'N/A'
-  return docId.length <= 10 ? docId.toUpperCase() : docId.slice(0, 10).toUpperCase()
-}
 
 function parseErrorMessage(error: unknown, fallback: string) {
   if (!error || typeof error !== 'object') return fallback
@@ -198,10 +194,7 @@ function BoardCard({
           ? 'border-l-[#ffd9ae]/60 bg-[#1c1b1b] opacity-80'
           : 'border-l-transparent bg-[#1c1b1b] hover:bg-[#262626]',
     )}>
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <span className="rounded-md bg-[#0e0e0e] px-2 py-1 text-[10px] font-mono text-[#8b9199]">
-          ID: {compactDocId(doc.doc_id)}
-        </span>
+      <div className="mb-2 flex items-center justify-end">
         {isDone ? <CheckCircle2 className="h-4 w-4 text-[#ffd9ae]" /> : isReading ? <BookOpen className="h-4 w-4 text-[#c5e3ff]" /> : <FileText className="h-4 w-4 text-[#8b9199]" />}
       </div>
 
@@ -230,24 +223,24 @@ function BoardCard({
         )}
       </div>
 
-      <div className="mt-4 flex items-center gap-1">
+      <div className="mt-3 flex items-center gap-1.5">
         <button
           type="button"
           onClick={() => onMove('prev')}
           disabled={disabled || columnIndex <= 0}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-[#8b9199] transition-colors hover:bg-[#353534] hover:text-[#e5e2e1] disabled:opacity-30"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#8b9199] transition-colors hover:bg-[#353534] hover:text-[#e5e2e1] disabled:opacity-30 active:scale-95"
           title="Mover para coluna anterior"
         >
-          <ChevronLeft className="h-3.5 w-3.5" />
+          <ChevronLeft className="h-4 w-4" />
         </button>
         <button
           type="button"
           onClick={() => onMove('next')}
           disabled={disabled || columnIndex >= COLUMNS.length - 1}
-          className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-[#8b9199] transition-colors hover:bg-[#353534] hover:text-[#e5e2e1] disabled:opacity-30"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#8b9199] transition-colors hover:bg-[#353534] hover:text-[#e5e2e1] disabled:opacity-30 active:scale-95"
           title="Mover para proxima coluna"
         >
-          <ChevronRight className="h-3.5 w-3.5" />
+          <ChevronRight className="h-4 w-4" />
         </button>
       </div>
     </article>
@@ -257,6 +250,7 @@ function BoardCard({
 export function ReadingKanban() {
   const queryClient = useQueryClient()
   const [gapOpen, setGapOpen] = useState(false)
+  const [mobileColumn, setMobileColumn] = useState<ReadingStatus>('to_read')
 
   const { data: docs = [], isLoading: docsLoading } = useQuery<DocItem[]>({
     queryKey: ['docs'],
@@ -331,20 +325,21 @@ export function ReadingKanban() {
   return (
     <>
       <PageShell className="space-y-6">
-        <header className="flex flex-wrap items-center justify-between gap-3 border-b pb-5 app-divider">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b pb-4 app-divider sm:pb-5">
           <div>
-            <h1 className="font-headline text-3xl font-extrabold tracking-tight text-[color:var(--ui-text)]">Kanban de Leitura</h1>
-            <p className="mt-1 text-sm text-[color:var(--ui-text-dim)]">
+            <h1 className="font-headline text-2xl font-extrabold tracking-tight text-[color:var(--ui-text)] sm:text-3xl">Kanban de Leitura</h1>
+            <p className="mt-1 text-xs text-[color:var(--ui-text-dim)] sm:text-sm">
               {isLoading ? 'Carregando board...' : `${counts.done} de ${totalDocs} documentos concluidos · ${donePercentage}%`}
             </p>
           </div>
 
           <Button
             onClick={() => setGapOpen(true)}
-            className="h-10 gap-2 rounded-xl border-0 bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)]"
+            className="h-9 gap-2 rounded-xl border-0 bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] text-sm sm:h-10"
           >
             <Zap className="h-4 w-4" />
-            Analise de Gaps
+            <span className="hidden sm:inline">Analise de Gaps</span>
+            <span className="sm:hidden">Gaps</span>
           </Button>
         </header>
 
@@ -382,47 +377,78 @@ export function ReadingKanban() {
               <p className="mt-1 text-sm text-[color:var(--ui-text-meta)]">Adicione arquivos em Insercao para iniciar seu kanban de leitura.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-              {COLUMNS.map(column => {
-                const columnDocs = grouped[column.key]
-                return (
-                  <section
+            <>
+              {/* Mobile: tab switcher */}
+              <div className="mb-3 flex rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] p-1 md:hidden">
+                {COLUMNS.map(column => (
+                  <button
                     key={column.key}
-                    className={cn('flex min-w-0 flex-col rounded-2xl p-4', column.columnClass)}
+                    type="button"
+                    onClick={() => setMobileColumn(column.key)}
+                    className={cn(
+                      'flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-bold uppercase tracking-wide transition-all',
+                      mobileColumn === column.key
+                        ? cn('bg-[color:var(--ui-surface-3)] shadow-sm', column.labelClass)
+                        : 'text-[color:var(--ui-text-meta)]',
+                    )}
                   >
-                    <header className="mb-4 flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className={cn('h-1.5 w-1.5 rounded-full', column.dotClass)} />
-                        <h2 className={cn('font-headline text-xs font-bold uppercase tracking-[0.16em]', column.labelClass)}>
-                          {column.label}
-                        </h2>
-                      </div>
-                      <span className={cn('rounded-md px-2 py-1 text-[11px] font-mono', column.badgeClass)}>
-                        {columnDocs.length}
-                      </span>
-                    </header>
+                    <span className={cn('h-1.5 w-1.5 rounded-full', column.dotClass)} />
+                    {column.label}
+                    <span className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-mono', column.badgeClass)}>
+                      {grouped[column.key].length}
+                    </span>
+                  </button>
+                ))}
+              </div>
 
-                    <div className="flex-1 space-y-3 overflow-y-auto pr-1">
-                      {columnDocs.length === 0 ? (
-                        <div className="rounded-xl border border-dashed border-[color:var(--ui-border)]/70 p-6 text-center text-xs text-[color:var(--ui-text-meta)]">
-                          Coluna vazia
-                        </div>
-                      ) : (
-                        columnDocs.map(doc => (
-                          <BoardCard
-                            key={doc.doc_id}
-                            doc={doc}
-                            status={column.key}
-                            disabled={moveMutation.isPending}
-                            onMove={direction => moveDoc(doc.doc_id, column.key, direction)}
-                          />
-                        ))
+              {/* Desktop: 3-column grid | Mobile: single active column */}
+              <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+                {COLUMNS.map(column => {
+                  const columnDocs = grouped[column.key]
+                  return (
+                    <section
+                      key={column.key}
+                      className={cn(
+                        'flex min-w-0 flex-col rounded-2xl p-4',
+                        column.columnClass,
+                        'hidden md:flex',
+                        mobileColumn === column.key && '!flex',
                       )}
-                    </div>
-                  </section>
-                )
-              })}
-            </div>
+                    >
+                      <header className="mb-4 hidden items-center justify-between md:flex">
+                        <div className="flex items-center gap-2">
+                          <span className={cn('h-1.5 w-1.5 rounded-full', column.dotClass)} />
+                          <h2 className={cn('font-headline text-xs font-bold uppercase tracking-[0.16em]', column.labelClass)}>
+                            {column.label}
+                          </h2>
+                        </div>
+                        <span className={cn('rounded-md px-2 py-1 text-[11px] font-mono', column.badgeClass)}>
+                          {columnDocs.length}
+                        </span>
+                      </header>
+
+                      <div className="flex-1 space-y-3 overflow-y-auto pr-1">
+                        {columnDocs.length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-[color:var(--ui-border)]/70 p-6 text-center text-xs text-[color:var(--ui-text-meta)]">
+                            Coluna vazia
+                          </div>
+                        ) : (
+                          columnDocs.map(doc => (
+                            <BoardCard
+                              key={doc.doc_id}
+                              doc={doc}
+                              status={column.key}
+                              disabled={moveMutation.isPending}
+                              onMove={direction => moveDoc(doc.doc_id, column.key, direction)}
+                            />
+                          ))
+                        )}
+                      </div>
+                    </section>
+                  )
+                })}
+              </div>
+            </>
           )}
         </section>
 
