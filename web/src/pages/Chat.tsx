@@ -1229,6 +1229,7 @@ export function Chat() {
   const [isMobile, setIsMobile] = useState(() => (
     typeof window !== 'undefined' ? window.matchMedia('(max-width: 1023px)').matches : false
   ))
+  const [mobileViewportInset, setMobileViewportInset] = useState(0)
   const [showNewChatBubble, setShowNewChatBubble] = useState(true)
   const [mobileSourcesOpen, setMobileSourcesOpen] = useState(false)
   const [sessionSearch, setSessionSearch] = useState('')
@@ -1284,6 +1285,37 @@ export function Chat() {
     media.addListener(handleChange)
     return () => media.removeListener(handleChange)
   }, [])
+
+  useEffect(() => {
+    if (!isMobile) {
+      setMobileViewportInset(0)
+      return
+    }
+
+    const updateInset = () => {
+      const vv = window.visualViewport
+      if (!vv) {
+        setMobileViewportInset(0)
+        return
+      }
+      const delta = window.innerHeight - vv.height - vv.offsetTop
+      setMobileViewportInset(Math.max(0, Math.round(delta)))
+    }
+
+    updateInset()
+    const vv = window.visualViewport
+    vv?.addEventListener('resize', updateInset)
+    vv?.addEventListener('scroll', updateInset)
+    window.addEventListener('orientationchange', updateInset)
+    window.addEventListener('resize', updateInset)
+
+    return () => {
+      vv?.removeEventListener('resize', updateInset)
+      vv?.removeEventListener('scroll', updateInset)
+      window.removeEventListener('orientationchange', updateInset)
+      window.removeEventListener('resize', updateInset)
+    }
+  }, [isMobile])
 
   useEffect(() => {
     if (!isMobile) {
@@ -2086,7 +2118,7 @@ export function Chat() {
 
   return (
     <div className={cn(
-      'relative flex h-[calc(100dvh-3.5rem)] overflow-hidden bg-[color:var(--ui-surface)] md:h-[100dvh]',
+      'relative flex h-[calc(100svh-3.5rem)] overflow-hidden bg-[color:var(--ui-surface)] md:h-[100dvh]',
       isMobile
         ? 'rounded-none shadow-none'
         : 'rounded-[1.4rem] shadow-[0_26px_70px_rgba(0,0,0,0.45)]',
@@ -2320,8 +2352,9 @@ export function Chat() {
         {/* Messages */}
         <div className={cn(
           'flex-1 overflow-y-auto',
-          isMobile ? 'px-3 pb-36 pt-5' : 'px-4 py-6 sm:px-6 sm:py-8',
-        )}>
+          isMobile ? 'px-3 pt-5' : 'px-4 py-6 sm:px-6 sm:py-8',
+        )}
+        style={isMobile ? { paddingBottom: `${156 + mobileViewportInset}px` } : undefined}>
           <div className="flex w-full flex-col gap-8">
             {messages.length === 0 && (
               <>
@@ -2448,9 +2481,10 @@ export function Chat() {
         <div className={cn(
           'border-t border-[color:var(--ui-border-soft)]',
           isMobile
-            ? 'absolute inset-x-0 bottom-0 z-20 bg-[color:var(--ui-surface-container-lowest)]/95 px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2 backdrop-blur'
+            ? 'absolute inset-x-0 z-20 bg-[color:var(--ui-surface-container-lowest)]/95 px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2 backdrop-blur'
             : 'px-4 pb-4 pt-3 sm:px-6 sm:pb-5',
-        )}>
+        )}
+        style={isMobile ? { bottom: `${Math.max(6, mobileViewportInset)}px` } : undefined}>
           <div className="w-full">
             <div className={cn(
               'border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-low)]/85 backdrop-blur',
@@ -2784,7 +2818,10 @@ export function Chat() {
       )}
 
       {isMobile ? (
-        <div className="pointer-events-none absolute bottom-[5.9rem] right-4 z-30 flex flex-col items-end gap-2">
+        <div
+          className="pointer-events-none absolute right-4 z-30 flex flex-col items-end gap-2"
+          style={{ bottom: `${96 + mobileViewportInset}px` }}
+        >
           {showNewChatBubble ? (
             <button
               type="button"
