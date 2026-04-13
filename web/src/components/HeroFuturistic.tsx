@@ -202,8 +202,21 @@ export function HeroFuturistic({
   interactive = true,
   fallbackMode = 'still',
 }: HeroFuturisticProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    // Fire a resize after mount so the R3F Canvas recalculates dimensions
+    // when rendered inside a flex/h-full container whose size isn't resolved
+    // synchronously (fixes WebGPU freeze until DevTools opens).
+    const id = requestAnimationFrame(() => {
+      window.dispatchEvent(new Event('resize'))
+    })
+    return () => cancelAnimationFrame(id)
+  }, [])
+
   return (
     <div
+      ref={containerRef}
       className={cn(
         'relative isolate min-h-[260px] overflow-hidden rounded-[2rem] border border-[color:var(--ui-border)] bg-[color:var(--ui-surface)] shadow-[0_24px_80px_rgba(0,0,0,0.38)] sm:min-h-[360px]',
         className
