@@ -3,15 +3,14 @@ import { useState, useRef, useEffect, useId } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import {
-  Send, Bot, User, FileText, ChevronRight, Loader2, X,
+  Send, Bot, User, FileText, ChevronRight, ChevronDown, Loader2, X,
   Plus, MessageSquare, Clock, CalendarCheck, Trash2,
-  SlidersHorizontal, ChevronDown, Sparkles,
+  Sparkles, Search, Pause,
+  MoreHorizontal, Paperclip,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
-import { CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import {
   apiClient,
@@ -356,6 +355,36 @@ function newSession(): ChatSession {
   }
 }
 
+function getSessionPreview(session: ChatSession): string {
+  const last = [...session.messages].reverse().find(message => {
+    if (!message.content?.trim()) return false
+    if (message.streaming) return false
+    return true
+  })
+  if (!last) return 'Conversa pronta para comecar.'
+
+  const compact = last.content.replace(/\s+/g, ' ').trim()
+  if (!compact) return 'Conversa pronta para comecar.'
+  return compact.length > 84 ? `${compact.slice(0, 84)}...` : compact
+}
+
+function formatSessionAge(createdAt: Date): string {
+  const created = createdAt instanceof Date ? createdAt.getTime() : Number(createdAt)
+  if (!Number.isFinite(created)) return 'agora'
+
+  const diffMs = Math.max(0, Date.now() - created)
+  const minutes = Math.floor(diffMs / 60_000)
+  if (minutes < 1) return 'agora'
+  if (minutes < 60) return `${minutes}m`
+
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h`
+
+  const days = Math.floor(hours / 24)
+  if (days === 1) return 'ontem'
+  return `${days}d`
+}
+
 function normalizeForMatch(value: string) {
   return value
     .normalize('NFKD')
@@ -549,14 +578,14 @@ function normalizeStreamStage(raw: string | null | undefined): StreamStage | nul
 function TypingIndicator() {
   return (
     <div className="flex gap-3">
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-700">
-        <Bot className="h-4 w-4 text-zinc-300" />
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]">
+        <Bot className="h-4 w-4" />
       </div>
-      <div className="flex items-center rounded-2xl rounded-tl-sm bg-zinc-800 px-4 py-3">
+      <div className="flex items-center rounded-xl bg-[color:var(--ui-surface-container-low)] px-4 py-3">
         <span className="flex gap-1">
-          <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:0ms]" />
-          <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:150ms]" />
-          <span className="h-1.5 w-1.5 rounded-full bg-zinc-400 animate-bounce [animation-delay:300ms]" />
+          <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--ui-text-meta)] animate-bounce [animation-delay:0ms]" />
+          <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--ui-text-meta)] animate-bounce [animation-delay:150ms]" />
+          <span className="h-1.5 w-1.5 rounded-full bg-[color:var(--ui-text-meta)] animate-bounce [animation-delay:300ms]" />
         </span>
       </div>
     </div>
@@ -581,21 +610,21 @@ function SourcePanel({
           key={src.chunk_id || src.fonte_n}
           onClick={() => onSelect(src)}
           className={cn(
-            'w-full rounded-lg border p-3 text-left transition-colors',
+            'w-full rounded-xl border p-3 text-left transition-colors',
             selected?.fonte_n === src.fonte_n
-              ? 'border-blue-600 bg-blue-600/10'
-              : 'border-zinc-800 bg-zinc-900 hover:border-zinc-700'
+              ? 'border-[color:var(--ui-accent)]/35 bg-[color:var(--ui-accent-soft)]'
+              : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)] hover:border-[color:var(--ui-border-strong)]'
           )}
         >
           <div className="flex items-center gap-2 mb-1">
-            <span className="text-xs font-bold text-blue-400">[Fonte {src.fonte_n}]</span>
-            <span className="text-xs text-zinc-400 truncate">{src.file_name}</span>
+            <span className="text-xs font-bold text-[color:var(--ui-accent)]">[Fonte {src.fonte_n}]</span>
+            <span className="text-xs text-[color:var(--ui-text-meta)] truncate">{src.file_name}</span>
           </div>
           {src.page !== 'N/A' && (
-            <span className="text-xs text-zinc-500">p. {src.page}</span>
+            <span className="text-xs text-[color:var(--ui-text-meta)]">p. {src.page}</span>
           )}
           {selected?.fonte_n === src.fonte_n && (
-            <p className="mt-2 text-xs text-zinc-300 line-clamp-4">{src.snippet}</p>
+            <p className="mt-2 line-clamp-4 text-xs text-[color:var(--ui-text-dim)]">{src.snippet}</p>
           )}
         </button>
       ))}
@@ -652,7 +681,7 @@ function ActionSummaryCard({
       ? 'border-emerald-800/50 bg-emerald-950/20 text-emerald-200'
       : action.status === 'failed'
         ? 'border-red-800/50 bg-red-950/20 text-red-200'
-        : 'border-amber-800/50 bg-amber-950/20 text-amber-100'
+        : 'border-[color:var(--ui-accent)]/35 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-text)]'
 
   return (
     <div className={cn('rounded-2xl border px-4 py-3 text-xs', toneClass)}>
@@ -1018,8 +1047,8 @@ function StreamStatusCard({
       className={cn(
         'rounded-xl border px-3 py-2 text-[11px] leading-5',
         interrupted
-          ? 'border-amber-700/40 bg-amber-700/10 text-amber-100'
-          : 'border-blue-700/40 bg-blue-600/10 text-blue-100',
+          ? 'border-amber-500/35 bg-amber-500/10 text-amber-100'
+          : 'border-[color:var(--ui-accent)]/35 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]',
       )}
     >
       <div className="flex items-center gap-2">
@@ -1047,24 +1076,24 @@ function MessageBubble({
     <div className={cn('flex gap-3', isUser ? 'flex-row-reverse' : 'flex-row')}>
       <div
         className={cn(
-          'flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
-          isUser ? 'bg-blue-600' : 'bg-zinc-700'
+          'flex h-8 w-8 shrink-0 items-center justify-center rounded-md',
+          isUser ? 'bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text)]' : 'bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]'
         )}
       >
         {isUser ? (
-          <User className="h-4 w-4 text-white" />
+          <User className="h-4 w-4" />
         ) : (
-          <Bot className="h-4 w-4 text-zinc-300" />
+          <Bot className="h-4 w-4" />
         )}
       </div>
 
-      <div className={cn('max-w-[75%] space-y-2', isUser ? 'items-end' : 'items-start')}>
+      <div className={cn('max-w-[88%] space-y-2', isUser ? 'items-end' : 'items-start')}>
         <div
           className={cn(
-            'select-text rounded-2xl px-4 py-3 text-sm transition-all duration-200 hover:shadow-[0_0_0_1px_rgba(255,255,255,0.08)]',
+            'select-text rounded-2xl px-4 py-3 text-sm transition-all duration-200',
             isUser
-              ? 'rounded-tr-sm bg-blue-600 text-white hover:bg-blue-500 selection:bg-sky-200 selection:text-zinc-950'
-              : 'rounded-tl-sm bg-zinc-800 text-zinc-100 hover:bg-zinc-700 selection:bg-amber-200 selection:text-zinc-950'
+              ? 'rounded-tr-sm bg-[color:var(--ui-surface-container-high)] text-[color:var(--ui-text)] hover:bg-[color:var(--ui-surface-3)] selection:bg-sky-200 selection:text-zinc-950'
+              : 'rounded-tl-sm bg-[color:var(--ui-surface-container-low)] text-[color:var(--ui-text)] hover:bg-[color:var(--ui-surface-2)] selection:bg-amber-200 selection:text-zinc-950'
           )}
           draggable={false}
           onDragStart={isUser ? e => e.preventDefault() : undefined}
@@ -1084,10 +1113,10 @@ function MessageBubble({
               {message.content}
             </div>
           ) : (
-            <div className="prose prose-invert prose-sm max-w-none select-text selection:bg-amber-200 selection:text-zinc-950" style={{ userSelect: 'text', WebkitUserSelect: 'text' }}>
+            <div className="prose prose-invert prose-sm max-w-none select-text leading-relaxed selection:bg-amber-200 selection:text-zinc-950" style={{ userSelect: 'text', WebkitUserSelect: 'text' }}>
               <ReactMarkdown>{message.content}</ReactMarkdown>
               {message.streaming && (
-                <span className="ml-1 inline-flex h-[1.05em] w-[2px] animate-pulse rounded-full bg-blue-300/80 align-[-0.15em] shadow-[0_0_10px_rgba(96,165,250,0.55)]" />
+                <span className="ml-1 inline-flex h-[1.05em] w-[2px] animate-pulse rounded-full bg-[color:var(--ui-accent)]/80 align-[-0.15em] shadow-[0_0_10px_rgba(147,205,252,0.45)]" />
               )}
             </div>
           )}
@@ -1133,7 +1162,7 @@ function MessageBubble({
               type="button"
               onClick={onSaveAsArtifact}
               disabled={Boolean(savingAsArtifact)}
-              className="rounded-full border border-emerald-700/60 bg-emerald-700/10 px-3 py-1.5 text-[11px] font-medium text-emerald-200 transition-colors hover:bg-emerald-700/20 disabled:cursor-not-allowed disabled:opacity-60"
+              className="rounded-full border border-emerald-600/45 bg-emerald-500/10 px-3 py-1.5 text-[11px] font-medium text-emerald-200 transition-colors hover:bg-emerald-500/20 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {savingAsArtifact ? 'Salvando artefato...' : 'Salvar como artefato'}
             </button>
@@ -1144,7 +1173,7 @@ function MessageBubble({
           <div className="space-y-2">
             <button
               onClick={() => onSourceClick?.(message.sources!)}
-              className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-blue-400 transition-colors"
+              className="flex items-center gap-1.5 text-xs text-[color:var(--ui-text-meta)] transition-colors hover:text-[color:var(--ui-accent)]"
             >
               <FileText className="h-3 w-3" />
               {message.sources.length} fonte(s) citada(s)
@@ -1155,7 +1184,7 @@ function MessageBubble({
                 <button
                   key={`citation-${src.chunk_id || src.fonte_n}`}
                   onClick={() => onCitationClick?.(src, message.sources!)}
-                  className="rounded-full border border-blue-600/40 bg-blue-600/10 px-2 py-0.5 text-[11px] text-blue-300 hover:bg-blue-600/20"
+                  className="rounded-full border border-[color:var(--ui-accent)]/40 bg-[color:var(--ui-accent-soft)] px-2 py-0.5 text-[11px] text-[color:var(--ui-accent)] hover:bg-[color:var(--ui-accent-soft)]/80"
                 >
                   [Fonte {src.fonte_n}]
                 </button>
@@ -1165,8 +1194,8 @@ function MessageBubble({
         )}
 
         {!isUser && (message.intent || message.action_metadata?.kind) && (
-          <Badge variant="secondary" className="text-xs">
-            {INTENT_LABELS[message.intent ?? message.action_metadata?.kind ?? ''] ?? 'Ação'}
+          <Badge variant="secondary" className="border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-xs text-[color:var(--ui-text-dim)]">
+            {INTENT_LABELS[message.intent ?? message.action_metadata?.kind ?? ''] ?? 'Acao'}
           </Badge>
         )}
       </div>
@@ -1195,6 +1224,7 @@ export function Chat() {
   const [activeSources, setActiveSources] = useState<SourceItem[]>([])
   const [selectedSource, setSelectedSource] = useState<SourceItem | null>(null)
   const [sidebarOpen, setSidebarOpen] = useState(true)
+  const [sessionSearch, setSessionSearch] = useState('')
   const [filtersOpen, setFiltersOpen] = useState(false)
   const [pendingFlashcardCommand, setPendingFlashcardCommand] = useState<FlashcardCommandPlan | null>(null)
   const [savingArtifactTurnRef, setSavingArtifactTurnRef] = useState<string | null>(null)
@@ -1921,6 +1951,37 @@ export function Chat() {
     setComposerOverrides(emptyComposerOverrides())
   }
 
+  function pauseCurrentGeneration() {
+    setSessions(prev =>
+      prev.map(session => {
+        const msgs = [...session.messages]
+        for (let i = msgs.length - 1; i >= 0; i -= 1) {
+          const msg = msgs[i]
+          if (msg.role === 'assistant' && msg.streaming) {
+            const hasPartialContent = Boolean(msg.content?.trim())
+            msgs[i] = {
+              ...msg,
+              content: hasPartialContent
+                ? msg.content
+                : 'Geracao pausada. Clique em enviar para fazer uma nova pergunta.',
+              streaming: false,
+              stream_interrupted: true,
+              stream_status_text: 'Geracao pausada por voce.',
+              stream_stage: msg.stream_stage ?? 'finalizing',
+            }
+            return { ...session, messages: msgs }
+          }
+        }
+        return session
+      }),
+    )
+
+    if (streamAbortRef.current) {
+      streamAbortRef.current.abort()
+      streamAbortRef.current = null
+    }
+  }
+
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -1953,6 +2014,11 @@ export function Chat() {
   const hasSources = activeSources.length > 0
   const isStreaming = messages.some(m => m.streaming)
   const isPending = mutation.isPending || flashcardBatchMut.isPending
+  const isChatRequestActive = mutation.isPending || isStreaming
+  const isComposerBlocked = (
+    flashcardBatchMut.isPending
+    || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)
+  )
   const isPersonalizationLoading = isPersonalizationEnabled && preferencesQuery.isLoading
   const personalizationLoadFailed = isPersonalizationEnabled && preferencesQuery.isError
   const strictGroundingFromPreferences = (
@@ -1960,7 +2026,6 @@ export function Chat() {
     && resolvedComposerPreferences.strictness_preference === 'strict'
     && isStrictGroundingEnabled
   )
-  const effectiveStrictGrounding = strictGrounding || strictGroundingFromPreferences
   const personalizationBannerText = !isPersonalizationEnabled
     ? ''
     : isPersonalizationLoading
@@ -1971,153 +2036,204 @@ export function Chat() {
           + `${TONE_LABELS[resolvedComposerPreferences.tone]}, `
           + `rigor ${STRICTNESS_LABELS[resolvedComposerPreferences.strictness_preference]} `
           + `e rotina ${SCHEDULE_LABELS[userPreferences.schedule_preference]}.`
-  const contextLabels = [
-    ...activeContext.active_doc_names.slice(0, 2).map(name => ({ key: `doc-${name}`, label: name, tone: 'doc' as const })),
-    activeContext.active_deck_title ? { key: `deck-${activeContext.active_deck_title}`, label: `Deck: ${activeContext.active_deck_title}`, tone: 'deck' as const } : null,
-    activeContext.active_task_title ? { key: `task-${activeContext.active_task_title}`, label: `Tarefa: ${activeContext.active_task_title}`, tone: 'task' as const } : null,
-    activeContext.active_note_title ? { key: `note-${activeContext.active_note_title}`, label: `Nota: ${activeContext.active_note_title}`, tone: 'note' as const } : null,
-  ].filter(Boolean) as Array<{ key: string; label: string; tone: 'doc' | 'deck' | 'task' | 'note' }>
-  const hasActiveContext = contextLabels.length > 0 || !!activeContext.last_action
+  const normalizedSessionSearch = normalizeForMatch(sessionSearch)
+  const visibleSessions = sessions.filter(session => {
+    if (!normalizedSessionSearch) return true
+    const scope = `${session.title} ${getSessionPreview(session)}`
+    return normalizeForMatch(scope).includes(normalizedSessionSearch)
+  })
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] gap-0 overflow-hidden rounded-2xl border app-divider bg-[color:var(--ui-bg-alt)] shadow-[0_16px_36px_rgba(2,4,8,0.3)]">
+    <div className="flex h-[calc(100dvh-3.5rem)] md:h-[100dvh] overflow-hidden rounded-[1.4rem] bg-[color:var(--ui-surface)] shadow-[0_26px_70px_rgba(0,0,0,0.45)]">
       {/* ── Sidebar de sessões ────────────────────────────────────────────── */}
       {sidebarOpen && (
-        <div className="flex w-56 shrink-0 flex-col border-r app-divider bg-[color:var(--ui-bg)]">
-          <div className="flex items-center justify-between border-b app-divider px-3 py-3">
-            <span className="text-xs font-semibold text-zinc-400">Conversas</span>
-            <button
-              onClick={createNewSession}
-              className="flex h-6 w-6 items-center justify-center rounded-md border border-zinc-700 bg-zinc-800 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200"
-              title="Nova conversa"
-            >
-              <Plus className="h-3.5 w-3.5" />
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto py-2 space-y-0.5 px-2">
-            {sessions.map(s => (
-              <div
-                key={s.id}
-                className={cn(
-                  'group flex items-center gap-2 rounded-lg px-2 py-2 cursor-pointer transition-colors',
-                  s.id === activeSessionId
-                    ? 'bg-zinc-800 text-zinc-100'
-                    : 'text-zinc-500 hover:bg-zinc-900 hover:text-zinc-300'
-                )}
-                onClick={() => {
-                  setActiveSessionId(s.id)
-                  setActiveSources([])
-                  setSelectedSource(null)
-                }}
+        <aside className="flex w-[19rem] shrink-0 flex-col bg-[color:var(--ui-surface)]">
+          <div className="border-b border-[color:var(--ui-border-soft)] px-6 pb-5 pt-6">
+            <div className="mb-6 flex items-center justify-between">
+              <h2 className="font-headline text-xl font-extrabold tracking-tight text-[color:var(--ui-text)]">
+                Conversas
+              </h2>
+              <button
+                onClick={createNewSession}
+                className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-[color:var(--ui-surface-2)] text-[color:var(--ui-accent)] transition-colors hover:bg-[color:var(--ui-surface-3)]"
+                title="Nova conversa"
               >
-                <MessageSquare className="h-3.5 w-3.5 shrink-0" />
-                <span className="flex-1 truncate text-xs">{s.title}</span>
-                <button
-                  onClick={e => { e.stopPropagation(); deleteSession(s.id) }}
-                  className="shrink-0 opacity-0 text-zinc-600 hover:text-red-400 group-hover:opacity-100 transition-opacity"
+                <Plus className="h-4 w-4" />
+              </button>
+            </div>
+
+            <label htmlFor="session-search" className="sr-only">
+              Buscar conversa
+            </label>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[color:var(--ui-text-meta)]" />
+              <input
+                id="session-search"
+                type="text"
+                value={sessionSearch}
+                onChange={event => setSessionSearch(event.target.value)}
+                placeholder="Buscar conversas..."
+                className="h-10 w-full rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)] pl-10 pr-3 text-sm text-[color:var(--ui-text)] outline-none transition-all placeholder:text-[color:var(--ui-text-meta)] focus:border-[color:var(--ui-accent)] focus:ring-2 focus:ring-[color:var(--ui-accent)]/20"
+              />
+            </div>
+          </div>
+          <div className="flex-1 space-y-2 overflow-y-auto px-4 py-4">
+            {visibleSessions.map(session => {
+              const isActive = session.id === activeSessionId
+              const messageCount = session.messages.filter(message => !message.streaming).length
+              const isRunning = session.messages.some(message => message.streaming)
+              const status = isActive ? 'ACTIVE' : (isRunning ? 'RUNNING' : messageCount > 1 ? 'ARCHIVED' : 'DRAFT')
+
+              return (
+                <div
+                  key={session.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => {
+                    setActiveSessionId(session.id)
+                    setActiveSources([])
+                    setSelectedSource(null)
+                  }}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault()
+                      setActiveSessionId(session.id)
+                      setActiveSources([])
+                      setSelectedSource(null)
+                    }
+                  }}
+                  className={cn(
+                    'group cursor-pointer rounded-2xl p-4 transition-all duration-200',
+                    isActive
+                      ? 'bg-[color:var(--ui-surface-container-low)] ring-1 ring-[color:var(--ui-accent)]/25'
+                      : 'bg-transparent hover:bg-[color:var(--ui-surface-container-low)]/60',
+                  )}
                 >
-                  <Trash2 className="h-3 w-3" />
-                </button>
+                  <div className="mb-2 flex items-start justify-between gap-2">
+                    <span className={cn(
+                      'rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide',
+                      isActive
+                        ? 'bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]'
+                        : 'bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
+                    )}
+                    >
+                      {status}
+                    </span>
+                    <div className="flex items-center gap-1">
+                      <span className="text-[10px] text-[color:var(--ui-text-meta)]">{formatSessionAge(session.createdAt)}</span>
+                      <button
+                        onClick={event => {
+                          event.stopPropagation()
+                          deleteSession(session.id)
+                        }}
+                        className="opacity-0 text-[color:var(--ui-text-meta)] transition-colors group-hover:opacity-100 hover:text-rose-300"
+                        title="Excluir conversa"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                  <h3 className={cn(
+                    'line-clamp-2 text-sm font-bold leading-tight',
+                    isActive ? 'text-[color:var(--ui-text)]' : 'text-[color:var(--ui-text-dim)] group-hover:text-[color:var(--ui-text)]',
+                  )}
+                  >
+                    {session.title}
+                  </h3>
+                  <p className="mt-1 line-clamp-2 text-xs text-[color:var(--ui-text-meta)]">
+                    {getSessionPreview(session)}
+                  </p>
+                  <div className="mt-3 flex items-center gap-2 text-[10px] text-[color:var(--ui-text-meta)]">
+                    <span className={cn(
+                      'h-1.5 w-1.5 rounded-full',
+                      isRunning ? 'animate-pulse bg-amber-300' : 'bg-[color:var(--ui-accent)]/55',
+                    )}
+                    />
+                    {messageCount} mensagem{messageCount !== 1 ? 'ens' : ''}
+                  </div>
+                </div>
+              )
+            })}
+            {visibleSessions.length === 0 && (
+              <div className="rounded-2xl bg-[color:var(--ui-surface-container-low)] p-4 text-xs text-[color:var(--ui-text-meta)]">
+                Nenhuma conversa encontrada para este filtro.
               </div>
-            ))}
+            )}
           </div>
-          <div className="border-t app-divider px-3 py-2">
-            <p className="text-[10px] text-zinc-600">
-              <Clock className="mr-1 inline h-3 w-3" />
-              Salvo localmente
-            </p>
+          <div className="border-t border-[color:var(--ui-border-soft)] px-6 py-3 text-[11px] text-[color:var(--ui-text-meta)]">
+            <Clock className="mr-1.5 inline h-3 w-3" />
+            Salvo localmente
           </div>
-        </div>
+        </aside>
       )}
 
       {/* ── Área principal ────────────────────────────────────────────────── */}
-      <div className="flex flex-1 flex-col overflow-hidden">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-[color:var(--ui-surface-container-lowest)]">
         {/* Header */}
-        <div className="flex items-center gap-3 border-b app-divider bg-[color:var(--ui-bg)] px-4 py-3">
+        <div className="flex h-16 items-center gap-3 border-b border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)]/85 px-6 backdrop-blur">
           <button
             onClick={() => setSidebarOpen(v => !v)}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-[color:var(--ui-text-meta)] transition-colors hover:bg-[color:var(--ui-surface-2)] hover:text-[color:var(--ui-text)]"
           >
             <MessageSquare className="h-4 w-4" />
           </button>
-          <Bot className="h-5 w-5 text-blue-400" />
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]">
+            <FileText className="h-4 w-4" />
+          </div>
           <div className="flex-1 min-w-0">
-            <p className="truncate text-sm font-semibold text-zinc-100">
-              {activeSession?.title ?? 'DocOps Chat'}
+            <p className="truncate text-sm font-bold text-[color:var(--ui-text)]">
+              {activeSession?.title ?? 'Nova conversa'}
             </p>
-            <p className="text-xs text-zinc-500">RAG com Gemini + Chroma</p>
+            <div className="flex items-center gap-2">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-300" />
+              <p className="truncate text-[10px] font-medium text-[color:var(--ui-text-meta)]">
+                DocOps Agent processando contexto
+              </p>
+            </div>
           </div>
           {messages.length > 0 && (
-            <Badge variant="secondary" className="text-xs">
+            <Badge
+              variant="secondary"
+              className="border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[10px] text-[color:var(--ui-text-dim)]"
+            >
               {messages.filter(m => !m.streaming).length} msgs
             </Badge>
           )}
+          <button className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[color:var(--ui-text-meta)] transition-colors hover:bg-[color:var(--ui-surface-2)] hover:text-[color:var(--ui-text)]">
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
         </div>
         {isPersonalizationEnabled && (
-          <div className="flex items-start gap-2 border-b app-divider bg-[color:var(--ui-bg)] px-4 py-2 text-xs text-zinc-400">
-            <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-400" />
+          <div className="border-b border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)] px-6 py-2.5">
+            <div className="flex items-start gap-2 rounded-xl bg-[color:var(--ui-surface-container-low)] px-3 py-2 text-xs text-[color:var(--ui-text-meta)]">
+              <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[color:var(--ui-accent)]" />
             <div className="min-w-0">
-              <p className="font-medium text-zinc-300">Memoria ativa</p>
-              <p className="text-zinc-500">{personalizationBannerText}</p>
+              <p className="font-medium text-[color:var(--ui-text)]">Memoria ativa</p>
+              <p>{personalizationBannerText}</p>
               {composerHasOverrides && (
-                <p className="mt-1 text-[11px] text-blue-300">
+                <p className="mt-1 text-[11px] text-[color:var(--ui-accent)]">
                   Override desta mensagem ativo.
                 </p>
               )}
             </div>
-          </div>
-        )}
-
-        {hasActiveContext && (
-          <div className="flex flex-wrap items-center gap-2 border-b app-divider bg-[color:var(--ui-bg)] px-4 py-2">
-            <span className="text-[11px] font-medium uppercase tracking-[0.2em] text-zinc-500">
-              Contexto ativo
-            </span>
-            {contextLabels.map(item => (
-              <span
-                key={item.key}
-                className={cn(
-                  'inline-flex items-center rounded-full border px-2.5 py-1 text-[11px]',
-                  item.tone === 'doc' && 'border-blue-900 bg-blue-950/50 text-blue-200',
-                  item.tone === 'deck' && 'border-amber-900 bg-amber-950/50 text-amber-200',
-                  item.tone === 'task' && 'border-emerald-900 bg-emerald-950/50 text-emerald-200',
-                  item.tone === 'note' && 'border-fuchsia-900 bg-fuchsia-950/50 text-fuchsia-200',
-                )}
-              >
-                {item.label}
-              </span>
-            ))}
-            {activeContext.last_action && (
-              <span className="text-xs text-zinc-500">
-                ultima acao: {activeContext.last_action}
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={() => {
-                updateActiveContext(emptyActiveContext())
-                setSelectedDocs([])
-              }}
-              className="ml-auto text-xs text-zinc-500 transition-colors hover:text-zinc-200"
-            >
-              Limpar contexto
-            </button>
+            </div>
           </div>
         )}
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto bg-[color:var(--ui-bg-alt)] px-4 py-4 space-y-4">
-          {messages.length === 0 && (
-            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-              <Bot className="h-12 w-12 text-zinc-700" />
-              <p className="text-sm font-medium text-zinc-400">Olá! Como posso ajudar?</p>
-              <p className="text-xs text-zinc-600 max-w-xs">
-                Faça perguntas sobre seus documentos indexados. Ou diga algo como{' '}
-                <span className="text-zinc-500">"quero um lembrete às 17h amanhã"</span>{' '}
-                para criar eventos no calendário.
-              </p>
-            </div>
-          )}
+        <div className="flex-1 overflow-y-auto px-4 py-6 sm:px-6 sm:py-8">
+          <div className="flex w-full flex-col gap-8">
+            {messages.length === 0 && (
+              <div className="mx-auto flex max-w-md flex-col items-center text-center">
+                <div className="mb-6 flex h-14 w-14 items-center justify-center rounded-full bg-[color:var(--ui-surface-container-low)]">
+                  <Bot className="h-6 w-6 text-[color:var(--ui-text-meta)]" />
+                </div>
+                <h3 className="font-headline text-xl font-bold text-[color:var(--ui-text)]">Qual o proximo objetivo?</h3>
+                <p className="mt-2 text-sm text-[color:var(--ui-text-meta)]">
+                  Pergunte sobre os seus documentos, crie artefatos, agenda ou tarefas sem sair do chat.
+                </p>
+              </div>
+            )}
 
           {messages.map((msg, i) => {
             const previousUserPrompt = [...messages.slice(0, i)]
@@ -2160,10 +2276,10 @@ export function Chat() {
 
           {pendingFlashcardCommand && (
             <div className="flex gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-700">
-                <Bot className="h-4 w-4 text-zinc-300" />
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]">
+                <Bot className="h-4 w-4" />
               </div>
-              <div className="max-w-[75%] space-y-2">
+              <div className="max-w-[88%] space-y-2">
                 <ActionSummaryCard
                   action={{
                     kind: 'flashcards_batch',
@@ -2203,10 +2319,10 @@ export function Chat() {
 
           {flashcardBatchMut.isPending && (
             <div className="flex gap-3">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-zinc-700">
-                <Bot className="h-4 w-4 text-zinc-300" />
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]">
+                <Bot className="h-4 w-4" />
               </div>
-              <div className="flex items-center rounded-2xl rounded-tl-sm bg-zinc-800 px-4 py-3 text-xs text-zinc-300">
+              <div className="rounded-xl bg-[color:var(--ui-surface-container-low)] px-4 py-3 text-xs text-[color:var(--ui-text-dim)]">
                 Gerando flashcards em lote...
               </div>
             </div>
@@ -2214,40 +2330,44 @@ export function Chat() {
 
           {isPending && !isStreaming && !flashcardBatchMut.isPending && <TypingIndicator />}
 
-          <div ref={bottomRef} />
+            <div ref={bottomRef} />
+          </div>
         </div>
 
         {/* Input area */}
-        <div className="border-t app-divider bg-[color:var(--ui-bg)] p-4 space-y-2">
-          {/* Filtros colapsáveis */}
-          <button
-            onClick={() => setFiltersOpen(v => !v)}
-            className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
-          >
-            <SlidersHorizontal className="h-3 w-3" />
-            Opções avançadas
-            <ChevronDown className={cn('h-3 w-3 transition-transform', filtersOpen && 'rotate-180')} />
-            {(selectedDocs.length > 0 || effectiveStrictGrounding) && (
-              <span className="ml-1 h-1.5 w-1.5 rounded-full bg-blue-500" />
-            )}
-          </button>
+        <div className="border-t border-[color:var(--ui-border-soft)] px-4 pb-4 pt-3 sm:px-6 sm:pb-5">
+          <div className="w-full">
+            <div className="rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-low)]/85 p-2 shadow-[0_18px_40px_rgba(0,0,0,0.28)] backdrop-blur">
+              <div className="mb-2 flex items-center">
+                <button
+                  type="button"
+                  onClick={() => setFiltersOpen(v => !v)}
+                  className={cn(
+                    'inline-flex h-7 w-7 items-center justify-center rounded-lg text-[color:var(--ui-text-meta)] transition-colors hover:bg-[color:var(--ui-surface-2)] hover:text-[color:var(--ui-text)]',
+                    filtersOpen && 'bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]',
+                  )}
+                  title="Filtrar documentos"
+                >
+                  <Paperclip className="h-3.5 w-3.5" />
+                </button>
+              </div>
 
           {isPersonalizationEnabled && (
-            <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/60 p-3">
+            <div className="space-y-2 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)]/80 p-3">
               <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-zinc-300">Override desta mensagem</p>
+                <p className="text-xs font-medium text-[color:var(--ui-text)]">Override desta mensagem</p>
                 <button
                   type="button"
                   onClick={() => setComposerOverrides(emptyComposerOverrides())}
-                  disabled={isPending || isStreaming}
-                  className="text-[11px] text-zinc-500 transition-colors hover:text-zinc-200 disabled:opacity-50"
+                  disabled={flashcardBatchMut.isPending}
+                  className="text-[11px] text-[color:var(--ui-text-meta)] transition-colors hover:text-[color:var(--ui-text)] disabled:opacity-50"
                 >
                   Limpar overrides
                 </button>
               </div>
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] text-zinc-500">Profundidade</span>
+                  <span className="text-[11px] text-[color:var(--ui-text-meta)]">Profundidade</span>
                   {DEPTH_OPTIONS.map(option => {
                     const active = (composerOverrides.default_depth ?? userPreferences.default_depth) === option.value
                     const overridden = composerOverrides.default_depth === option.value
@@ -2255,15 +2375,15 @@ export function Chat() {
                       <button
                         key={`depth-${option.value}`}
                         type="button"
-                        disabled={isPending || isStreaming}
+                        disabled={flashcardBatchMut.isPending}
                         onClick={() => setComposerOverrides(prev => ({
                           ...prev,
                           default_depth: prev.default_depth === option.value ? null : option.value,
                         }))}
                         className={cn(
                           'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
-                          active ? 'border-blue-800 bg-blue-950/40 text-blue-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400',
-                          overridden && 'ring-1 ring-blue-700/70',
+                          active ? 'border-[color:var(--ui-accent)]/45 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
+                          overridden && 'ring-1 ring-[color:var(--ui-accent)]/45',
                         )}
                       >
                         {DEPTH_LABELS[option.value]}
@@ -2272,7 +2392,7 @@ export function Chat() {
                   })}
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] text-zinc-500">Tom</span>
+                  <span className="text-[11px] text-[color:var(--ui-text-meta)]">Tom</span>
                   {TONE_OPTIONS.map(option => {
                     const active = (composerOverrides.tone ?? userPreferences.tone) === option.value
                     const overridden = composerOverrides.tone === option.value
@@ -2280,15 +2400,15 @@ export function Chat() {
                       <button
                         key={`tone-${option.value}`}
                         type="button"
-                        disabled={isPending || isStreaming}
+                        disabled={flashcardBatchMut.isPending}
                         onClick={() => setComposerOverrides(prev => ({
                           ...prev,
                           tone: prev.tone === option.value ? null : option.value,
                         }))}
                         className={cn(
                           'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
-                          active ? 'border-blue-800 bg-blue-950/40 text-blue-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400',
-                          overridden && 'ring-1 ring-blue-700/70',
+                          active ? 'border-[color:var(--ui-accent)]/45 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
+                          overridden && 'ring-1 ring-[color:var(--ui-accent)]/45',
                         )}
                       >
                         {TONE_LABELS[option.value]}
@@ -2297,7 +2417,7 @@ export function Chat() {
                   })}
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] text-zinc-500">Rigor</span>
+                  <span className="text-[11px] text-[color:var(--ui-text-meta)]">Rigor</span>
                   {STRICTNESS_OPTIONS.map(option => {
                     const active = (composerOverrides.strictness_preference ?? userPreferences.strictness_preference) === option.value
                     const overridden = composerOverrides.strictness_preference === option.value
@@ -2305,15 +2425,15 @@ export function Chat() {
                       <button
                         key={`strictness-${option.value}`}
                         type="button"
-                        disabled={isPending || isStreaming}
+                        disabled={flashcardBatchMut.isPending}
                         onClick={() => setComposerOverrides(prev => ({
                           ...prev,
                           strictness_preference: prev.strictness_preference === option.value ? null : option.value,
                         }))}
                         className={cn(
                           'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
-                          active ? 'border-blue-800 bg-blue-950/40 text-blue-200' : 'border-zinc-700 bg-zinc-800 text-zinc-400',
-                          overridden && 'ring-1 ring-blue-700/70',
+                          active ? 'border-[color:var(--ui-accent)]/45 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
+                          overridden && 'ring-1 ring-[color:var(--ui-accent)]/45',
                         )}
                       >
                         {STRICTNESS_LABELS[option.value]}
@@ -2326,19 +2446,35 @@ export function Chat() {
           )}
 
           {filtersOpen && (
-            <div className="space-y-2 rounded-lg border border-zinc-800 bg-zinc-900/50 p-3">
+            <div className="space-y-2 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)]/80 p-3">
               <div className="flex gap-2">
                 <select
                   value={selectedDoc}
                   onChange={e => setSelectedDoc(e.target.value)}
-                  disabled={isPending || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)}
-                  className="flex-1 rounded-md border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 min-w-0"
+                  disabled={flashcardBatchMut.isPending || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)}
+                  className="min-w-0 flex-1 rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)] px-3 py-2 text-sm font-medium text-[color:var(--ui-text)] outline-none transition-colors focus:border-[color:var(--ui-accent)]"
+                  style={{ colorScheme: 'dark' }}
                 >
-                  <option value="">Filtrar por documento (opcional)</option>
+                  <option
+                    value=""
+                    style={{
+                      color: '#F3F1EB',
+                      backgroundColor: '#161C24',
+                    }}
+                  >
+                    Filtrar por documento (opcional)
+                  </option>
                   {(docs ?? [])
                     .filter(doc => !selectedDocs.some(item => item.doc_id === doc.doc_id))
                     .map(doc => (
-                      <option key={doc.doc_id} value={doc.doc_id}>
+                      <option
+                        key={doc.doc_id}
+                        value={doc.doc_id}
+                        style={{
+                          color: '#F3F1EB',
+                          backgroundColor: '#161C24',
+                        }}
+                      >
                         {doc.file_name} ({doc.chunk_count} chunks)
                       </option>
                     ))}
@@ -2347,7 +2483,7 @@ export function Chat() {
                   type="button"
                   variant="outline"
                   size="sm"
-                  disabled={!selectedDoc || isPending || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)}
+                  disabled={!selectedDoc || flashcardBatchMut.isPending || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)}
                   onClick={() => {
                     const docToAdd = (docs ?? []).find(doc => doc.doc_id === selectedDoc)
                     if (!docToAdd || selectedDocs.some(item => item.doc_id === docToAdd.doc_id)) return
@@ -2359,7 +2495,6 @@ export function Chat() {
                       active_doc_names: nextDocs.map(doc => doc.file_name),
                     }))
                     setSelectedDoc('')
-                    // If there's a pending flashcard command with no docs, resolve it with the newly selected doc
                     if (pendingFlashcardCommand && pendingFlashcardCommand.docs.length === 0) {
                       const scopeLabel = `documento selecionado "${docToAdd.file_name}"`
                       setPendingFlashcardCommand({
@@ -2379,9 +2514,9 @@ export function Chat() {
                   {selectedDocs.map(doc => (
                     <span
                       key={doc.doc_id}
-                      className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs text-zinc-200"
+                      className="inline-flex items-center gap-1 rounded-full border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] px-2.5 py-1 text-xs text-[color:var(--ui-text)]"
                     >
-                      <FileText className="h-3 w-3 text-zinc-500" />
+                      <FileText className="h-3 w-3 text-[color:var(--ui-text-meta)]" />
                       {doc.file_name}
                       <button
                         type="button"
@@ -2394,7 +2529,7 @@ export function Chat() {
                             active_doc_names: nextDocs.map(item => item.file_name),
                           }))
                         }}
-                        className="text-zinc-400 hover:text-red-400"
+                        className="text-[color:var(--ui-text-meta)] transition-colors hover:text-rose-300"
                       >
                         <X className="h-3 w-3" />
                       </button>
@@ -2402,78 +2537,88 @@ export function Chat() {
                   ))}
                 </div>
               )}
-              <label className="flex items-center gap-2 text-xs text-zinc-500 cursor-pointer">
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-[color:var(--ui-text-meta)]">
                 <input
                   type="checkbox"
                   checked={strictGrounding}
                   onChange={e => setStrictGrounding(e.target.checked)}
                   disabled={
                     !isStrictGroundingEnabled
-                    || isPending
+                    || flashcardBatchMut.isPending
                     || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)
                   }
-                  className="accent-blue-600"
+                  className="accent-[color:var(--ui-accent)]"
                 />
-                Modo strict grounding (respostas só com evidência forte)
+                Modo strict grounding (respostas so com evidencia forte)
               </label>
               {isStrictGroundingEnabled && strictGroundingFromPreferences && !strictGrounding && (
-                <p className="text-[11px] text-zinc-500">
-                  Strict grounding desta mensagem está ativo por preferência de rigor.
+                <p className="text-[11px] text-[color:var(--ui-text-meta)]">
+                  Strict grounding desta mensagem esta ativo por preferencia de rigor.
                 </p>
               )}
               {!isStrictGroundingEnabled && (
-                <p className="text-[11px] text-zinc-500">
-                  Strict grounding está desativado por configuração do workspace.
+                <p className="text-[11px] text-[color:var(--ui-text-meta)]">
+                  Strict grounding esta desativado por configuracao do workspace.
                 </p>
               )}
             </div>
           )}
 
-          <div className="flex gap-2">
-            <Input
-              placeholder="Faça uma pergunta sobre seus documentos ou crie um lembrete..."
+          <div className="flex items-end gap-2">
+            <textarea
+              placeholder="Pergunte sobre seus documentos ou crie um lembrete..."
               value={input}
-              onChange={e => setInput(e.target.value)}
+              rows={1}
+              onChange={event => setInput(event.target.value)}
               onKeyDown={handleKeyDown}
-              disabled={isPending || isStreaming || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)}
-              className="flex-1 bg-zinc-900 border-zinc-700"
+              disabled={isComposerBlocked}
+              className="max-h-36 min-h-[44px] flex-1 resize-none rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)] px-3 py-2 text-sm text-[color:var(--ui-text)] outline-none transition-colors placeholder:text-[color:var(--ui-text-meta)] focus:border-[color:var(--ui-accent)] focus:ring-2 focus:ring-[color:var(--ui-accent)]/20"
             />
             <Button
-              onClick={handleSend}
-              disabled={!input.trim() || isPending || isStreaming || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)}
+              onClick={isChatRequestActive ? pauseCurrentGeneration : handleSend}
+              disabled={!isChatRequestActive && (!input.trim() || isComposerBlocked)}
               size="icon"
+              className="h-11 w-11 rounded-xl bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)]"
+              title={isChatRequestActive ? 'Pausar geracao' : 'Enviar mensagem'}
             >
-              {isPending ? (
+              {isChatRequestActive ? (
+                <Pause className="h-4 w-4" />
+              ) : flashcardBatchMut.isPending ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Send className="h-4 w-4" />
               )}
             </Button>
           </div>
+            </div>
+          </div>
         </div>
       </div>
 
       {/* ── Painel de fontes — só aparece quando há fontes ────────────────── */}
       {hasSources && (
-        <div className="flex w-56 shrink-0 flex-col border-l app-divider bg-[color:var(--ui-bg)]">
-          <CardHeader className="border-b app-divider py-3">
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <FileText className="h-4 w-4 text-blue-400" />
-              Fontes Citadas
-              <Badge variant="secondary" className="ml-auto">
-                {activeSources.length}
-              </Badge>
-            </CardTitle>
-          </CardHeader>
-          <div className="p-3 overflow-y-auto flex-1">
+        <aside className="flex w-80 shrink-0 flex-col border-l border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface)]/96">
+          <div className="flex items-center gap-2 border-b border-[color:var(--ui-border-soft)] px-5 py-4">
+            <FileText className="h-4 w-4 text-[color:var(--ui-accent)]" />
+            <p className="text-sm font-semibold text-[color:var(--ui-text)]">Fontes citadas</p>
+            <Badge
+              variant="secondary"
+              className="ml-auto border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[10px] text-[color:var(--ui-text-dim)]"
+            >
+              {activeSources.length}
+            </Badge>
+          </div>
+          <div className="flex-1 overflow-y-auto px-4 py-4">
             <SourcePanel
               sources={activeSources}
               selected={selectedSource}
-              onSelect={s => setSelectedSource(prev => prev?.fonte_n === s.fonte_n ? null : s)}
+              onSelect={source => setSelectedSource(prev => prev?.fonte_n === source.fonte_n ? null : source)}
             />
           </div>
-        </div>
+        </aside>
       )}
     </div>
   )
 }
+
+

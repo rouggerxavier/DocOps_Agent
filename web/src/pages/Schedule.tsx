@@ -29,21 +29,21 @@ const MONTH_NAMES = [
 ]
 
 const EVENT_COLORS = [
-  'bg-blue-500/30 text-blue-200 border-blue-400/50',
-  'bg-emerald-500/30 text-emerald-200 border-emerald-400/50',
-  'bg-violet-500/30 text-violet-200 border-violet-400/50',
-  'bg-amber-500/30 text-amber-200 border-amber-400/50',
-  'bg-rose-500/30 text-rose-200 border-rose-400/50',
-  'bg-cyan-500/30 text-cyan-200 border-cyan-400/50',
+  'border-l-[color:var(--ui-accent)] bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]',
+  'border-l-emerald-400 bg-emerald-500/12 text-emerald-300',
+  'border-l-violet-400 bg-violet-500/12 text-violet-300',
+  'border-l-amber-400 bg-amber-500/12 text-amber-300',
+  'border-l-cyan-400 bg-cyan-500/12 text-cyan-300',
+  'border-l-rose-400 bg-rose-500/12 text-rose-300',
 ]
 
 const EVENT_BG_COLORS = [
-  'bg-blue-500/25 border-blue-400/60 text-blue-100',
-  'bg-emerald-500/25 border-emerald-400/60 text-emerald-100',
-  'bg-violet-500/25 border-violet-400/60 text-violet-100',
-  'bg-amber-500/25 border-amber-400/60 text-amber-100',
-  'bg-rose-500/25 border-rose-400/60 text-rose-100',
-  'bg-cyan-500/25 border-cyan-400/60 text-cyan-100',
+  'bg-[color:var(--ui-accent-soft)] border-l-[color:var(--ui-accent)] text-[color:var(--ui-text)]',
+  'bg-emerald-500/14 border-l-emerald-400 text-emerald-100',
+  'bg-violet-500/14 border-l-violet-400 text-violet-100',
+  'bg-amber-500/14 border-l-amber-400 text-amber-100',
+  'bg-rose-500/14 border-l-rose-400 text-rose-100',
+  'bg-cyan-500/14 border-l-cyan-400 text-cyan-100',
 ]
 
 // Hora de início do grid semanal (6h da manhã)
@@ -54,7 +54,10 @@ const WEEK_END_HOUR = 23
 const HOUR_HEIGHT = 56
 
 function toDateKey(d: Date) {
-  return d.toISOString().slice(0, 10)
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
 
 function startOfMonth(d: Date) {
@@ -133,7 +136,7 @@ function durationToHeight(startMinutes: number, endMinutes: number): number {
 function EventPill({ title, colorIdx }: { title: string; colorIdx: number }) {
   const cls = EVENT_COLORS[colorIdx % EVENT_COLORS.length]
   return (
-    <div className={cn('truncate rounded px-1.5 py-0.5 text-[10px] font-medium border', cls)}>
+    <div className={cn('truncate rounded-r-sm border-l-2 px-1.5 py-0.5 text-[10px] font-medium leading-none', cls)}>
       {title}
     </div>
   )
@@ -142,20 +145,20 @@ function EventPill({ title, colorIdx }: { title: string; colorIdx: number }) {
 // ── Card de lembrete na lista lateral ──────────────────────────────────────
 function ReminderCard({ reminder, onDelete }: { reminder: ReminderItem; onDelete: () => void }) {
   return (
-    <div className="group flex items-start gap-3 rounded-xl border border-zinc-800/60 bg-zinc-900/60 p-3 transition-all hover:border-zinc-700">
-      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-blue-500/15">
-        <Bell className="h-3.5 w-3.5 text-blue-400" />
+    <div className="group flex items-start gap-3 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)]/45 p-3 transition-all hover:border-[color:var(--ui-border-strong)] hover:bg-[color:var(--ui-surface-2)]">
+      <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[color:var(--ui-accent-soft)]">
+        <Bell className="h-3.5 w-3.5 text-[color:var(--ui-accent)]" />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="truncate text-sm font-medium text-zinc-200">{reminder.title}</p>
-        <p className="text-xs text-zinc-500">
+        <p className="truncate text-sm font-semibold text-[color:var(--ui-text)]">{reminder.title}</p>
+        <p className="text-xs text-[color:var(--ui-text-meta)]">
           {reminder.all_day ? 'Dia inteiro' : formatTime(reminder.starts_at)}
           {reminder.note ? ` · ${reminder.note}` : ''}
         </p>
       </div>
       <button
         onClick={onDelete}
-        className="shrink-0 text-zinc-600 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+        className="shrink-0 text-[color:var(--ui-text-meta)] opacity-0 transition-opacity hover:text-rose-400 group-hover:opacity-100"
       >
         <X className="h-3.5 w-3.5" />
       </button>
@@ -167,20 +170,20 @@ function ReminderCard({ reminder, onDelete }: { reminder: ReminderItem; onDelete
 function ScheduleCard({ item, onDelete, colorIdx }: { item: ScheduleItem; onDelete: () => void; colorIdx: number }) {
   const cls = EVENT_COLORS[colorIdx % EVENT_COLORS.length]
   return (
-    <div className="group flex items-start gap-3 rounded-xl border border-zinc-800/60 bg-zinc-900/60 p-3 transition-all hover:border-zinc-700">
+    <div className="group flex items-start gap-3 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)]/45 p-3 transition-all hover:border-[color:var(--ui-border-strong)] hover:bg-[color:var(--ui-surface-2)]">
       <div className={cn('mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full border', cls)}>
         <Clock className="h-3.5 w-3.5" />
       </div>
       <div className="flex-1 min-w-0">
-        <p className="truncate text-sm font-medium text-zinc-200">{item.title}</p>
-        <p className="text-xs text-zinc-500">
+        <p className="truncate text-sm font-semibold text-[color:var(--ui-text)]">{item.title}</p>
+        <p className="text-xs text-[color:var(--ui-text-meta)]">
           {item.start_time} – {item.end_time}
           {item.note ? ` · ${item.note}` : ''}
         </p>
       </div>
       <button
         onClick={onDelete}
-        className="shrink-0 text-zinc-600 opacity-0 transition-opacity hover:text-red-400 group-hover:opacity-100"
+        className="shrink-0 text-[color:var(--ui-text-meta)] opacity-0 transition-opacity hover:text-rose-400 group-hover:opacity-100"
       >
         <X className="h-3.5 w-3.5" />
       </button>
@@ -200,19 +203,19 @@ function CollapsibleForm({
 }) {
   const [open, setOpen] = useState(defaultOpen)
   return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900/50 overflow-hidden">
+    <div className="overflow-hidden rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)]">
       <button
         onClick={() => setOpen(v => !v)}
-        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-zinc-800/40"
+        className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-[color:var(--ui-surface-2)]"
       >
         <div className={cn('flex h-7 w-7 shrink-0 items-center justify-center rounded-full', color)}>
           {icon}
         </div>
-        <span className="flex-1 text-sm font-semibold text-zinc-200">{title}</span>
-        <Plus className={cn('h-4 w-4 text-zinc-500 transition-transform', open && 'rotate-45')} />
+        <span className="flex-1 text-sm font-semibold text-[color:var(--ui-text)]">{title}</span>
+        <Plus className={cn('h-4 w-4 text-[color:var(--ui-text-meta)] transition-transform', open && 'rotate-45')} />
       </button>
       {open && (
-        <div className="border-t border-zinc-800/60 px-4 pb-4 pt-3 space-y-3">
+        <div className="space-y-3 border-t border-[color:var(--ui-border-soft)] px-4 pb-4 pt-3">
           {children}
         </div>
       )}
@@ -288,7 +291,7 @@ function BlockPopover({
     if (block.kind === 'schedule') {
       onUpdateSchedule(block.item.id, { title, day_of_week: block.item.day_of_week, start_time: startTime, end_time: endTime, note: note || null })
     } else {
-      const dateStr = new Date(block.item.starts_at).toISOString().slice(0, 10)
+      const dateStr = toDateKey(new Date(block.item.starts_at))
       onUpdateReminder(block.item.id, {
         title,
         starts_at: new Date(`${dateStr}T${startTime}:00`).toISOString(),
@@ -300,34 +303,34 @@ function BlockPopover({
   }
 
   return (
-    <div ref={ref} style={style} className="w-56 rounded-xl border border-zinc-700 bg-zinc-900 shadow-2xl shadow-black/60 overflow-hidden">
+    <div ref={ref} style={style} className="w-60 overflow-hidden rounded-xl border border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-2)] shadow-2xl shadow-black/60">
       {/* Cabeçalho colorido */}
-      <div className={cn('px-3 py-2 border-b border-zinc-800 flex items-center justify-between', colorCls.split(' ').slice(0, 1).join(' '), 'bg-opacity-30')}>
+      <div className={cn('flex items-center justify-between border-b border-[color:var(--ui-border-soft)] px-3 py-2', colorCls.split(' ').slice(0, 1).join(' '), 'bg-opacity-30')}>
         <span className="text-xs font-semibold truncate max-w-[160px]">
           {block.kind === 'schedule' ? 'Bloco fixo' : 'Lembrete'}
         </span>
-        <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300 ml-1">
+        <button onClick={onClose} className="ml-1 text-[color:var(--ui-text-meta)] hover:text-[color:var(--ui-text)]">
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
 
       {!editing ? (
         <div className="p-3 space-y-2">
-          <p className="text-sm font-semibold text-zinc-100 leading-tight">
+          <p className="text-sm font-semibold leading-tight text-[color:var(--ui-text)]">
             {block.kind === 'schedule' ? block.item.title : block.item.title}
           </p>
-          <p className="text-xs text-zinc-400">
+          <p className="text-xs text-[color:var(--ui-text-meta)]">
             {block.kind === 'schedule'
               ? `${block.item.start_time} – ${block.item.end_time}`
               : `${startTime} – ${endTime}`}
           </p>
           {(block.kind === 'schedule' ? block.item.note : block.item.note) && (
-            <p className="text-xs text-zinc-500">{block.kind === 'schedule' ? block.item.note : block.item.note}</p>
+            <p className="text-xs text-[color:var(--ui-text-dim)]">{block.kind === 'schedule' ? block.item.note : block.item.note}</p>
           )}
           <div className="flex gap-2 pt-1">
             <button
               onClick={() => setEditing(true)}
-              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-800 py-1.5 text-xs text-zinc-300 hover:border-zinc-600 hover:text-zinc-100 transition-colors"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-3)] py-1.5 text-xs text-[color:var(--ui-text-dim)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)]"
             >
               <Pencil className="h-3 w-3" /> Editar
             </button>
@@ -352,7 +355,7 @@ function BlockPopover({
                 </button>
                 <button
                   onClick={() => setConfirming(false)}
-                  className="flex items-center justify-center rounded-lg border border-zinc-700 px-2 text-xs text-zinc-400 hover:text-zinc-200 transition-colors"
+                  className="flex items-center justify-center rounded-lg border border-[color:var(--ui-border-strong)] px-2 text-xs text-[color:var(--ui-text-meta)] transition-colors hover:text-[color:var(--ui-text)]"
                 >
                   Cancelar
                 </button>
@@ -366,25 +369,25 @@ function BlockPopover({
             value={title}
             onChange={e => setTitle(e.target.value)}
             placeholder="Título"
-            className="h-7 text-xs bg-zinc-800 border-zinc-700"
+            className="h-7 border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-3)] text-xs text-[color:var(--ui-text)]"
           />
           <div className="grid grid-cols-2 gap-1.5">
-            <Input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="h-7 text-xs bg-zinc-800 border-zinc-700" />
-            <Input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="h-7 text-xs bg-zinc-800 border-zinc-700" />
+            <Input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="h-7 border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-3)] text-xs text-[color:var(--ui-text)]" />
+            <Input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="h-7 border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-3)] text-xs text-[color:var(--ui-text)]" />
           </div>
           <Input
             value={note}
             onChange={e => setNote(e.target.value)}
             placeholder="Observação (opcional)"
-            className="h-7 text-xs bg-zinc-800 border-zinc-700"
+            className="h-7 border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-3)] text-xs text-[color:var(--ui-text)]"
           />
           <div className="flex gap-2">
-            <Button size="sm" className="flex-1 h-7 text-xs" onClick={handleSave} disabled={!title.trim()}>
+            <Button size="sm" className="flex-1 h-7 bg-[color:var(--ui-accent)] text-xs text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)]" onClick={handleSave} disabled={!title.trim()}>
               Salvar
             </Button>
             <button
               onClick={() => setEditing(false)}
-              className="flex items-center justify-center rounded-lg border border-zinc-700 px-2 text-xs text-zinc-400 hover:text-zinc-200"
+              className="flex items-center justify-center rounded-lg border border-[color:var(--ui-border-strong)] px-2 text-xs text-[color:var(--ui-text-meta)] hover:text-[color:var(--ui-text)]"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -424,7 +427,7 @@ function WeekView({
   const remindersByDay = useMemo(() => {
     const map = new Map<string, ReminderItem[]>()
     for (const r of reminders ?? []) {
-      const key = new Date(r.starts_at).toISOString().slice(0, 10)
+      const key = toDateKey(new Date(r.starts_at))
       const bucket = map.get(key) ?? []
       bucket.push(r)
       map.set(key, bucket)
@@ -446,62 +449,83 @@ function WeekView({
   const now = new Date()
   const nowMinutes = now.getHours() * 60 + now.getMinutes()
   const nowTop = minutesToTop(nowMinutes)
-
+  const timeGridStyle: React.CSSProperties = {
+    backgroundImage: 'linear-gradient(to bottom, rgba(53, 57, 64, 0.36) 1px, transparent 1px)',
+    backgroundSize: `100% ${HOUR_HEIGHT}px`,
+  }
 
   return (
     <div className="flex flex-1 flex-col overflow-hidden">
-      {/* Cabeçalho dos dias */}
-      <div className="flex border-b border-zinc-800 bg-zinc-950">
-        {/* espaço para a coluna de horas */}
-        <div className="w-14 shrink-0" />
+      <div className="grid grid-cols-[60px_1fr] border-b border-[color:var(--ui-border-soft)]/70 bg-[color:var(--ui-bg)]">
+        <div className="flex h-16 items-center justify-center border-r border-[color:var(--ui-border-soft)]/60 text-[10px] font-semibold tracking-[0.12em] text-[color:var(--ui-text-meta)]">
+          GMT-3
+        </div>
+        <div className="grid grid-cols-7 h-16">
         {weekDays.map((day, i) => {
           const key = toDateKey(day)
           const isSelected = key === selectedDate
           const isTodayDay = isToday(day)
+          const isWeekend = i >= 5
           return (
             <button
               key={key}
               onClick={() => onSelectDate(key)}
               className={cn(
-                'flex flex-1 flex-col items-center py-3 transition-colors hover:bg-zinc-800/30',
-                isSelected && 'bg-zinc-800/50',
+                  'relative flex flex-col items-center justify-center border-r border-[color:var(--ui-border-soft)]/40 transition-colors',
+                  isSelected
+                    ? 'bg-[color:var(--ui-surface-1)]'
+                    : isWeekend
+                      ? 'bg-[color:var(--ui-bg)]/75 hover:bg-[color:var(--ui-surface-1)]/45'
+                      : 'bg-[color:var(--ui-bg)] hover:bg-[color:var(--ui-surface-1)]/35'
               )}
             >
-              <span className="text-[11px] font-semibold uppercase tracking-widest text-zinc-500">
+              <span
+                className={cn(
+                  'text-[10px] font-bold uppercase tracking-[0.14em]',
+                  isTodayDay ? 'text-[color:var(--ui-accent)]' : isWeekend ? 'text-[color:var(--ui-text-meta)]/55' : 'text-[color:var(--ui-text-meta)]'
+                )}
+              >
                 {WEEKDAY_LABELS[i]}
               </span>
               <span
                 className={cn(
-                  'mt-1 flex h-7 w-7 items-center justify-center rounded-full text-sm font-bold',
-                  isTodayDay ? 'bg-blue-600 text-white' : isSelected ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-300'
+                  'mt-1.5 flex h-8 w-8 items-center justify-center rounded-full text-base font-headline font-bold',
+                  isTodayDay
+                    ? 'bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)]'
+                    : isSelected
+                      ? 'bg-[color:var(--ui-surface-3)] text-[color:var(--ui-text)]'
+                      : isWeekend
+                        ? 'text-[color:var(--ui-text-meta)]/60'
+                        : 'text-[color:var(--ui-text-dim)]'
                 )}
               >
                 {day.getDate()}
               </span>
-              <span className="text-[10px] text-zinc-600">
+              <span className={cn('mt-0.5 text-[10px]', isWeekend ? 'text-[color:var(--ui-text-meta)]/45' : 'text-[color:var(--ui-text-meta)]/65')}>
                 {MONTH_NAMES[day.getMonth()].slice(0, 3)}
               </span>
+              {isTodayDay && !isSelected && (
+                <div className="absolute bottom-1 h-1 w-1 rounded-full bg-[color:var(--ui-accent)]" />
+              )}
             </button>
           )
         })}
+        </div>
       </div>
 
-      {/* Grade de horas */}
       <div className="flex flex-1 overflow-y-auto">
-        {/* Coluna de horas */}
-        <div className="w-14 shrink-0 border-r border-zinc-800 bg-zinc-950/50">
+        <div className="w-[60px] shrink-0 border-r border-[color:var(--ui-border-soft)]/50 bg-[color:var(--ui-bg)]">
           {hours.map(h => (
             <div
               key={h}
               style={{ height: HOUR_HEIGHT }}
-              className="flex items-start justify-end pr-2 pt-1"
+              className="flex items-start justify-center pt-1.5"
             >
-              <span className="text-[10px] font-medium text-zinc-600">{h}h</span>
+              <span className="font-meta text-[10px] font-medium text-[color:var(--ui-text-meta)]/70">{String(h).padStart(2, '0')}:00</span>
             </div>
           ))}
         </div>
 
-        {/* Colunas dos dias */}
         {weekDays.map((day, dayIdx) => {
           const key = toDateKey(day)
           const dayWeekdayIdx = dayIdx // 0=Seg, 6=Dom
@@ -511,39 +535,41 @@ function WeekView({
           const dayReminders = (remindersByDay.get(key) ?? []).filter(r => !r.all_day)
           const isTodayDay = isToday(day)
           const isSelected = key === selectedDate
+          const isWeekend = dayIdx >= 5
 
           return (
             <div
               key={key}
               onClick={() => onSelectDate(key)}
-              style={{ height: HOUR_HEIGHT * hours.length }}
+              style={{
+                height: HOUR_HEIGHT * hours.length,
+                ...(!isSelected && !isTodayDay ? timeGridStyle : {}),
+              }}
               className={cn(
-                'relative flex-1 cursor-pointer border-r border-zinc-800/60',
-                isSelected && 'bg-blue-500/5',
-                isTodayDay && !isSelected && 'bg-zinc-900/30',
+                'relative flex-1 cursor-pointer border-r border-[color:var(--ui-border-soft)]/40 transition-colors',
+                isSelected && 'bg-[color:var(--ui-accent-soft)]/26',
+                isTodayDay && !isSelected && 'bg-[color:var(--ui-surface-1)]/45',
+                isWeekend && !isSelected && !isTodayDay && 'bg-[color:var(--ui-bg)]/65'
               )}
             >
-              {/* Linhas de hora */}
-              {hours.map(h => (
+              {(isSelected || isTodayDay) && hours.map(h => (
                 <div
                   key={h}
                   style={{ top: (h - WEEK_START_HOUR) * HOUR_HEIGHT }}
-                  className="absolute left-0 right-0 border-t border-zinc-800/40"
+                  className="absolute left-0 right-0 border-t border-[color:var(--ui-border-soft)]/35"
                 />
               ))}
 
-              {/* Linha do horário atual (só no dia de hoje) */}
               {isTodayDay && nowMinutes >= WEEK_START_HOUR * 60 && nowMinutes <= WEEK_END_HOUR * 60 + 59 && (
                 <div
                   style={{ top: nowTop }}
                   className="absolute left-0 right-0 z-20 flex items-center"
                 >
-                  <div className="h-2 w-2 rounded-full bg-red-500 -translate-x-1" />
-                  <div className="h-px flex-1 bg-red-500/70" />
+                  <div className="h-2.5 w-2.5 rounded-full bg-[color:var(--ui-accent)] shadow-[0_0_8px_rgba(208,228,255,0.6)] -translate-x-1.5" />
+                  <div className="h-px flex-1 bg-[color:var(--ui-accent)]/65 shadow-[0_0_8px_rgba(208,228,255,0.35)]" />
                 </div>
               )}
 
-              {/* Blocos fixos do cronograma */}
               {daySchedules.map(s => {
                 const startMin = timeToMinutes(s.start_time)
                 const endMin = timeToMinutes(s.end_time)
@@ -561,17 +587,16 @@ function WeekView({
                     }}
                     style={{ top, height: Math.max(height, 24), left: 2, right: 2 }}
                     className={cn(
-                      'absolute z-10 rounded-md border px-1.5 py-1 overflow-hidden cursor-pointer transition-opacity hover:opacity-80',
+                      'absolute z-10 cursor-pointer overflow-hidden rounded-md border-l-[4px] px-2 py-1.5 transition-all duration-150 hover:scale-[1.01] hover:shadow-lg',
                       cls
                     )}
                   >
                     <p className="truncate text-[11px] font-semibold leading-tight">{s.title}</p>
-                    <p className="text-[10px] opacity-70 leading-tight">{s.start_time}–{s.end_time}</p>
+                    <p className="mt-0.5 text-[10px] opacity-70 leading-tight">{s.start_time}–{s.end_time}</p>
                   </div>
                 )
               })}
 
-              {/* Lembretes */}
               {dayReminders.map((r) => {
                 const startIso = r.starts_at
                 const startMin = new Date(startIso).getHours() * 60 + new Date(startIso).getMinutes()
@@ -590,10 +615,10 @@ function WeekView({
                       onBlockClick({ kind: 'reminder', item: r, x: e.clientX + 8, y: e.clientY - 8 })
                     }}
                     style={{ top, height: Math.max(height, 24), left: 2, right: 2 }}
-                    className="absolute z-10 rounded-md border border-blue-500/50 bg-blue-500/20 px-1.5 py-1 overflow-hidden cursor-pointer transition-opacity hover:opacity-80"
+                    className="absolute z-10 cursor-pointer overflow-hidden rounded-md border-l-[4px] border-l-[color:var(--ui-accent)] bg-[color:var(--ui-accent-soft)] px-2 py-1.5 transition-all duration-150 hover:scale-[1.01]"
                   >
-                    <p className="truncate text-[11px] font-semibold text-blue-200 leading-tight">{r.title}</p>
-                    <p className="text-[10px] text-blue-300/70 leading-tight">{formatTime(r.starts_at)}</p>
+                    <p className="truncate text-[11px] font-semibold text-[color:var(--ui-accent)] leading-tight">{r.title}</p>
+                    <p className="mt-0.5 text-[10px] text-[color:var(--ui-accent)]/70 leading-tight">{formatTime(r.starts_at)}</p>
                   </div>
                 )
               })}
@@ -781,7 +806,7 @@ export function Schedule() {
   const remindersByDay = useMemo(() => {
     const map = new Map<string, ReminderItem[]>()
     for (const r of reminders ?? []) {
-      const key = new Date(r.starts_at).toISOString().slice(0, 10)
+      const key = toDateKey(new Date(r.starts_at))
       const bucket = map.get(key) ?? []
       bucket.push(r)
       map.set(key, bucket)
@@ -847,30 +872,30 @@ export function Schedule() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-4rem)] gap-0 overflow-hidden rounded-2xl border app-divider bg-[color:var(--ui-bg-alt)] shadow-[0_16px_36px_rgba(2,4,8,0.3)]">
+    <div className="relative flex h-[calc(100vh-4rem)] gap-0 overflow-hidden rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-bg)] shadow-[0_24px_60px_rgba(0,0,0,0.42)]">
       {/* ── COLUNA ESQUERDA: Calendário ─────────────────────────────────────── */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Header do calendário */}
-        <div className="flex items-center justify-between border-b app-divider bg-[color:var(--ui-bg)] px-6 py-4">
-          <div className="flex items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600/20">
-              <Calendar className="h-4 w-4 text-blue-400" />
+        <div className="flex items-center justify-between border-b border-[color:var(--ui-border-soft)]/70 bg-[color:var(--ui-bg)] px-6 py-4">
+          <div className="flex items-center gap-4">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-[color:var(--ui-accent-soft)]">
+              <Calendar className="h-4 w-4 text-[color:var(--ui-accent)]" />
             </div>
             <div>
-              <h1 className="text-lg font-bold text-zinc-100">
+              <h1 className="font-headline text-xl font-bold text-[color:var(--ui-text)]">
                 {view === 'week' ? weekLabel : `${MONTH_NAMES[monthCursor.getMonth()]} ${monthCursor.getFullYear()}`}
               </h1>
-              <p className="text-xs text-zinc-500">Calendário pessoal</p>
+              <p className="app-kicker mt-0.5">Calendário pessoal</p>
             </div>
           </div>
           <div className="flex items-center gap-2">
             {/* Toggle view */}
-            <div className="flex rounded-lg border border-zinc-800 bg-zinc-900 p-0.5">
+            <div className="flex rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] p-0.5">
               <button
                 onClick={() => setView('month')}
                 className={cn(
-                  'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-                  view === 'month' ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
+                  'rounded-md px-3 py-1.5 text-xs font-semibold transition-colors',
+                  view === 'month' ? 'bg-[color:var(--ui-surface-2)] text-[color:var(--ui-accent)]' : 'text-[color:var(--ui-text-meta)] hover:text-[color:var(--ui-text)]'
                 )}
               >
                 Mês
@@ -878,8 +903,8 @@ export function Schedule() {
               <button
                 onClick={() => setView('week')}
                 className={cn(
-                  'rounded-md px-3 py-1.5 text-xs font-medium transition-colors',
-                  view === 'week' ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-500 hover:text-zinc-300'
+                  'rounded-md px-3 py-1.5 text-xs font-semibold transition-colors',
+                  view === 'week' ? 'bg-[color:var(--ui-surface-2)] text-[color:var(--ui-accent)]' : 'text-[color:var(--ui-text-meta)] hover:text-[color:var(--ui-text)]'
                 )}
               >
                 Semana
@@ -891,7 +916,7 @@ export function Schedule() {
                 if (view === 'week') prevWeek()
                 else setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth() - 1, 1))
               }}
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-200"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)]"
             >
               <ChevronLeft className="h-4 w-4" />
             </button>
@@ -901,7 +926,7 @@ export function Schedule() {
                 setMonthCursor(startOfMonth(now))
                 setSelectedDate(toDateKey(now))
               }}
-              className="rounded-lg border border-zinc-800 bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-200"
+              className="rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] px-3 py-1.5 text-xs font-semibold text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)]"
             >
               Hoje
             </button>
@@ -910,7 +935,7 @@ export function Schedule() {
                 if (view === 'week') nextWeek()
                 else setMonthCursor(new Date(monthCursor.getFullYear(), monthCursor.getMonth() + 1, 1))
               }}
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900 text-zinc-400 transition-colors hover:border-zinc-700 hover:text-zinc-200"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border-strong)] hover:text-[color:var(--ui-text)]"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
@@ -919,18 +944,24 @@ export function Schedule() {
 
         {/* Conteúdo da view */}
         {view === 'month' ? (
-          <div className="flex-1 overflow-auto p-3">
+          <div className="flex-1 overflow-auto p-5">
             {/* Cabeçalho dos dias da semana */}
-            <div className="mb-2 grid grid-cols-7 gap-1">
-              {WEEKDAY_LABELS.map(label => (
-                <div key={label} className="py-2 text-center text-[11px] font-semibold uppercase tracking-widest text-zinc-600">
+            <div className="mb-3 grid grid-cols-7">
+              {WEEKDAY_LABELS.map((label, i) => (
+                <div
+                  key={label}
+                  className={cn(
+                    'py-2 text-center text-[10px] font-bold uppercase tracking-[0.14em]',
+                    i >= 5 ? 'text-[color:var(--ui-text-meta)]/45' : 'text-[color:var(--ui-text-meta)]/70'
+                  )}
+                >
                   {label}
                 </div>
               ))}
             </div>
 
             {/* Células mensais */}
-            <div className="grid grid-cols-7 gap-1">
+            <div className="grid grid-cols-7 gap-px overflow-hidden rounded-2xl border border-[color:var(--ui-border-soft)]/55 bg-[color:var(--ui-border-soft)]/35">
               {monthGrid.map(cell => {
                 const key = toDateKey(cell)
                 const isCurrentMonth = cell.getMonth() === monthCursor.getMonth()
@@ -946,30 +977,32 @@ export function Schedule() {
                     key={key}
                     onClick={() => handleSelectDate(key)}
                     className={cn(
-                      'group relative flex min-h-[90px] flex-col rounded-xl border p-2 text-left transition-all duration-150',
+                      'group relative flex min-h-[132px] cursor-pointer flex-col p-3 text-left transition-all duration-150',
                       isSelected
-                        ? 'border-blue-500/60 bg-blue-500/10 ring-1 ring-blue-500/30'
+                        ? 'bg-[color:var(--ui-accent-soft)] ring-1 ring-inset ring-[color:var(--ui-accent)]/45'
                         : isTodayCell
-                          ? 'border-zinc-700 bg-zinc-900 hover:border-zinc-600'
-                          : 'border-zinc-800/60 bg-zinc-900/30 hover:border-zinc-700 hover:bg-zinc-900/60',
-                      !isCurrentMonth && 'opacity-30'
+                          ? 'bg-[color:var(--ui-surface-1)] ring-1 ring-inset ring-[color:var(--ui-accent)]/28'
+                          : 'bg-[color:var(--ui-surface-1)] hover:bg-[color:var(--ui-surface-2)]',
+                      !isCurrentMonth && 'bg-[color:var(--ui-bg)]/65 opacity-60'
                     )}
                   >
                     <div className="mb-1.5 flex items-center justify-between">
                       <span
                         className={cn(
-                          'flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold',
+                          'flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold',
                           isTodayCell
-                            ? 'bg-blue-600 text-white'
+                            ? 'bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)]'
                             : isSelected
-                              ? 'text-blue-300'
-                              : 'text-zinc-400'
+                              ? 'text-[color:var(--ui-accent)]'
+                              : !isCurrentMonth
+                                ? 'text-[color:var(--ui-text-meta)]/55'
+                                : 'text-[color:var(--ui-text-dim)]'
                         )}
                       >
                         {cell.getDate()}
                       </span>
                       {(dayReminders.length + daySchedules.length) > 0 && (
-                        <span className="text-[10px] font-medium text-zinc-600">
+                        <span className="text-[10px] font-medium text-[color:var(--ui-text-meta)]">
                           {dayReminders.length + daySchedules.length}
                         </span>
                       )}
@@ -983,7 +1016,7 @@ export function Schedule() {
                         <EventPill key={`r-${r.id}`} title={r.title} colorIdx={i} />
                       ))}
                       {(dayReminders.length + daySchedules.length) > 3 && (
-                        <span className="text-[10px] text-zinc-600">
+                        <span className="mt-0.5 text-[10px] text-[color:var(--ui-text-meta)]">
                           +{dayReminders.length + daySchedules.length - 3} mais
                         </span>
                       )}
@@ -1006,32 +1039,32 @@ export function Schedule() {
       </div>
 
       {/* ── COLUNA DIREITA: Detalhes + Formulários ───────────────────────────── */}
-      <div className="flex w-80 shrink-0 flex-col gap-0 overflow-hidden border-l app-divider">
+      <div className="flex w-[380px] shrink-0 flex-col gap-0 overflow-hidden border-l border-[color:var(--ui-border-soft)]/70 bg-[color:var(--ui-surface)]">
         {/* Cabeçalho do painel lateral */}
-        <div className="border-b app-divider bg-[color:var(--ui-bg)] px-4 py-4">
-          <p className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Selecionado</p>
-          <p className="mt-0.5 text-sm font-semibold capitalize text-zinc-200">{selectedDateLabel}</p>
+        <div className="border-b border-[color:var(--ui-border-soft)]/70 px-5 py-5">
+          <p className="app-kicker">Selecionado</p>
+          <p className="mt-1 font-headline text-base font-bold capitalize text-[color:var(--ui-text)]">{selectedDateLabel}</p>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
+        <div className="flex-1 space-y-5 overflow-y-auto px-5 py-5">
           {/* Resumo atual */}
           {overview && (overview.current_schedule_item || overview.next_schedule_item) && (
-            <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+            <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/8 p-3.5">
               <div className="flex items-center gap-2 mb-2">
-                <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                <span className="text-xs font-semibold text-emerald-400">Agora</span>
+                <div className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.65)]" />
+                <span className="text-[11px] font-bold uppercase tracking-[0.14em] text-emerald-400">Agora</span>
               </div>
               {overview.current_schedule_item ? (
-                <p className="text-sm text-zinc-200">
+                <p className="text-sm text-[color:var(--ui-text)]">
                   {overview.current_schedule_item.title}
-                  <span className="ml-1 text-xs text-zinc-500">
+                  <span className="ml-1 text-xs text-[color:var(--ui-text-meta)]">
                     até {overview.current_schedule_item.end_time}
                   </span>
                 </p>
               ) : overview.next_schedule_item ? (
-                <p className="text-sm text-zinc-400">
-                  Próximo: <span className="text-zinc-200">{overview.next_schedule_item.title}</span>
-                  <span className="ml-1 text-xs text-zinc-500">às {overview.next_schedule_item.start_time}</span>
+                <p className="text-sm text-[color:var(--ui-text-dim)]">
+                  Próximo: <span className="text-[color:var(--ui-text)]">{overview.next_schedule_item.title}</span>
+                  <span className="ml-1 text-xs text-[color:var(--ui-text-meta)]">às {overview.next_schedule_item.start_time}</span>
                 </p>
               ) : null}
             </div>
@@ -1040,20 +1073,20 @@ export function Schedule() {
           {/* Lembretes do dia */}
           <div>
             <div className="mb-2 flex items-center gap-2">
-              <Bell className="h-3.5 w-3.5 text-blue-400" />
-              <span className="text-xs font-semibold text-zinc-400">Lembretes</span>
+              <Bell className="h-3.5 w-3.5 text-[color:var(--ui-accent)]" />
+              <span className="app-kicker">Lembretes</span>
               {selectedDayReminders.length > 0 && (
-                <Badge className="ml-auto h-4 bg-blue-600/20 px-1.5 text-[10px] text-blue-300 border-blue-600/30">
+                <Badge className="ml-auto h-4 border-[color:var(--ui-accent)]/35 bg-[color:var(--ui-accent-soft)] px-1.5 text-[10px] text-[color:var(--ui-accent)]">
                   {selectedDayReminders.length}
                 </Badge>
               )}
             </div>
             {remindersLoading ? (
               <div className="space-y-2">
-                {[1, 2].map(i => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}
+                {[1, 2].map(i => <Skeleton key={i} className="h-14 w-full rounded-xl bg-[color:var(--ui-surface-2)]" />)}
               </div>
             ) : selectedDayReminders.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-zinc-800 py-4 text-center text-xs text-zinc-600">
+              <p className="rounded-xl border border-dashed border-[color:var(--ui-border-soft)] py-4 text-center text-xs text-[color:var(--ui-text-meta)]">
                 Nenhum lembrete neste dia
               </p>
             ) : (
@@ -1073,15 +1106,15 @@ export function Schedule() {
           <div>
             <div className="mb-2 flex items-center gap-2">
               <AlignJustify className="h-3.5 w-3.5 text-violet-400" />
-              <span className="text-xs font-semibold text-zinc-400">Cronograma fixo</span>
-              <span className="ml-1 text-xs text-zinc-600">— {WEEKDAY_FULL[selectedWeekday]}</span>
+              <span className="app-kicker">Cronograma fixo</span>
+              <span className="ml-1 text-[10px] text-[color:var(--ui-text-meta)]">— {WEEKDAY_FULL[selectedWeekday]}</span>
             </div>
             {schedulesLoading ? (
               <div className="space-y-2">
-                {[1].map(i => <Skeleton key={i} className="h-14 w-full rounded-xl" />)}
+                {[1].map(i => <Skeleton key={i} className="h-14 w-full rounded-xl bg-[color:var(--ui-surface-2)]" />)}
               </div>
             ) : selectedDaySchedules.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-zinc-800 py-4 text-center text-xs text-zinc-600">
+              <p className="rounded-xl border border-dashed border-[color:var(--ui-border-soft)] py-4 text-center text-xs text-[color:var(--ui-text-meta)]">
                 Nenhum bloco para este dia
               </p>
             ) : (
@@ -1103,7 +1136,7 @@ export function Schedule() {
             <div>
               <div className="mb-2 flex items-center gap-2">
                 <Sparkles className="h-3.5 w-3.5 text-amber-400" />
-                <span className="text-xs font-semibold text-zinc-400">Todos os blocos semanais</span>
+                <span className="app-kicker">Todos os blocos semanais</span>
               </div>
               <div className="space-y-1.5">
                 {(schedules ?? []).map((item, i) => (
@@ -1121,47 +1154,49 @@ export function Schedule() {
           {/* Formulários */}
           <CollapsibleForm
             title="Novo lembrete"
-            icon={<Bell className="h-3.5 w-3.5 text-blue-400" />}
-            color="bg-blue-500/15"
+            icon={<Bell className="h-3.5 w-3.5 text-[color:var(--ui-accent)]" />}
+            color="bg-[color:var(--ui-accent-soft)]"
           >
             <Input
               placeholder="Título do lembrete"
               value={reminderTitle}
               onChange={e => setReminderTitle(e.target.value)}
-              className="bg-zinc-800/60 border-zinc-700"
+              className="border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-3)] text-[color:var(--ui-text)] placeholder:text-[color:var(--ui-text-meta)]"
             />
             <Input
               type="date"
               value={reminderDate}
               onChange={e => setReminderDate(e.target.value)}
-              className="bg-zinc-800/60 border-zinc-700"
+              className="border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-3)] text-[color:var(--ui-text)]"
             />
             {!reminderAllDay && (
               <div className="grid grid-cols-2 gap-2">
-                <Input type="time" value={reminderStartTime} onChange={e => setReminderStartTime(e.target.value)} className="bg-zinc-800/60 border-zinc-700" />
-                <Input type="time" value={reminderEndTime} onChange={e => setReminderEndTime(e.target.value)} className="bg-zinc-800/60 border-zinc-700" />
+                <Input type="time" value={reminderStartTime} onChange={e => setReminderStartTime(e.target.value)} className="border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-3)] text-[color:var(--ui-text)]" />
+                <Input type="time" value={reminderEndTime} onChange={e => setReminderEndTime(e.target.value)} className="border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-3)] text-[color:var(--ui-text)]" />
               </div>
             )}
             <Input
               placeholder="Observação (opcional)"
               value={reminderNote}
               onChange={e => setReminderNote(e.target.value)}
-              className="bg-zinc-800/60 border-zinc-700"
+              className="border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-3)] text-[color:var(--ui-text)] placeholder:text-[color:var(--ui-text-meta)]"
             />
-            <label className="flex cursor-pointer items-center gap-2 text-xs text-zinc-400">
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-[color:var(--ui-text-dim)]">
               <div
                 onClick={() => setReminderAllDay(v => !v)}
                 className={cn(
                   'flex h-4 w-4 items-center justify-center rounded border transition-colors',
-                  reminderAllDay ? 'border-blue-500 bg-blue-600' : 'border-zinc-600 bg-zinc-800'
+                  reminderAllDay
+                    ? 'border-[color:var(--ui-accent)] bg-[color:var(--ui-accent)]'
+                    : 'border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-3)]'
                 )}
               >
-                {reminderAllDay && <Check className="h-2.5 w-2.5 text-white" />}
+                {reminderAllDay && <Check className="h-2.5 w-2.5 text-[color:var(--ui-bg)]" />}
               </div>
               Dia inteiro
             </label>
             <Button
-              className="w-full"
+              className="w-full bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)]"
               onClick={() => createReminder.mutate()}
               disabled={!reminderTitle.trim() || createReminder.isPending}
             >
@@ -1178,29 +1213,29 @@ export function Schedule() {
               placeholder="Atividade fixa"
               value={scheduleTitle}
               onChange={e => setScheduleTitle(e.target.value)}
-              className="bg-zinc-800/60 border-zinc-700"
+              className="border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-3)] text-[color:var(--ui-text)] placeholder:text-[color:var(--ui-text-meta)]"
             />
             <select
               value={scheduleDay}
               onChange={e => setScheduleDay(parseInt(e.target.value))}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-800/60 px-3 py-2 text-sm text-zinc-100"
+              className="w-full rounded-md border border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-3)] px-3 py-2 text-sm text-[color:var(--ui-text)]"
             >
               {WEEKDAY_FULL.map((label, idx) => (
                 <option key={label} value={idx}>{label}</option>
               ))}
             </select>
             <div className="grid grid-cols-2 gap-2">
-              <Input type="time" value={scheduleStart} onChange={e => setScheduleStart(e.target.value)} className="bg-zinc-800/60 border-zinc-700" />
-              <Input type="time" value={scheduleEnd} onChange={e => setScheduleEnd(e.target.value)} className="bg-zinc-800/60 border-zinc-700" />
+              <Input type="time" value={scheduleStart} onChange={e => setScheduleStart(e.target.value)} className="border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-3)] text-[color:var(--ui-text)]" />
+              <Input type="time" value={scheduleEnd} onChange={e => setScheduleEnd(e.target.value)} className="border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-3)] text-[color:var(--ui-text)]" />
             </div>
             <Input
               placeholder="Observação (opcional)"
               value={scheduleNote}
               onChange={e => setScheduleNote(e.target.value)}
-              className="bg-zinc-800/60 border-zinc-700"
+              className="border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-3)] text-[color:var(--ui-text)] placeholder:text-[color:var(--ui-text-meta)]"
             />
             <Button
-              className="w-full"
+              className="w-full bg-violet-600 text-white hover:bg-violet-700"
               onClick={() => createSchedule.mutate()}
               disabled={!scheduleTitle.trim() || createSchedule.isPending}
             >
