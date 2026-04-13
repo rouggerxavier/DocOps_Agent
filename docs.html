@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="pt-br"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>DocOps Agent - Documentos</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;600;700;800&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        fontFamily: {
+          headline: ["Manrope"],
+          body: ["Inter"],
+          meta: ["IBM Plex Mono"],
+        },
+      },
+    },
+  }
+</script>
+<style>
+  /* ── Design tokens ── */
+  :root {
+    --ui-bg:           #0e1012;
+    --ui-bg-alt:       #121417;
+    --ui-surface:      #15181b;
+    --ui-surface-1:    #15181b;
+    --ui-surface-2:    #1b1f23;
+    --ui-surface-3:    #20252a;
+    --ui-border:       #272b30;
+    --ui-border-soft:  #23272b;
+    --ui-border-strong:#343941;
+    --ui-text:         #f4f0e8;
+    --ui-text-dim:     #a8aea9;
+    --ui-text-meta:    #7f847e;
+    --ui-accent:       #d0e4ff;
+    --ui-accent-strong:#a3c9f8;
+    --ui-accent-soft:  rgba(208,228,255,0.12);
+    --ui-success:      #6da97b;
+    --ui-warning:      #d4a86c;
+    --ui-danger:       #ca6f67;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background-color: var(--ui-bg);
+    color: var(--ui-text);
+    font-family: 'Inter', sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4, .font-headline { font-family: 'Manrope', sans-serif; }
+
+  .material-symbols-outlined {
+    font-variation-settings: 'FILL' 0, 'wght' 300, 'GRAD' 0, 'opsz' 24;
+  }
+
+  /* ── Editorial atmospheric background ── */
+  .app-editorial {
+    position: relative;
+    background-color: var(--ui-bg);
+  }
+
+  .app-editorial::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(72% 46% at 82% 10%, rgba(201,139,94,0.12), transparent 58%),
+      radial-gradient(56% 34% at 12% 14%, rgba(244,240,232,0.06), transparent 68%),
+      linear-gradient(180deg, #0e1012 0%, #121417 40%, #0e1012 100%);
+  }
+
+  .app-editorial::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.06;
+    background-image: radial-gradient(rgba(244,240,232,0.9) 0.5px, transparent 0.5px);
+    background-size: 5px 5px;
+    mask-image: linear-gradient(to bottom, transparent, black 16%, black 84%, transparent);
+  }
+
+  /* ── App divider ── */
+  .app-divider {
+    border-color: color-mix(in srgb, var(--ui-border) 80%, transparent);
+  }
+
+  /* ── Status orb ── */
+  .status-orb {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    display: inline-block;
+    flex-shrink: 0;
+  }
+
+  /* ── Scrollbar ── */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background: color-mix(in srgb, var(--ui-border-strong) 82%, transparent);
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--ui-accent) 52%, var(--ui-border-strong));
+    background-clip: padding-box;
+  }
+</style>
+<style>
+  body { min-height: max(884px, 100dvh); }
+</style>
+</head>
+
+<body>
+<!-- Root: editorial layout -->
+<div class="app-editorial flex min-h-screen" style="color: var(--ui-text);">
+
+  <!-- ── Sidebar (Desktop) ── -->
+  <aside class="hidden md:flex fixed inset-y-0 left-0 z-40 w-64 flex-col border-r app-divider px-4 py-6 backdrop-blur-sm"
+         style="background-color: color-mix(in srgb, var(--ui-bg) 96%, transparent);">
+
+    <div class="mb-6 px-2">
+      <p class="font-headline text-2xl font-bold tracking-tight" style="color: var(--ui-accent);">DocOps Agent</p>
+    </div>
+
+    <nav class="flex-1 space-y-1 overflow-y-auto px-1 py-2">
+
+      <a href="#" class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-bold transition-colors"
+         style="border-left: 2px solid var(--ui-accent); background-color: var(--ui-surface-2); color: var(--ui-accent);">
+        <span class="material-symbols-outlined" style="font-size: 18px;">description</span>
+        Documentos
+      </a>
+
+      <a href="#" class="flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-sm font-medium transition-colors"
+         style="color: var(--ui-text-dim);"
+         onmouseover="this.style.backgroundColor='var(--ui-surface-2)';this.style.color='var(--ui-text)'"
+         onmouseout="this.style.backgroundColor='transparent';this.style.color='var(--ui-text-dim)'">
+        <span class="material-symbols-outlined" style="font-size: 18px;">chat_bubble</span>
+        Chat
+      </a>
+
+      <a href="#" class="flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-sm font-medium transition-colors"
+         style="color: var(--ui-text-dim);"
+         onmouseover="this.style.backgroundColor='var(--ui-surface-2)';this.style.color='var(--ui-text)'"
+         onmouseout="this.style.backgroundColor='transparent';this.style.color='var(--ui-text-dim)'">
+        <span class="material-symbols-outlined" style="font-size: 18px;">calendar_month</span>
+        Calendário
+      </a>
+
+      <a href="#" class="flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-sm font-medium transition-colors"
+         style="color: var(--ui-text-dim);"
+         onmouseover="this.style.backgroundColor='var(--ui-surface-2)';this.style.color='var(--ui-text)'"
+         onmouseout="this.style.backgroundColor='transparent';this.style.color='var(--ui-text-dim)'">
+        <span class="material-symbols-outlined" style="font-size: 18px;">upload_file</span>
+        Inserção
+      </a>
+
+      <a href="#" class="flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-sm font-medium transition-colors"
+         style="color: var(--ui-text-dim);"
+         onmouseover="this.style.backgroundColor='var(--ui-surface-2)';this.style.color='var(--ui-text)'"
+         onmouseout="this.style.backgroundColor='transparent';this.style.color='var(--ui-text-dim)'">
+        <span class="material-symbols-outlined" style="font-size: 18px;">layers</span>
+        Flashcards
+      </a>
+
+      <a href="#" class="flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-sm font-medium transition-colors"
+         style="color: var(--ui-text-dim);"
+         onmouseover="this.style.backgroundColor='var(--ui-surface-2)';this.style.color='var(--ui-text)'"
+         onmouseout="this.style.backgroundColor='transparent';this.style.color='var(--ui-text-dim)'">
+        <span class="material-symbols-outlined" style="font-size: 18px;">settings</span>
+        Configurações
+      </a>
+
+      <a href="#" class="flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-sm font-medium transition-colors"
+         style="color: var(--ui-text-dim);"
+         onmouseover="this.style.backgroundColor='var(--ui-surface-2)';this.style.color='var(--ui-text)'"
+         onmouseout="this.style.backgroundColor='transparent';this.style.color='var(--ui-text-dim)'">
+        <span class="material-symbols-outlined" style="font-size: 18px;">inventory_2</span>
+        Artefatos
+      </a>
+    </nav>
+
+    <div class="space-y-3 border-t app-divider px-2 pt-4">
+      <button class="w-full flex items-center justify-center gap-2 rounded-lg px-4 py-2.5 text-sm font-bold font-headline transition-colors"
+              style="background-color: var(--ui-accent); color: var(--ui-bg); border: 1px solid var(--ui-accent);">
+        <span class="material-symbols-outlined" style="font-size: 16px;">add</span>
+        Novo Artefato
+      </button>
+    </div>
+  </aside>
+
+  <!-- ── Main ── -->
+  <main class="relative z-10 flex flex-1 flex-col overflow-hidden md:pl-64">
+
+    <!-- Mobile header -->
+    <header class="sticky top-0 z-20 flex h-14 items-center border-b px-4 md:hidden app-divider backdrop-blur"
+            style="background-color: color-mix(in srgb, var(--ui-bg) 95%, transparent);">
+      <span class="material-symbols-outlined cursor-pointer" style="color: var(--ui-text-dim);">menu</span>
+      <span class="ml-3 text-sm font-semibold font-headline" style="color: var(--ui-text);">DocOps Agent</span>
+    </header>
+
+    <!-- Content canvas -->
+    <div class="relative z-10 mx-auto w-full max-w-7xl px-4 py-4 md:px-8 md:py-8">
+
+      <!-- Radial accent behind content -->
+      <div class="pointer-events-none absolute inset-0 -z-10"
+           style="background: radial-gradient(circle at 82% 10%, rgba(144,202,249,0.10), transparent 42%), radial-gradient(circle at 14% 16%, rgba(201,139,94,0.07), transparent 48%);"></div>
+
+      <div class="space-y-8">
+
+        <!-- ── Page header ── -->
+        <header class="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div>
+            <h1 class="font-headline text-4xl font-extrabold tracking-tight" style="color: var(--ui-text);">Documentos Indexados</h1>
+            <p class="mt-1 text-sm" style="color: var(--ui-text-dim);">Gerencie e opere sobre seus documentos</p>
+          </div>
+          <div class="relative w-full lg:w-96">
+            <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" style="color: var(--ui-text-meta); font-size: 18px;">search</span>
+            <input class="w-full h-11 rounded-xl pl-10 pr-4 text-sm outline-none transition-colors"
+                   style="background-color: var(--ui-bg-alt); border: 1px solid var(--ui-border); color: var(--ui-text);"
+                   placeholder="Buscar artefatos..." type="text"
+                   onfocus="this.style.borderColor='var(--ui-accent)'"
+                   onblur="this.style.borderColor='var(--ui-border)'"/>
+          </div>
+        </header>
+
+        <!-- ── Grid: stats + doc list ── -->
+        <div class="grid grid-cols-1 gap-8 xl:grid-cols-12">
+
+          <!-- Stats column -->
+          <section class="space-y-5 xl:col-span-4">
+
+            <!-- Chunks card -->
+            <article class="rounded-2xl p-6" style="background-color: var(--ui-surface-2);">
+              <div class="mb-5 flex items-start justify-between">
+                <div>
+                  <p class="font-headline text-3xl font-extrabold" style="color: var(--ui-text);">1,248</p>
+                  <p class="text-xs uppercase tracking-[0.14em] mt-1" style="color: var(--ui-text-meta);">Total Chunks</p>
+                </div>
+                <div class="rounded-xl p-3" style="background-color: var(--ui-accent-soft);">
+                  <span class="material-symbols-outlined" style="color: var(--ui-accent); font-size: 20px;">database</span>
+                </div>
+              </div>
+              <div class="space-y-1.5">
+                <div class="flex items-center justify-between text-xs" style="color: var(--ui-text-dim);">
+                  <span>Storage usage</span><span>78%</span>
+                </div>
+                <div class="h-1.5 overflow-hidden rounded-full" style="background-color: var(--ui-surface-3);">
+                  <div class="h-full rounded-full" style="width: 78%; background-color: var(--ui-accent);"></div>
+                </div>
+              </div>
+            </article>
+
+            <!-- Agent status card -->
+            <article class="rounded-2xl p-5" style="background-color: var(--ui-surface-1); border: 1px solid var(--ui-border-soft);">
+              <h3 class="font-headline text-sm font-bold" style="color: var(--ui-text);">Status do agente</h3>
+              <div class="mt-3 flex items-center gap-2 text-sm" style="color: var(--ui-text-dim);">
+                <span class="status-orb animate-pulse" style="background-color: var(--ui-warning); box-shadow: 0 0 8px color-mix(in srgb, var(--ui-warning) 60%, transparent);"></span>
+                Pronto para novas operações
+              </div>
+            </article>
+
+          </section>
+
+          <!-- Document list -->
+          <section class="xl:col-span-8">
+            <div class="flex items-center justify-between mb-5 px-1">
+              <p class="text-xs font-semibold uppercase tracking-[0.16em]" style="color: var(--ui-text-meta); font-family: 'IBM Plex Mono', monospace;">Biblioteca de Ativos</p>
+              <div class="flex items-center gap-3" style="color: var(--ui-text-dim);">
+                <span class="material-symbols-outlined cursor-pointer transition-colors hover:text-[var(--ui-accent)]" style="font-size: 20px;" data-icon="filter_list">filter_list</span>
+                <span class="material-symbols-outlined cursor-pointer transition-colors hover:text-[var(--ui-accent)]" style="font-size: 20px;" data-icon="grid_view">grid_view</span>
+              </div>
+            </div>
+
+            <div class="space-y-3">
+
+              <!-- Doc item 01 -->
+              <article class="group flex flex-col gap-4 rounded-2xl p-4 transition-all sm:flex-row sm:items-center"
+                       style="background-color: var(--ui-surface-2);"
+                       onmouseover="this.style.backgroundColor='var(--ui-surface-3)'"
+                       onmouseout="this.style.backgroundColor='var(--ui-surface-2)'">
+                <div class="flex h-16 w-14 shrink-0 items-center justify-center rounded-xl" style="background-color: var(--ui-surface-1);">
+                  <span class="material-symbols-outlined" style="color: var(--ui-accent); font-size: 24px;">article</span>
+                </div>
+                <div class="min-w-0 flex-1">
+                  <h3 class="truncate font-headline text-lg font-bold tracking-tight" style="color: var(--ui-text);">Manual_Procedimentos_V4.pdf</h3>
+                  <p class="mt-1 text-xs" style="color: var(--ui-text-meta);">342 chunks indexados</p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <button class="h-8 px-3 rounded-lg text-xs font-semibold transition-colors"
+                          style="background-color: var(--ui-accent-soft); color: var(--ui-accent); border: 1px solid color-mix(in srgb, var(--ui-accent) 20%, transparent);">
+                    Open
+                  </button>
+                  <button class="h-8 px-3 rounded-lg text-xs font-semibold transition-colors"
+                          style="background-color: color-mix(in srgb, var(--ui-warning) 15%, transparent); color: var(--ui-warning); border: 1px solid color-mix(in srgb, var(--ui-warning) 20%, transparent);">
+                    Digest
+                  </button>
+                  <button class="h-8 w-8 flex items-center justify-center rounded-lg transition-colors"
+                          style="background-color: color-mix(in srgb, var(--ui-danger) 12%, transparent); color: var(--ui-danger); border: 1px solid color-mix(in srgb, var(--ui-danger) 20%, transparent);">
+                    <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
+                  </button>
+                </div>
+              </article>
+
+              <!-- Doc item 02 -->
+              <article class="group flex flex-col gap-4 rounded-2xl p-4 transition-all sm:flex-row sm:items-center"
+                       style="background-color: var(--ui-surface-2);"
+                       onmouseover="this.style.backgroundColor='var(--ui-surface-3)'"
+                       onmouseout="this.style.backgroundColor='var(--ui-surface-2)'">
+                <div class="flex h-16 w-14 shrink-0 items-center justify-center rounded-xl" style="background-color: var(--ui-surface-1);">
+                  <span class="material-symbols-outlined" style="color: var(--ui-warning); font-size: 24px;">description</span>
+                </div>
+                <div class="min-w-0 flex-1">
+                  <h3 class="truncate font-headline text-lg font-bold tracking-tight" style="color: var(--ui-text);">Analise_Mercado_Financas.docx</h3>
+                  <p class="mt-1 text-xs" style="color: var(--ui-text-meta);">1,024 chunks indexados</p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <button class="h-8 px-3 rounded-lg text-xs font-semibold transition-colors"
+                          style="background-color: var(--ui-accent-soft); color: var(--ui-accent); border: 1px solid color-mix(in srgb, var(--ui-accent) 20%, transparent);">
+                    Open
+                  </button>
+                  <button class="h-8 px-3 rounded-lg text-xs font-semibold transition-colors"
+                          style="background-color: color-mix(in srgb, var(--ui-warning) 15%, transparent); color: var(--ui-warning); border: 1px solid color-mix(in srgb, var(--ui-warning) 20%, transparent);">
+                    Digest
+                  </button>
+                  <button class="h-8 w-8 flex items-center justify-center rounded-lg transition-colors"
+                          style="background-color: color-mix(in srgb, var(--ui-danger) 12%, transparent); color: var(--ui-danger); border: 1px solid color-mix(in srgb, var(--ui-danger) 20%, transparent);">
+                    <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
+                  </button>
+                </div>
+              </article>
+
+              <!-- Doc item 03 -->
+              <article class="group flex flex-col gap-4 rounded-2xl p-4 transition-all sm:flex-row sm:items-center"
+                       style="background-color: var(--ui-surface-2);"
+                       onmouseover="this.style.backgroundColor='var(--ui-surface-3)'"
+                       onmouseout="this.style.backgroundColor='var(--ui-surface-2)'">
+                <div class="flex h-16 w-14 shrink-0 items-center justify-center rounded-xl" style="background-color: var(--ui-surface-1);">
+                  <span class="material-symbols-outlined" style="color: var(--ui-success); font-size: 24px;">table_chart</span>
+                </div>
+                <div class="min-w-0 flex-1">
+                  <h3 class="truncate font-headline text-lg font-bold tracking-tight" style="color: var(--ui-text);">Q3_Relatorio_Consolidado.xlsx</h3>
+                  <p class="mt-1 text-xs" style="color: var(--ui-text-meta);">88 chunks indexados</p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <button class="h-8 px-3 rounded-lg text-xs font-semibold transition-colors"
+                          style="background-color: var(--ui-accent-soft); color: var(--ui-accent); border: 1px solid color-mix(in srgb, var(--ui-accent) 20%, transparent);">
+                    Open
+                  </button>
+                  <button class="h-8 px-3 rounded-lg text-xs font-semibold transition-colors"
+                          style="background-color: color-mix(in srgb, var(--ui-warning) 15%, transparent); color: var(--ui-warning); border: 1px solid color-mix(in srgb, var(--ui-warning) 20%, transparent);">
+                    Digest
+                  </button>
+                  <button class="h-8 w-8 flex items-center justify-center rounded-lg transition-colors"
+                          style="background-color: color-mix(in srgb, var(--ui-danger) 12%, transparent); color: var(--ui-danger); border: 1px solid color-mix(in srgb, var(--ui-danger) 20%, transparent);">
+                    <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
+                  </button>
+                </div>
+              </article>
+
+              <!-- Doc item 04 -->
+              <article class="group flex flex-col gap-4 rounded-2xl p-4 transition-all sm:flex-row sm:items-center"
+                       style="background-color: var(--ui-surface-2);"
+                       onmouseover="this.style.backgroundColor='var(--ui-surface-3)'"
+                       onmouseout="this.style.backgroundColor='var(--ui-surface-2)'">
+                <div class="flex h-16 w-14 shrink-0 items-center justify-center rounded-xl" style="background-color: var(--ui-surface-1);">
+                  <span class="material-symbols-outlined" style="color: var(--ui-text-dim); font-size: 24px;">article</span>
+                </div>
+                <div class="min-w-0 flex-1">
+                  <h3 class="truncate font-headline text-lg font-bold tracking-tight" style="color: var(--ui-text);">resumo_dia_07-04_ml.md</h3>
+                  <p class="mt-1 text-xs" style="color: var(--ui-text-meta);">17 chunks indexados</p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                  <button class="h-8 px-3 rounded-lg text-xs font-semibold transition-colors"
+                          style="background-color: var(--ui-accent-soft); color: var(--ui-accent); border: 1px solid color-mix(in srgb, var(--ui-accent) 20%, transparent);">
+                    Open
+                  </button>
+                  <button class="h-8 px-3 rounded-lg text-xs font-semibold transition-colors"
+                          style="background-color: color-mix(in srgb, var(--ui-warning) 15%, transparent); color: var(--ui-warning); border: 1px solid color-mix(in srgb, var(--ui-warning) 20%, transparent);">
+                    Digest
+                  </button>
+                  <button class="h-8 w-8 flex items-center justify-center rounded-lg transition-colors"
+                          style="background-color: color-mix(in srgb, var(--ui-danger) 12%, transparent); color: var(--ui-danger); border: 1px solid color-mix(in srgb, var(--ui-danger) 20%, transparent);">
+                    <span class="material-symbols-outlined" style="font-size: 16px;">delete</span>
+                  </button>
+                </div>
+              </article>
+
+            </div>
+          </section>
+        </div>
+
+      </div>
+    </div><!-- /content canvas -->
+  </main>
+
+  <!-- ── FAB ── -->
+  <button class="fixed bottom-6 right-6 z-40 inline-flex items-center gap-2 rounded-xl px-5 py-3 font-headline text-sm font-bold shadow-2xl transition-all active:scale-95"
+          style="background: linear-gradient(135deg, var(--ui-accent), var(--ui-accent-strong)); color: var(--ui-bg);">
+    <span class="material-symbols-outlined" style="font-size: 18px;">description</span>
+    Novo Artefato
+  </button>
+
+  <!-- ── Bottom nav (Mobile) ── -->
+  <nav class="md:hidden fixed bottom-0 left-0 w-full py-3 px-6 flex items-center justify-between border-t app-divider z-50 backdrop-blur"
+       style="background-color: color-mix(in srgb, var(--ui-bg) 95%, transparent);">
+    <div class="flex flex-col items-center gap-1" style="color: var(--ui-accent);">
+      <span class="material-symbols-outlined" style="font-size: 22px;">description</span>
+      <span class="text-[10px] font-bold uppercase tracking-tighter">Docs</span>
+    </div>
+    <div class="flex flex-col items-center gap-1" style="color: var(--ui-text-dim);">
+      <span class="material-symbols-outlined" style="font-size: 22px;">chat_bubble</span>
+      <span class="text-[10px] font-bold uppercase tracking-tighter">Chat</span>
+    </div>
+    <div class="flex flex-col items-center gap-1" style="color: var(--ui-text-dim);">
+      <span class="material-symbols-outlined" style="font-size: 22px;">calendar_month</span>
+      <span class="text-[10px] font-bold uppercase tracking-tighter">Calendário</span>
+    </div>
+    <div class="flex flex-col items-center gap-1" style="color: var(--ui-text-dim);">
+      <span class="material-symbols-outlined" style="font-size: 22px;">settings</span>
+      <span class="text-[10px] font-bold uppercase tracking-tighter">Ajustes</span>
+    </div>
+  </nav>
+
+</div><!-- /app-editorial -->
+</body></html>
