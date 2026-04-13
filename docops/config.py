@@ -58,6 +58,10 @@ class Config:
         return _require_env("GEMINI_API_KEY")
 
     @property
+    def google_client_id(self) -> str | None:
+        return os.getenv("GOOGLE_CLIENT_ID") or None
+
+    @property
     def chroma_dir(self) -> Path:
         return _path_env("CHROMA_DIR", "./data/chroma")
 

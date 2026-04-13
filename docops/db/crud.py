@@ -37,6 +37,14 @@ def create_user(db: Session, name: str, email: str, password_hash: str) -> User:
     return user
 
 
+def get_or_create_google_user(db: Session, email: str, name: str) -> User:
+    """Retorna usuário existente pelo e-mail ou cria um novo via OAuth Google."""
+    user = get_user_by_email(db, email)
+    if not user:
+        user = create_user(db, name=name, email=email, password_hash="__google_oauth__")
+    return user
+
+
 # -- UserPreferenceRecord -----------------------------------------------------
 
 PREFERENCE_SCHEMA_VERSION = 1

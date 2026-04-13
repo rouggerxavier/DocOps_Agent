@@ -39,6 +39,15 @@ class MeResponse(BaseModel):
     created_at: datetime
 
 
+class GoogleAuthRequest(BaseModel):
+    access_token: str
+
+
+class GoogleAuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
 # ── Common ────────────────────────────────────────────────────────────────────
 
 class SourceItem(BaseModel):
