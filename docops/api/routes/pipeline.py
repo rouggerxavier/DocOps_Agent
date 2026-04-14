@@ -19,6 +19,7 @@ from docops.auth.dependencies import get_current_user
 from docops.db import crud
 from docops.db.database import get_db, session_scope
 from docops.db.models import User
+from docops.features.entitlements import require_capability
 from docops.logging import get_logger
 from docops.observability import emit_event
 from docops.services.ownership import require_user_document
@@ -511,6 +512,11 @@ async def get_daily_question(
     db: Session = Depends(get_db),
 ):
     """Retorna (ou gera) a pergunta do dia a partir dos documentos do usuário."""
+    require_capability(
+        "premium_proactive_copilot",
+        current_user,
+        message="Daily question is available only for premium users.",
+    )
     import random
     from datetime import date
 
@@ -758,6 +764,11 @@ async def run_gap_analysis(
     db: Session = Depends(get_db),
 ):
     """Analisa lacunas de aprendizado: tópicos nos docs não cobertos por flashcards/tarefas."""
+    require_capability(
+        "premium_proactive_copilot",
+        current_user,
+        message="Gap analysis is available only for premium users.",
+    )
     docs = crud.list_documents_for_user(db, current_user.id)
     if not docs:
         raise HTTPException(status_code=404, detail="Nenhum documento encontrado.")
@@ -866,7 +877,12 @@ async def evaluate_answer(
     payload: EvaluateAnswerRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """Avalia a resposta do usuário a uma pergunta do dia."""
+    """Evaluate a user answer for the daily-question flow."""
+    require_capability(
+        "premium_proactive_copilot",
+        current_user,
+        message="Answer evaluation is available only for premium users.",
+    )
     try:
         feedback, score = await asyncio.to_thread(
             _run_evaluate_answer,
