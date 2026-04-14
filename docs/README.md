@@ -6,6 +6,8 @@ This folder stores operational documentation that must stay aligned with the cod
 - [Premium product roadmap and execution plan](roadmaps/premium-product-roadmap.md)
 - [Prompt playbook by phase](roadmaps/premium-phase-prompts.md)
 - [Operational backlog (epics and work packages)](roadmaps/premium-operational-backlog.md)
+- [Main premium gap assessment](roadmaps/main-premium-gap-assessment.md)
+- [Main premium implementation brief](roadmaps/main-premium-implementation-brief.md)
 
 ## Runbooks
 - [Oracle deploy runbook](runbooks/oracle-deploy.md)
