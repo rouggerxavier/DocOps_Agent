@@ -24,6 +24,7 @@ import {
   type UserPreferences,
 } from '@/api/client'
 import { useCapabilities } from '@/features/CapabilitiesProvider'
+import { trackPremiumFeatureActivation, trackPremiumTouchpointViewed, trackUpgradeCompleted, trackUpgradeInitiated } from '@/features/premiumAnalytics'
 import { cn } from '@/lib/utils'
 
 interface Message {
@@ -1071,6 +1072,7 @@ function MessageBubble({
   savingAsArtifact,
   onSaveAsArtifact,
   onRefreshArtifactAccess,
+  onUpgradeIntent,
 }: {
   message: Message
   onSourceClick?: (sources: SourceItem[]) => void
@@ -1081,6 +1083,7 @@ function MessageBubble({
   savingAsArtifact?: boolean
   onSaveAsArtifact?: () => void
   onRefreshArtifactAccess?: () => void
+  onUpgradeIntent?: () => void
 }) {
   const isUser = message.role === 'user'
 
@@ -1193,6 +1196,13 @@ function MessageBubble({
             >
               Ja fiz upgrade, atualizar acesso
             </button>
+            <button
+              type="button"
+              onClick={onUpgradeIntent}
+              className="ml-2 mt-1.5 rounded-md border border-amber-500/25 px-2 py-1 text-[11px] text-amber-100/90 transition-colors hover:bg-amber-500/10"
+            >
+              Ver recursos premium
+            </button>
           </div>
         )}
 
@@ -1277,6 +1287,8 @@ export function Chat() {
     && capabilities.hasCapability('premium_chat_to_artifact')
   )
   const isChatToArtifactLocked = isChatToArtifactEnabled && !isChatToArtifactUnlocked
+  const [lastUpgradeTouchpoint, setLastUpgradeTouchpoint] = useState('chat.chat_to_artifact_cta')
+  const [wasChatToArtifactLocked, setWasChatToArtifactLocked] = useState(isChatToArtifactLocked)
   const isPersonalizationEnabled = capabilities.isEnabled('personalization_enabled')
   const isPersonalizationUnlocked = (
     isPersonalizationEnabled
@@ -1886,7 +1898,17 @@ export function Chat() {
     },
   })
 
-  async function handleRefreshPremiumAccess() {
+  function handleUpgradeIntent(touchpoint: string, source: 'link' | 'refresh_access' = 'link') {
+    setLastUpgradeTouchpoint(touchpoint)
+    trackUpgradeInitiated({
+      touchpoint,
+      capability: 'premium_chat_to_artifact',
+      metadata: { surface: 'chat', source },
+    })
+  }
+
+  async function handleRefreshPremiumAccess(touchpoint = 'chat.chat_to_artifact_cta') {
+    handleUpgradeIntent(touchpoint, 'refresh_access')
     await capabilities.refresh()
     toast.info('Acesso premium atualizado. Se o upgrade ja foi aplicado, recarregamos suas capacidades.')
   }
@@ -1931,6 +1953,11 @@ export function Chat() {
     onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ['artifacts'] })
       qc.invalidateQueries({ queryKey: ['artifact-filter-options'] })
+      trackPremiumFeatureActivation({
+        touchpoint: 'chat.chat_to_artifact_save',
+        capability: 'premium_chat_to_artifact',
+        metadata: { surface: 'chat', artifact_filename: result.filename },
+      }, false)
       toast.success(`Artefato salvo: ${result.filename}`)
       setSavingArtifactTurnRef(null)
     },
@@ -2168,6 +2195,51 @@ export function Chat() {
     const scope = `${session.title} ${getSessionPreview(session)}`
     return normalizeForMatch(scope).includes(normalizedSessionSearch)
   })
+  const hasArtifactUnlockPrompt = isChatToArtifactLocked && messages.some((msg, i) => {
+    if (msg.role !== 'assistant') return false
+    const previousUserPrompt = [...messages.slice(0, i)]
+      .reverse()
+      .find(item => item.role === 'user')
+      ?.content ?? msg.prompt_hint ?? ''
+    return shouldOfferChatArtifactCTA({
+      ...msg,
+      prompt_hint: previousUserPrompt,
+    })
+  })
+
+  useEffect(() => {
+    if (!hasArtifactUnlockPrompt) return
+    trackPremiumTouchpointViewed({
+      touchpoint: 'chat.chat_to_artifact_cta',
+      capability: 'premium_chat_to_artifact',
+      metadata: { surface: 'chat' },
+    })
+  }, [hasArtifactUnlockPrompt])
+
+  useEffect(() => {
+    if (wasChatToArtifactLocked && !isChatToArtifactLocked) {
+      trackUpgradeCompleted({
+        touchpoint: lastUpgradeTouchpoint,
+        capability: 'premium_chat_to_artifact',
+        metadata: { surface: 'chat' },
+      })
+      trackPremiumFeatureActivation({
+        touchpoint: 'chat.chat_to_artifact_cta',
+        capability: 'premium_chat_to_artifact',
+        metadata: { surface: 'chat', source: 'unlock_transition' },
+      })
+    }
+    setWasChatToArtifactLocked(isChatToArtifactLocked)
+  }, [isChatToArtifactLocked, lastUpgradeTouchpoint, wasChatToArtifactLocked])
+
+  useEffect(() => {
+    if (!(isPersonalizationUnlocked && !preferencesQuery.isLoading && !preferencesQuery.isError)) return
+    trackPremiumFeatureActivation({
+      touchpoint: 'chat.personalization_memory',
+      capability: 'premium_personalization',
+      metadata: { surface: 'chat', source: 'memory_banner' },
+    })
+  }, [isPersonalizationUnlocked, preferencesQuery.isError, preferencesQuery.isLoading])
 
   return (
     <div className={cn(
@@ -2463,6 +2535,10 @@ export function Chat() {
                   })
                 }}
                 onRefreshArtifactAccess={() => { void handleRefreshPremiumAccess() }}
+                onUpgradeIntent={() => {
+                  handleUpgradeIntent('chat.chat_to_artifact_cta', 'link')
+                  window.location.href = '/settings'
+                }}
                 onSourceClick={sources => {
                   setActiveSources(sources)
                   setSelectedSource(null)

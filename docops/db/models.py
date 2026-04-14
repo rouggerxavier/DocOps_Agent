@@ -38,6 +38,10 @@ class User(Base):
     study_plans: Mapped[list["StudyPlanRecord"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     daily_questions: Mapped[list["DailyQuestionRecord"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
     reading_status_records: Mapped[list["ReadingStatusRecord"]] = relationship(back_populates="owner", cascade="all, delete-orphan")
+    premium_analytics_events: Mapped[list["PremiumAnalyticsEventRecord"]] = relationship(
+        back_populates="owner",
+        cascade="all, delete-orphan",
+    )
     preferences: Mapped["UserPreferenceRecord | None"] = relationship(
         back_populates="owner",
         cascade="all, delete-orphan",
@@ -366,3 +370,29 @@ class ReadingStatusRecord(Base):
 
     def __repr__(self) -> str:
         return f"<ReadingStatusRecord id={self.id} user={self.user_id} doc={self.doc_id!r} status={self.status!r}>"
+
+
+class PremiumAnalyticsEventRecord(Base):
+    __tablename__ = "premium_analytics_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    touchpoint: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    capability: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    correlation_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    metadata_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False, index=True)
+
+    owner: Mapped["User"] = relationship(back_populates="premium_analytics_events")
+
+    __table_args__ = (
+        Index("ix_premium_analytics_touchpoint_created", "touchpoint", "created_at"),
+        Index("ix_premium_analytics_event_created", "event_type", "created_at"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            "<PremiumAnalyticsEventRecord "
+            f"id={self.id} user={self.user_id} event={self.event_type!r} touchpoint={self.touchpoint!r}>"
+        )

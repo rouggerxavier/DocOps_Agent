@@ -99,6 +99,25 @@ This enables pivoting by correlation id and building stable dashboards.
   - abrupt drop in `quality_component_support_rate`
   - sustained rise in `quality_component_unsupported_claims`
 
+### 7) Premium Conversion Funnel
+- Tracked product events:
+  - `premium_touchpoint_viewed`
+  - `upgrade_initiated`
+  - `upgrade_completed`
+  - `premium_feature_activation`
+- Aggregated endpoint:
+  - `GET /api/analytics/premium/funnel?window_days=30`
+- Tracking endpoint:
+  - `POST /api/analytics/premium/events`
+- Expected dimensions:
+  - `touchpoint` (for example `dashboard.gap_analysis`, `artifacts.templates`)
+  - `capability` (for example `premium_proactive_copilot`, `premium_artifact_templates`)
+- Funnel rates available per touchpoint:
+  - `view_to_upgrade_initiated`
+  - `initiated_to_completed`
+  - `completed_to_activation`
+  - `view_to_activation`
+
 ## Alert Thresholds (initial)
 - API 5xx rate > 2% for 10 minutes.
 - `chat.stream.failed` rate > 5% for 10 minutes.

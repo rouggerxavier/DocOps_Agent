@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 import re
 import unicodedata
 
@@ -12,6 +13,7 @@ from sqlalchemy.orm import Session
 from docops.db.models import (
     ArtifactRecord,
     DocumentRecord,
+    PremiumAnalyticsEventRecord,
     ReminderRecord,
     ScheduleRecord,
     User,
@@ -1145,3 +1147,65 @@ def upsert_reading_status(db: Session, user_id: int, doc_id: str, status: str) -
     db.commit()
     db.refresh(record)
     return record
+
+
+# -- PremiumAnalyticsEventRecord ----------------------------------------------
+
+def _normalize_touchpoint(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized[:128]
+
+
+def _normalize_capability(value: str | None) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return None
+    return normalized[:64]
+
+
+def create_premium_analytics_event(
+    db: Session,
+    *,
+    user_id: int,
+    event_type: str,
+    touchpoint: str,
+    capability: str | None = None,
+    correlation_id: str | None = None,
+    metadata: dict[str, object] | None = None,
+) -> PremiumAnalyticsEventRecord:
+    normalized_touchpoint = _normalize_touchpoint(touchpoint)
+    if not normalized_touchpoint:
+        raise ValueError("touchpoint must not be empty")
+
+    metadata_payload = metadata if isinstance(metadata, dict) else {}
+    metadata_json = json.dumps(metadata_payload, ensure_ascii=False, sort_keys=True) if metadata_payload else None
+
+    record = PremiumAnalyticsEventRecord(
+        user_id=user_id,
+        event_type=str(event_type or "").strip().lower()[:64],
+        touchpoint=normalized_touchpoint,
+        capability=_normalize_capability(capability),
+        correlation_id=(str(correlation_id or "").strip()[:128] or None),
+        metadata_json=metadata_json,
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def list_premium_analytics_events_since(
+    db: Session,
+    *,
+    since: datetime,
+) -> list[PremiumAnalyticsEventRecord]:
+    since_utc = since
+    if since_utc.tzinfo is None:
+        since_utc = since_utc.replace(tzinfo=timezone.utc)
+
+    return (
+        db.query(PremiumAnalyticsEventRecord)
+        .filter(PremiumAnalyticsEventRecord.created_at >= since_utc)
+        .order_by(PremiumAnalyticsEventRecord.created_at.asc(), PremiumAnalyticsEventRecord.id.asc())
+        .all()
+    )
