@@ -25,16 +25,17 @@ function pickDefaultTemplate(
   templates: ArtifactTemplate[],
   options: { summaryMode?: 'brief' | 'deep'; artifactType?: string }
 ): string {
-  if (!templates.length) return ''
+  const availableTemplates = templates.filter(item => !item.locked)
+  if (!availableTemplates.length) return ''
   if (options.summaryMode) {
-    const byMode = templates.find(item => item.default_for_summary_modes.includes(options.summaryMode!))
+    const byMode = availableTemplates.find(item => item.default_for_summary_modes.includes(options.summaryMode!))
     if (byMode) return byMode.template_id
   }
   if (options.artifactType) {
-    const byType = templates.find(item => item.default_for_artifact_types.includes(options.artifactType!))
+    const byType = availableTemplates.find(item => item.default_for_artifact_types.includes(options.artifactType!))
     if (byType) return byType.template_id
   }
-  return templates[0]?.template_id ?? ''
+  return availableTemplates[0]?.template_id ?? ''
 }
 
 function isMarkdownArtifact(filename: string): boolean {
@@ -178,10 +179,16 @@ function DocSelector({
 
 function SummarizeDocDialog({
   onClose,
-  templatesEnabled,
+  templatesFeatureEnabled,
+  templatesUnlocked,
+  entitlementTier,
+  onRefreshAccess,
 }: {
   onClose: () => void
-  templatesEnabled: boolean
+  templatesFeatureEnabled: boolean
+  templatesUnlocked: boolean
+  entitlementTier: string
+  onRefreshAccess?: () => Promise<void> | void
 }) {
   const qc = useQueryClient()
   const [selectedDoc, setSelectedDoc] = useState('')
@@ -201,28 +208,38 @@ function SummarizeDocDialog({
   const { data: templates } = useQuery<ArtifactTemplate[]>({
     queryKey: ['artifact-templates', 'summary', mode],
     queryFn: () => apiClient.listArtifactTemplates(mode, 'summary'),
-    enabled: templatesEnabled,
+    enabled: templatesFeatureEnabled,
     staleTime: 60_000,
     retry: 1,
   })
   const templateOptions = useMemo(() => templates ?? [], [templates])
+  const templatesLocked = templatesFeatureEnabled && !templatesUnlocked
   const selectedTemplate = useMemo(
     () => templateOptions.find(item => item.template_id === selectedTemplateId) ?? null,
     [selectedTemplateId, templateOptions]
   )
+  const selectedTemplateIsLocked = Boolean(selectedTemplate?.locked)
 
   useEffect(() => {
-    if (!templatesEnabled) return
+    if (!templatesFeatureEnabled) return
     if (!templateOptions.length) { setSelectedTemplateId(''); return }
-    const hasActive = templateOptions.some(item => item.template_id === selectedTemplateId)
+    const hasActive = templateOptions.some(item => item.template_id === selectedTemplateId && !item.locked)
     if (hasActive) return
     setSelectedTemplateId(pickDefaultTemplate(templateOptions, { summaryMode: mode, artifactType: 'summary' }))
-  }, [mode, selectedTemplateId, templateOptions, templatesEnabled])
+  }, [mode, selectedTemplateId, templateOptions, templatesFeatureEnabled])
+
+  const templateIdForRequest = (
+    templatesFeatureEnabled
+    && selectedTemplateId
+    && !selectedTemplateIsLocked
+  )
+    ? selectedTemplateId
+    : undefined
 
   const startJob = useMutation({
     mutationFn: () => apiClient.summarizeAsync(
       selectedDoc, true, mode,
-      templatesEnabled ? (selectedTemplateId || undefined) : undefined,
+      templateIdForRequest,
     ),
     onSuccess: data => setJobId(data.job_id),
     onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao iniciar resumo'),
@@ -430,21 +447,31 @@ function SummarizeDocDialog({
             </div>
 
             {/* Templates (premium) */}
-            {templatesEnabled && templateOptions.length > 0 && (
+            {templatesFeatureEnabled && templateOptions.length > 0 && (
               <div>
                 <p className="mb-3 text-xs font-bold uppercase tracking-widest text-[#c6c5d4]">Template de Saída</p>
                 <div className="grid gap-2 md:grid-cols-3">
                   {templateOptions.map(template => (
                     <button
                       key={template.template_id}
-                      onClick={() => setSelectedTemplateId(template.template_id)}
+                      type="button"
+                      onClick={() => {
+                        if (template.locked) return
+                        setSelectedTemplateId(template.template_id)
+                      }}
+                      disabled={Boolean(template.locked)}
                       className={`rounded-xl border px-3 py-2.5 text-left transition-all ${
-                        selectedTemplateId === template.template_id
+                        template.locked
+                          ? 'cursor-not-allowed border-amber-700/35 bg-amber-950/15 text-amber-200/80'
+                          : selectedTemplateId === template.template_id
                           ? 'border-amber-500/50 bg-amber-500/10 text-amber-300'
                           : 'border-[#1e1e1e] bg-[#111111] text-[#c6c5d4] hover:border-[#282828]'
                       }`}
                     >
-                      <p className="text-sm font-semibold">{template.label}</p>
+                      <p className="text-sm font-semibold">
+                        {template.label}
+                        {template.locked ? ' (Premium)' : ''}
+                      </p>
                       <p className="mt-0.5 text-xs opacity-80">{template.short_description}</p>
                     </button>
                   ))}
@@ -460,6 +487,23 @@ function SummarizeDocDialog({
                         </span>
                       ))}
                     </div>
+                  </div>
+                )}
+                {templatesLocked && (
+                  <div className="mt-3 rounded-xl border border-amber-600/35 bg-amber-950/15 px-3 py-2.5">
+                    <p className="text-xs font-medium text-amber-200">
+                      Templates premium bloqueados no plano atual ({entitlementTier}).
+                    </p>
+                    <p className="mt-1 text-[11px] text-amber-100/85">
+                      Faca upgrade para desbloquear templates e manter o formato premium no resumo.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => { void onRefreshAccess?.() }}
+                      className="mt-2 rounded-lg border border-amber-500/45 px-2.5 py-1 text-[11px] text-amber-100 transition-colors hover:bg-amber-500/10"
+                    >
+                      Ja fiz upgrade, atualizar acesso
+                    </button>
                   </div>
                 )}
               </div>
@@ -481,7 +525,7 @@ function SummarizeDocDialog({
               </div>
               <button
                 onClick={() => startJob.mutate()}
-                disabled={!selectedDoc || isProcessing}
+                disabled={!selectedDoc || isProcessing || selectedTemplateIsLocked}
                 className="flex items-center gap-3 px-7 py-3 rounded-xl font-bold font-headline text-[#001e30] bg-gradient-to-br from-primary to-primary/70 shadow-[0_8px_24px_rgba(147,197,253,0.2)] hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:scale-100"
               >
                 <span>Gerar Resumo</span>
@@ -794,10 +838,16 @@ function SmartDigestDialog({ onClose }: { onClose: () => void }) {
 
 function CreateArtifactDialog({
   onClose,
-  templatesEnabled,
+  templatesFeatureEnabled,
+  templatesUnlocked,
+  entitlementTier,
+  onRefreshAccess,
 }: {
   onClose: () => void
-  templatesEnabled: boolean
+  templatesFeatureEnabled: boolean
+  templatesUnlocked: boolean
+  entitlementTier: string
+  onRefreshAccess?: () => Promise<void> | void
 }) {
   const qc = useQueryClient()
   const [type, setType] = useState<string>('checklist')
@@ -817,30 +867,40 @@ function CreateArtifactDialog({
   const { data: templates } = useQuery<ArtifactTemplate[]>({
     queryKey: ['artifact-templates', type],
     queryFn: () => apiClient.listArtifactTemplates(undefined, type),
-    enabled: templatesEnabled,
+    enabled: templatesFeatureEnabled,
     staleTime: 60_000,
     retry: 1,
   })
   const templateOptions = useMemo(() => templates ?? [], [templates])
+  const templatesLocked = templatesFeatureEnabled && !templatesUnlocked
   const selectedTemplate = useMemo(
     () => templateOptions.find(item => item.template_id === selectedTemplateId) ?? null,
     [selectedTemplateId, templateOptions]
   )
+  const selectedTemplateIsLocked = Boolean(selectedTemplate?.locked)
 
   useEffect(() => {
-    if (!templatesEnabled) return
+    if (!templatesFeatureEnabled) return
     if (!templateOptions.length) { setSelectedTemplateId(''); return }
-    const hasActive = templateOptions.some(item => item.template_id === selectedTemplateId)
+    const hasActive = templateOptions.some(item => item.template_id === selectedTemplateId && !item.locked)
     if (hasActive) return
     setSelectedTemplateId(pickDefaultTemplate(templateOptions, { artifactType: type }))
-  }, [selectedTemplateId, templateOptions, templatesEnabled, type])
+  }, [selectedTemplateId, templateOptions, templatesFeatureEnabled, type])
+
+  const templateIdForRequest = (
+    templatesFeatureEnabled
+    && selectedTemplateId
+    && !selectedTemplateIsLocked
+  )
+    ? selectedTemplateId
+    : undefined
 
   const startJob = useMutation({
     mutationFn: () =>
       apiClient.createArtifactAsync(
         type, topic, undefined,
         selectedDocs.map(doc => doc.doc_id),
-        templatesEnabled ? (selectedTemplateId || undefined) : undefined,
+        templateIdForRequest,
       ),
     onSuccess: data => { setJobId(data.job_id) },
     onError: (err: any) => toast.error(err?.response?.data?.detail ?? 'Erro ao iniciar artefato'),
@@ -947,21 +1007,31 @@ function CreateArtifactDialog({
                   </div>
                 )}
               </div>
-              {templatesEnabled && templateOptions.length > 0 && (
+              {templatesFeatureEnabled && templateOptions.length > 0 && (
                 <div>
                   <label className="mb-2 block text-xs font-semibold uppercase tracking-widest text-[#c6c5d4]">Template</label>
                   <div className="grid gap-2 md:grid-cols-3">
                     {templateOptions.map(template => (
                       <button
                         key={template.template_id}
-                        onClick={() => setSelectedTemplateId(template.template_id)}
+                        type="button"
+                        onClick={() => {
+                          if (template.locked) return
+                          setSelectedTemplateId(template.template_id)
+                        }}
+                        disabled={Boolean(template.locked)}
                         className={`rounded-xl border px-3 py-2 text-left transition-all ${
-                          selectedTemplateId === template.template_id
+                          template.locked
+                            ? 'cursor-not-allowed border-amber-700/35 bg-amber-950/15 text-amber-200/80'
+                            : selectedTemplateId === template.template_id
                             ? 'border-amber-500/50 bg-amber-500/10 text-amber-300'
                             : 'border-[#282828] bg-[#1e1e1e] text-[#c6c5d4] hover:border-[#454652]'
                         }`}
                       >
-                        <p className="text-sm font-semibold">{template.label}</p>
+                        <p className="text-sm font-semibold">
+                          {template.label}
+                          {template.locked ? ' (Premium)' : ''}
+                        </p>
                         <p className="mt-0.5 text-xs opacity-80">{template.short_description}</p>
                       </button>
                     ))}
@@ -979,6 +1049,23 @@ function CreateArtifactDialog({
                       </div>
                     </div>
                   )}
+                  {templatesLocked && (
+                    <div className="mt-3 rounded-xl border border-amber-600/35 bg-amber-950/15 px-3 py-2.5">
+                      <p className="text-xs font-medium text-amber-200">
+                        Templates premium bloqueados no plano atual ({entitlementTier}).
+                      </p>
+                      <p className="mt-1 text-[11px] text-amber-100/85">
+                        Faca upgrade para liberar templates premium na criacao de artefatos.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => { void onRefreshAccess?.() }}
+                        className="mt-2 rounded-lg border border-amber-500/45 px-2.5 py-1 text-[11px] text-amber-100 transition-colors hover:bg-amber-500/10"
+                      >
+                        Ja fiz upgrade, atualizar acesso
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
               {isProcessing && (
@@ -994,7 +1081,7 @@ function CreateArtifactDialog({
               )}
               <button
                 onClick={() => startJob.mutate()}
-                disabled={!topic.trim() || isProcessing}
+                disabled={!topic.trim() || isProcessing || selectedTemplateIsLocked}
                 className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-primary text-[#000000] font-bold font-headline transition-all hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 {isProcessing ? (
@@ -1113,7 +1200,10 @@ function artifactTypeBadge(type?: string | null) {
 export function Artifacts() {
   const qc = useQueryClient()
   const capabilities = useCapabilities()
-  const templatesEnabled = capabilities.isEnabled('premium_artifact_templates_enabled')
+  const templatesFeatureEnabled = capabilities.isEnabled('premium_artifact_templates_enabled')
+  const templatesUnlocked = capabilities.hasCapability('premium_artifact_templates')
+  const templatesEnabled = templatesFeatureEnabled && templatesUnlocked
+  const templatesLocked = templatesFeatureEnabled && !templatesUnlocked
   const [showCreate, setShowCreate] = useState(false)
   const [showSummarize, setShowSummarize] = useState(false)
   const [showDigest, setShowDigest] = useState(false)
@@ -1172,6 +1262,12 @@ export function Artifacts() {
     catch { toast.error('Erro ao baixar PDF') } finally { setDownloadingKey(null) }
   }
 
+  async function handleRefreshTemplateAccess() {
+    await capabilities.refresh()
+    await qc.invalidateQueries({ queryKey: ['artifact-templates'] })
+    toast.info('Acesso premium atualizado. Se o upgrade ja foi aplicado, recarregamos os templates.')
+  }
+
   // Build filter select options from filterOptions
   const typeFilterOptions: SelectOption[] = [
     { value: 'all', label: 'Todos os tipos' },
@@ -1214,9 +1310,29 @@ export function Artifacts() {
           <p className="mt-3 text-sm text-[#c6c5d4] max-w-2xl leading-relaxed sm:mt-4 sm:text-lg">
             {templatesEnabled
               ? 'Resumos, checklists e outros artefatos gerados com templates premium'
+              : templatesLocked
+                ? `Seu plano atual (${capabilities.entitlementTier}) bloqueia templates premium.`
               : 'Resumos, checklists e outros artefatos gerados pelo agente'}
           </p>
         </header>
+
+        {templatesLocked && (
+          <div className="rounded-xl border border-amber-600/35 bg-amber-950/15 px-4 py-3">
+            <p className="text-sm font-medium text-amber-200">
+              Templates premium bloqueados no plano atual ({capabilities.entitlementTier}).
+            </p>
+            <p className="mt-1 text-xs text-amber-100/85">
+              Faca upgrade para desbloquear previews e geracao com templates premium.
+            </p>
+            <button
+              type="button"
+              onClick={() => { void handleRefreshTemplateAccess() }}
+              className="mt-2 rounded-lg border border-amber-500/45 px-2.5 py-1 text-xs text-amber-100 transition-colors hover:bg-amber-500/10"
+            >
+              Ja fiz upgrade, atualizar acesso
+            </button>
+          </div>
+        )}
 
         {/* ── Action Hub ── */}
         <section>
@@ -1476,11 +1592,23 @@ export function Artifacts() {
 
       {/* Dialogs */}
       {showSummarize && (
-        <SummarizeDocDialog onClose={() => setShowSummarize(false)} templatesEnabled={templatesEnabled} />
+        <SummarizeDocDialog
+          onClose={() => setShowSummarize(false)}
+          templatesFeatureEnabled={templatesFeatureEnabled}
+          templatesUnlocked={templatesUnlocked}
+          entitlementTier={capabilities.entitlementTier}
+          onRefreshAccess={handleRefreshTemplateAccess}
+        />
       )}
       {showDigest && <SmartDigestDialog onClose={() => setShowDigest(false)} />}
       {showCreate && (
-        <CreateArtifactDialog onClose={() => setShowCreate(false)} templatesEnabled={templatesEnabled} />
+        <CreateArtifactDialog
+          onClose={() => setShowCreate(false)}
+          templatesFeatureEnabled={templatesFeatureEnabled}
+          templatesUnlocked={templatesUnlocked}
+          entitlementTier={capabilities.entitlementTier}
+          onRefreshAccess={handleRefreshTemplateAccess}
+        />
       )}
       {previewFile && <PreviewDialog artifact={previewFile} onClose={() => setPreviewFile(null)} />}
     </div>

@@ -75,6 +75,26 @@ export interface CapabilitiesResponse {
   map: Record<string, boolean>
   disable_all: boolean
   enable_all: boolean
+  entitlements_enabled: boolean
+  entitlement_tier: string
+  entitlement_map: Record<string, boolean>
+  entitlement_capabilities: EntitlementCapability[]
+}
+
+export interface EntitlementCapability {
+  key: string
+  enabled: boolean
+  required_tier: string
+  description: string
+}
+
+export interface LockedFeatureDetail {
+  error: string
+  code: string
+  message: string
+  capability: string
+  required_tier: string
+  current_tier: string
 }
 
 export interface UserPreferences {
@@ -221,6 +241,7 @@ export interface ArtifactTemplate {
   summary_modes: string[]
   default_for_summary_modes: string[]
   default_for_artifact_types: string[]
+  locked?: boolean
 }
 
 export interface ArtifactFilterOptions {
@@ -454,6 +475,35 @@ export interface GapAnalysisResponse {
 // ── Reading Status ─────────────────────────────────────────────────────────────
 
 export type ReadingStatus = 'to_read' | 'reading' | 'done'
+
+function looksLikeLockedDetail(value: unknown): value is LockedFeatureDetail {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Record<string, unknown>
+  return (
+    candidate.error === 'feature_locked'
+    && typeof candidate.capability === 'string'
+    && typeof candidate.required_tier === 'string'
+    && typeof candidate.current_tier === 'string'
+  )
+}
+
+export function extractLockedFeatureDetail(error: unknown): LockedFeatureDetail | null {
+  const maybeError = error as {
+    response?: {
+      status?: number
+      data?: {
+        detail?: unknown
+      }
+    }
+  }
+  if (Number(maybeError?.response?.status) !== 403) return null
+  const detail = maybeError?.response?.data?.detail
+  return looksLikeLockedDetail(detail) ? detail : null
+}
+
+export function isLockedFeatureError(error: unknown): boolean {
+  return extractLockedFeatureDetail(error) !== null
+}
 
 // ── API functions ─────────────────────────────────────────────────────────────
 

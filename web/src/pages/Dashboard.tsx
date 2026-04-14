@@ -18,6 +18,7 @@ import {
   Target,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -264,10 +265,16 @@ function OnboardingSteps() {
 function DailyQuestionPanel({
   data,
   loading,
+  locked = false,
+  entitlementTier = 'free',
+  onRefreshAccess,
   compact = false,
 }: {
   data: DailyQuestionResponse | undefined
   loading: boolean
+  locked?: boolean
+  entitlementTier?: string
+  onRefreshAccess?: () => Promise<void> | void
   compact?: boolean
 }) {
   const [showHint, setShowHint] = useState(false)
@@ -288,6 +295,35 @@ function DailyQuestionPanel({
 
   if (loading) {
     return <Skeleton className="h-56 w-full rounded-[1.15rem]" />
+  }
+
+  if (locked) {
+    return (
+      <SurfaceCard className="border-amber-500/35 bg-amber-500/10">
+        <div className="space-y-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-200">Pergunta do dia</p>
+              <h3 className="mt-1 font-headline text-lg font-bold text-amber-100 sm:text-xl">
+                Recurso premium bloqueado
+              </h3>
+            </div>
+            <Sparkles className="h-5 w-5 text-amber-200" />
+          </div>
+          <p className="text-sm text-amber-100/90">
+            Seu plano atual ({entitlementTier}) nao inclui `premium_proactive_copilot`.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => { void onRefreshAccess?.() }}>
+              Ja fiz upgrade, atualizar acesso
+            </Button>
+            <Button variant="ghost" size="sm" asChild>
+              <Link to="/settings">Ver recursos premium</Link>
+            </Button>
+          </div>
+        </div>
+      </SurfaceCard>
+    )
   }
 
   if (!data?.question) {
@@ -397,11 +433,17 @@ function DailyQuestionPanel({
 function GapAnalysisPanel({
   docs,
   loadingDocs,
+  locked = false,
+  entitlementTier = 'free',
+  onRefreshAccess,
   compact = false,
   id,
 }: {
   docs: DocItem[] | undefined
   loadingDocs: boolean
+  locked?: boolean
+  entitlementTier?: string
+  onRefreshAccess?: () => Promise<void> | void
   compact?: boolean
   id?: string
 }) {
@@ -459,7 +501,24 @@ function GapAnalysisPanel({
         </div>
       </div>
 
-      {loadingDocs ? (
+      {locked ? (
+        <div className="mt-4 rounded-xl border border-amber-500/35 bg-amber-500/10 px-4 py-3">
+          <p className="text-sm font-medium text-amber-100">
+            Mapa de lacunas bloqueado no plano atual ({entitlementTier}).
+          </p>
+          <p className="mt-1 text-xs text-amber-100/85">
+            Este fluxo exige o entitlement `premium_proactive_copilot`.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button variant="outline" size="sm" onClick={() => { void onRefreshAccess?.() }}>
+              Ja fiz upgrade, atualizar acesso
+            </Button>
+            <Button variant="ghost" size="sm" asChild className="text-amber-100">
+              <Link to="/settings">Ver recursos premium</Link>
+            </Button>
+          </div>
+        </div>
+      ) : loadingDocs ? (
         <div className="mt-4 space-y-2">
           <Skeleton className="h-9 w-full rounded-lg" />
           <Skeleton className="h-9 w-full rounded-lg" />
@@ -608,11 +667,17 @@ function GapAnalysisPanel({
 
 function ProactiveRecommendationsPanel({
   recommendations,
-  enabled,
+  featureEnabled,
+  capabilityUnlocked,
+  entitlementTier = 'free',
+  onRefreshAccess,
   compact = false,
 }: {
   recommendations: ProactiveRecommendation[]
-  enabled: boolean
+  featureEnabled: boolean
+  capabilityUnlocked: boolean
+  entitlementTier?: string
+  onRefreshAccess?: () => Promise<void> | void
   compact?: boolean
 }) {
   const [prefs, setPrefs] = useState<RecommendationPrefs>(() => loadRecommendationPrefs())
@@ -659,7 +724,7 @@ function ProactiveRecommendationsPanel({
     return true
   })
 
-  if (!enabled) {
+  if (!featureEnabled) {
     return (
       <SurfaceCard className="bg-[color:var(--ui-surface-2)]">
         <div className="flex items-start justify-between gap-3">
@@ -672,6 +737,31 @@ function ProactiveRecommendationsPanel({
         <p className="mt-3 text-sm text-[color:var(--ui-text-dim)]">
           Este modulo esta desativado por feature flag (`proactive_copilot_enabled`).
         </p>
+      </SurfaceCard>
+    )
+  }
+
+  if (!capabilityUnlocked) {
+    return (
+      <SurfaceCard className="border-amber-500/35 bg-amber-500/10">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-amber-200">Copilot proativo</p>
+            <h3 className="mt-2 font-headline text-lg font-bold text-amber-100 sm:text-xl">Recomendacoes bloqueadas</h3>
+          </div>
+          <Sparkles className="h-5 w-5 text-amber-200" />
+        </div>
+        <p className="mt-3 text-sm text-amber-100/90">
+          Seu plano atual ({entitlementTier}) nao inclui `premium_proactive_copilot`.
+        </p>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={() => { void onRefreshAccess?.() }}>
+            Ja fiz upgrade, atualizar acesso
+          </Button>
+          <Button variant="ghost" size="sm" asChild className="text-amber-100">
+            <Link to="/settings">Ver recursos premium</Link>
+          </Button>
+        </div>
       </SurfaceCard>
     )
   }
@@ -799,12 +889,17 @@ export function Dashboard() {
 
   const hasDocuments = !isDocsLoading && !!docs && docs.length > 0
 
+  const proactiveCopilotFeatureEnabled = capabilities.isEnabled('proactive_copilot_enabled')
+  const proactiveCopilotUnlocked = capabilities.hasCapability('premium_proactive_copilot')
+  const proactiveCopilotEnabled = proactiveCopilotFeatureEnabled && proactiveCopilotUnlocked
+  const proactiveCopilotLocked = proactiveCopilotFeatureEnabled && !proactiveCopilotUnlocked
+
   const { data: dailyQuestion, isLoading: isDailyQuestionLoading } = useQuery<DailyQuestionResponse>({
     queryKey: ['daily-question'],
     queryFn: apiClient.getDailyQuestion,
     staleTime: 12 * 60 * 60 * 1000,
     retry: false,
-    enabled: hasDocuments,
+    enabled: hasDocuments && proactiveCopilotEnabled,
   })
 
   useEffect(() => {
@@ -845,8 +940,6 @@ export function Dashboard() {
   const docsPreviewCount = isMobile ? 3 : 5
   const schedulePreviewCount = isMobile ? 2 : 4
   const remindersPreviewCount = isMobile ? 2 : 4
-  const proactiveCopilotEnabled = capabilities.isEnabled('proactive_copilot_enabled')
-
   const proactiveRecommendations: ProactiveRecommendation[] = []
 
   if (overdueCount > 0) {
@@ -929,6 +1022,11 @@ export function Dashboard() {
     } finally {
       setIsSyncing(false)
     }
+  }
+
+  async function handleRefreshProactiveAccess() {
+    await capabilities.refresh()
+    toast.info('Acesso premium atualizado. Se o upgrade ja foi aplicado, recarregamos suas capacidades.')
   }
 
   return (
@@ -1018,11 +1116,29 @@ export function Dashboard() {
         <div className="space-y-6">
           <ProactiveRecommendationsPanel
             recommendations={proactiveRecommendations}
-            enabled={proactiveCopilotEnabled}
+            featureEnabled={proactiveCopilotFeatureEnabled}
+            capabilityUnlocked={proactiveCopilotUnlocked}
+            entitlementTier={capabilities.entitlementTier}
+            onRefreshAccess={handleRefreshProactiveAccess}
             compact={isMobile}
           />
-          <DailyQuestionPanel data={dailyQuestion} loading={isDailyQuestionLoading} compact={isMobile} />
-          <GapAnalysisPanel id="gap-analysis-panel" docs={docs} loadingDocs={isDocsLoading} compact={isMobile} />
+          <DailyQuestionPanel
+            data={dailyQuestion}
+            loading={isDailyQuestionLoading}
+            locked={proactiveCopilotLocked}
+            entitlementTier={capabilities.entitlementTier}
+            onRefreshAccess={handleRefreshProactiveAccess}
+            compact={isMobile}
+          />
+          <GapAnalysisPanel
+            id="gap-analysis-panel"
+            docs={docs}
+            loadingDocs={isDocsLoading}
+            locked={proactiveCopilotLocked}
+            entitlementTier={capabilities.entitlementTier}
+            onRefreshAccess={handleRefreshProactiveAccess}
+            compact={isMobile}
+          />
 
           <SurfaceCard className="overflow-hidden bg-[color:var(--ui-surface-2)] p-0">
             <div className="flex items-center justify-between px-4 py-4 sm:px-5">

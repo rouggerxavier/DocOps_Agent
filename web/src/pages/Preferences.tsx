@@ -104,11 +104,13 @@ export function Preferences() {
   const queryClient = useQueryClient()
   const capabilities = useCapabilities()
   const personalizationEnabled = capabilities.isEnabled('personalization_enabled')
+  const personalizationUnlocked = capabilities.hasCapability('premium_personalization')
+  const personalizationLocked = personalizationEnabled && !personalizationUnlocked
 
   const preferencesQuery = useQuery({
     queryKey: ['user-preferences'],
     queryFn: apiClient.getPreferences,
-    enabled: personalizationEnabled,
+    enabled: personalizationEnabled && personalizationUnlocked,
     staleTime: 30_000,
     retry: 1,
   })
@@ -145,8 +147,14 @@ export function Preferences() {
   const isBusy = updateMutation.isPending || resetAllMutation.isPending
 
   const applyPatch = (patch: UserPreferencesUpdatePayload) => {
-    if (!personalizationEnabled) return
+    if (!personalizationEnabled || !personalizationUnlocked) return
     updateMutation.mutate(patch)
+  }
+
+  const handleRefreshCapabilities = async () => {
+    await capabilities.refresh()
+    await queryClient.invalidateQueries({ queryKey: ['user-preferences'] })
+    toast.info('Acesso atualizado. Se o upgrade já foi aplicado, recarregamos as capacidades.')
   }
 
   const resetResponseBehavior = () => {
@@ -194,14 +202,35 @@ export function Preferences() {
         </Card>
       )}
 
-      {personalizationEnabled && preferencesQuery.isLoading && (
+      {personalizationLocked && (
+        <Card className="border-amber-500/30 bg-amber-950/15">
+          <CardContent className="space-y-3 pt-6">
+            <p className="text-sm font-medium text-amber-200">
+              Recurso premium bloqueado no seu plano atual ({capabilities.entitlementTier}).
+            </p>
+            <p className="text-xs text-amber-100/85">
+              Memória e preferências persistentes exigem upgrade de entitlement para `premium_personalization`.
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" size="sm" onClick={handleRefreshCapabilities}>
+                Já fiz upgrade, atualizar acesso
+              </Button>
+              <Button variant="ghost" size="sm" asChild>
+                <Link to="/dashboard">Ver recursos premium no dashboard</Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {personalizationEnabled && personalizationUnlocked && preferencesQuery.isLoading && (
         <div className="space-y-3">
           <Skeleton className="h-28 w-full rounded-xl" />
           <Skeleton className="h-28 w-full rounded-xl" />
         </div>
       )}
 
-      {personalizationEnabled && !preferencesQuery.isLoading && (
+      {personalizationEnabled && personalizationUnlocked && !preferencesQuery.isLoading && (
         <>
           <Card className="border-zinc-800 bg-zinc-900">
             <CardHeader className="pb-3">
