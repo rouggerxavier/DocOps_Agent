@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, useCallback, type ReactNode } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { api } from '@/api/client'
 
 // ── Tipos ──────────────────────────────────────────────────────────────────────
@@ -35,6 +36,7 @@ if (_initialToken) {
 // ── Provider ──────────────────────────────────────────────────────────────────
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient()
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY))
   const [user, setUser] = useState<AuthUser | null>(null)
   const [loading, setLoading] = useState(true)
@@ -77,6 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           localStorage.removeItem(TOKEN_KEY)
           setToken(null)
           setUser(null)
+          queryClient.clear()
         }
         return Promise.reject(err)
       }
@@ -112,7 +115,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem(TOKEN_KEY)
     setToken(null)
     setUser(null)
-  }, [])
+    queryClient.clear()
+  }, [queryClient])
 
   return (
     <AuthContext.Provider value={{ user, token, loading, login, loginWithGoogle, register, logout }}>

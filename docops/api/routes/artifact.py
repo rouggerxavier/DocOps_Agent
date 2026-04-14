@@ -40,6 +40,7 @@ from docops.observability import emit_event
 from docops.services.artifact_templates import apply_template_layout, list_template_payloads, resolve_template
 from docops.services.jobs import create_job, run_thread_with_progress, schedule_job, update_job
 from docops.services.ownership import require_user_document
+from docops.storage.paths import get_user_artifacts_dir, is_path_within
 
 logger = get_logger("docops.api.artifact")
 router = APIRouter()
@@ -229,6 +230,10 @@ def _resolve_artifact_by_filename_or_raise(db: Session, user_id: int, filename: 
 def _artifact_file_response(artifact: ArtifactRecord) -> FileResponse:
     artifact_path = Path(artifact.path)
     safe_name = Path(artifact.filename).name
+
+    user_artifacts_dir = get_user_artifacts_dir(artifact.user_id)
+    if not is_path_within(artifact_path, user_artifacts_dir):
+        raise HTTPException(status_code=403, detail="Acesso negado.")
 
     if not artifact_path.exists() or not artifact_path.is_file():
         raise HTTPException(status_code=404, detail=f"Artifact not found: {safe_name}")

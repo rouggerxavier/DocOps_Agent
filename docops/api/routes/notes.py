@@ -21,13 +21,13 @@ router = APIRouter()
 
 class NoteCreate(BaseModel):
     title: str = Field(min_length=1, max_length=512)
-    content: str = Field(default="")
+    content: str = Field(default="", max_length=200_000)
     pinned: bool = False
 
 
 class NoteUpdate(BaseModel):
     title: str = Field(min_length=1, max_length=512)
-    content: str = Field(default="")
+    content: str = Field(default="", max_length=200_000)
     pinned: bool = False
 
 

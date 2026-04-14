@@ -64,7 +64,7 @@ class SourceItem(BaseModel):
 
 class IngestPathRequest(BaseModel):
     """Request body for ingesting a local directory or file path."""
-    path: str = Field(description="Absolute or relative path on the server")
+    path: str = Field(description="Absolute or relative path on the server", max_length=4096)
     chunk_size: int = Field(default=0, ge=0)
     chunk_overlap: int = Field(default=0, ge=0)
 
@@ -80,7 +80,6 @@ class IngestResponse(BaseModel):
 class DocItem(BaseModel):
     doc_id: str = ""
     file_name: str
-    source: str
     chunk_count: int
 
 
@@ -110,7 +109,7 @@ class ActiveChatContext(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(min_length=1)
+    message: str = Field(min_length=1, max_length=32_768)
     session_id: Optional[str] = None
     top_k: Optional[int] = Field(default=None, ge=1, le=50)
     doc_names: List[str] = Field(default_factory=list)
@@ -155,8 +154,6 @@ class ChatResponse(BaseModel):
 class CapabilityFlag(BaseModel):
     key: str
     enabled: bool
-    env_var: str
-    default_enabled: bool
     description: str
     owner: str
 

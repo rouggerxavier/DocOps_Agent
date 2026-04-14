@@ -10,6 +10,9 @@ services:
         sync: false          # preencher manualmente no dashboard do Render
       - key: JWT_SECRET_KEY
         generateValue: true  # Render gera automaticamente um valor seguro
+      # ── Ambiente ─────────────────────────────────────────────────────────
+      - key: DOCOPS_ENV
+        value: production
       # ── Caminhos de dados ─────────────────────────────────────────────────
       - key: CHROMA_DIR
         value: /app/data/chroma
@@ -27,5 +30,7 @@ services:
       - key: DATABASE_URL
         value: sqlite:////app/data/app.db
       # ── CORS ──────────────────────────────────────────────────────────────
+      # Preencher com o(s) domínio(s) reais do frontend (sem wildcard em produção).
+      # Exemplo: https://docops.example.com
       - key: CORS_ORIGINS
-        value: "*"
+        sync: false

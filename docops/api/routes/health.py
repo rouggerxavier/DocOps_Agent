@@ -3,11 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, status
+from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from docops.api.schemas import HealthResponse, ReadyResponse
+from docops.auth.dependencies import get_current_user
 from docops.config import config
 from docops.db.database import SessionLocal
 
@@ -58,7 +59,7 @@ def _run_readiness_checks() -> tuple[bool, dict[str, dict[str, object]]]:
     return is_ready, checks
 
 
-@router.get("/ready", response_model=ReadyResponse)
+@router.get("/ready", response_model=ReadyResponse, dependencies=[Depends(get_current_user)])
 async def ready() -> ReadyResponse | JSONResponse:
     is_ready, checks = _run_readiness_checks()
     payload = {"status": "ok" if is_ready else "unready", "checks": checks}

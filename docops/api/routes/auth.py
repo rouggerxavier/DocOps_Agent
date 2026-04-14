@@ -110,6 +110,9 @@ def google_auth(body: GoogleAuthRequest, db: Session = Depends(get_db)) -> Login
     if not email:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Conta Google sem e-mail.")
 
+    if not info.get("email_verified", False):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="E-mail Google não verificado.")
+
     name = info.get("name") or email.split("@")[0]
     user = get_or_create_google_user(db, email=email, name=name)
 
