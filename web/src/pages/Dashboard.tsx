@@ -31,6 +31,7 @@ import {
   type GapAnalysisResponse,
 } from '@/api/client'
 import { useAuth } from '@/auth/AuthProvider'
+import { useCapabilities } from '@/features/CapabilitiesProvider'
 import { cn } from '@/lib/utils'
 import { PageShell } from '@/components/ui/page-shell'
 
@@ -64,6 +65,59 @@ const GAP_PRIORITY_LABEL: Record<string, string> = {
   low: 'Baixa',
 }
 
+type RecommendationCategory = 'coverage' | 'schedule' | 'quality' | 'consistency'
+
+interface ProactiveRecommendation {
+  id: string
+  category: RecommendationCategory
+  title: string
+  description: string
+  whyThis: string
+  actionLabel: string
+  actionTo: string
+}
+
+interface RecommendationPrefs {
+  dismissedIds: string[]
+  snoozedUntil: Record<string, number>
+  mutedCategoryUntil: Record<string, number>
+}
+
+const RECOMMENDATION_PREFS_STORAGE_KEY = 'docops_dashboard_proactive_prefs_v1'
+const ONE_DAY_MS = 24 * 60 * 60 * 1000
+const SEVEN_DAYS_MS = 7 * ONE_DAY_MS
+
+function defaultRecommendationPrefs(): RecommendationPrefs {
+  return {
+    dismissedIds: [],
+    snoozedUntil: {},
+    mutedCategoryUntil: {},
+  }
+}
+
+function loadRecommendationPrefs(): RecommendationPrefs {
+  try {
+    const raw = localStorage.getItem(RECOMMENDATION_PREFS_STORAGE_KEY)
+    if (!raw) return defaultRecommendationPrefs()
+    const parsed = JSON.parse(raw) as Partial<RecommendationPrefs>
+    return {
+      dismissedIds: Array.isArray(parsed.dismissedIds) ? parsed.dismissedIds.filter(Boolean) : [],
+      snoozedUntil: parsed.snoozedUntil && typeof parsed.snoozedUntil === 'object' ? parsed.snoozedUntil : {},
+      mutedCategoryUntil: parsed.mutedCategoryUntil && typeof parsed.mutedCategoryUntil === 'object' ? parsed.mutedCategoryUntil : {},
+    }
+  } catch {
+    return defaultRecommendationPrefs()
+  }
+}
+
+function saveRecommendationPrefs(next: RecommendationPrefs) {
+  try {
+    localStorage.setItem(RECOMMENDATION_PREFS_STORAGE_KEY, JSON.stringify(next))
+  } catch {
+    // Keeping the dashboard usable matters more than persistence.
+  }
+}
+
 function getApiErrorDetail(error: unknown): string {
   const fallback = 'Nao foi possivel concluir a analise de lacunas.'
   const maybeError = error as {
@@ -86,13 +140,15 @@ function SurfaceCard({
   children,
   className,
   contentClassName,
+  id,
 }: {
   children: ReactNode
   className?: string
   contentClassName?: string
+  id?: string
 }) {
   return (
-    <Card className={cn(
+    <Card id={id} className={cn(
       'rounded-[1.15rem] border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] shadow-none',
       className,
     )}>
@@ -343,10 +399,12 @@ function GapAnalysisPanel({
   docs,
   loadingDocs,
   compact = false,
+  id,
 }: {
   docs: DocItem[] | undefined
   loadingDocs: boolean
   compact?: boolean
+  id?: string
 }) {
   const [selectedDocNames, setSelectedDocNames] = useState<string[]>([])
   const [result, setResult] = useState<GapAnalysisResponse | null>(null)
@@ -388,7 +446,7 @@ function GapAnalysisPanel({
   }
 
   return (
-    <SurfaceCard className="overflow-hidden bg-[color:var(--ui-surface-2)]">
+    <SurfaceCard id={id} className="overflow-hidden bg-[color:var(--ui-surface-2)]">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--ui-text-meta)]">Recomendacoes</p>
@@ -549,8 +607,158 @@ function GapAnalysisPanel({
   )
 }
 
+function ProactiveRecommendationsPanel({
+  recommendations,
+  enabled,
+  compact = false,
+}: {
+  recommendations: ProactiveRecommendation[]
+  enabled: boolean
+  compact?: boolean
+}) {
+  const [prefs, setPrefs] = useState<RecommendationPrefs>(() => loadRecommendationPrefs())
+  const now = Date.now()
+  const previewCount = compact ? 3 : 4
+
+  function updatePrefs(next: RecommendationPrefs) {
+    setPrefs(next)
+    saveRecommendationPrefs(next)
+  }
+
+  function dismissRecommendation(id: string) {
+    if (prefs.dismissedIds.includes(id)) return
+    updatePrefs({
+      ...prefs,
+      dismissedIds: [...prefs.dismissedIds, id],
+    })
+  }
+
+  function snoozeRecommendation(id: string, durationMs = ONE_DAY_MS) {
+    updatePrefs({
+      ...prefs,
+      snoozedUntil: {
+        ...prefs.snoozedUntil,
+        [id]: now + durationMs,
+      },
+    })
+  }
+
+  function muteCategory(category: RecommendationCategory, durationMs = SEVEN_DAYS_MS) {
+    updatePrefs({
+      ...prefs,
+      mutedCategoryUntil: {
+        ...prefs.mutedCategoryUntil,
+        [category]: now + durationMs,
+      },
+    })
+  }
+
+  const visibleRecommendations = recommendations.filter((item) => {
+    if (prefs.dismissedIds.includes(item.id)) return false
+    if ((prefs.snoozedUntil[item.id] ?? 0) > now) return false
+    if ((prefs.mutedCategoryUntil[item.category] ?? 0) > now) return false
+    return true
+  })
+
+  if (!enabled) {
+    return (
+      <SurfaceCard className="bg-[color:var(--ui-surface-2)]">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--ui-text-meta)]">Copilot proativo</p>
+            <h3 className="mt-2 font-headline text-lg font-bold text-[color:var(--ui-text)] sm:text-xl">Recomendacoes inteligentes</h3>
+          </div>
+          <Sparkles className="h-5 w-5 text-[color:var(--ui-text-meta)]" />
+        </div>
+        <p className="mt-3 text-sm text-[color:var(--ui-text-dim)]">
+          Este modulo esta desativado por feature flag (`proactive_copilot_enabled`).
+        </p>
+      </SurfaceCard>
+    )
+  }
+
+  return (
+    <SurfaceCard className="bg-[color:var(--ui-surface-2)]">
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--ui-text-meta)]">Copilot proativo</p>
+          <h3 className="mt-2 font-headline text-lg font-bold text-[color:var(--ui-text)] sm:text-xl">Proximas melhores acoes</h3>
+          <p className="mt-1 text-xs text-[color:var(--ui-text-dim)] sm:text-sm">
+            Sugestoes com contexto do seu ritmo de estudo e cobertura atual.
+          </p>
+        </div>
+        <Sparkles className="h-5 w-5 text-[color:var(--ui-accent)]" />
+      </div>
+
+      {visibleRecommendations.length === 0 ? (
+        <div className="rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] px-4 py-3">
+          <p className="text-sm font-medium text-[color:var(--ui-text)]">Sem recomendacoes ativas por enquanto.</p>
+          <p className="mt-1 text-xs text-[color:var(--ui-text-dim)]">
+            Todas foram dispensadas ou adiadas. Voce pode reativar abaixo.
+          </p>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => updatePrefs(defaultRecommendationPrefs())}
+            className="mt-2 h-8 px-2 text-xs text-[color:var(--ui-accent)]"
+          >
+            Reativar recomendacoes
+          </Button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {visibleRecommendations.slice(0, previewCount).map((item) => (
+            <div key={item.id} className="rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] px-4 py-3">
+              <p className="text-sm font-semibold text-[color:var(--ui-text)]">{item.title}</p>
+              <p className="mt-1 text-xs text-[color:var(--ui-text-dim)]">{item.description}</p>
+              <p className="mt-2 text-xs text-[color:var(--ui-text)]">
+                <span className="text-[color:var(--ui-text-meta)]">Por que isso: </span>
+                {item.whyThis}
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Button size="sm" asChild className="h-8 bg-[color:var(--ui-accent)] px-2 text-xs text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)]">
+                  <Link to={item.actionTo}>{item.actionLabel}</Link>
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => snoozeRecommendation(item.id)}
+                  className="h-8 px-2 text-xs text-[color:var(--ui-text-dim)]"
+                >
+                  Adiar 24h
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => muteCategory(item.category)}
+                  className="h-8 px-2 text-xs text-[color:var(--ui-text-dim)]"
+                >
+                  Silenciar categoria
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => dismissRecommendation(item.id)}
+                  className="h-8 px-2 text-xs text-rose-300"
+                >
+                  Dispensar
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </SurfaceCard>
+  )
+}
+
 export function Dashboard() {
   const { user } = useAuth()
+  const capabilities = useCapabilities()
   const [now, setNow] = useState(() => new Date())
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== 'undefined' ? window.matchMedia('(max-width: 639px)').matches : false,
@@ -634,6 +842,73 @@ export function Dashboard() {
   const docsPreviewCount = isMobile ? 3 : 5
   const schedulePreviewCount = isMobile ? 2 : 4
   const remindersPreviewCount = isMobile ? 2 : 4
+  const proactiveCopilotEnabled = capabilities.isEnabled('proactive_copilot_enabled')
+
+  const proactiveRecommendations: ProactiveRecommendation[] = []
+
+  if (overdueCount > 0) {
+    proactiveRecommendations.push({
+      id: 'overdue-tasks',
+      category: 'consistency',
+      title: overdueCount === 1 ? 'Resolva 1 pendencia atrasada' : `Resolva ${overdueCount} pendencias atrasadas`,
+      description: 'Limpar atrasos primeiro melhora previsibilidade do restante da semana.',
+      whyThis: overdueCount === 1
+        ? 'Foi detectada uma tarefa vencida no seu backlog.'
+        : 'Foram detectadas tarefas vencidas no seu backlog.',
+      actionLabel: 'Abrir tarefas',
+      actionTo: '/tasks',
+    })
+  }
+
+  if (todayReminders.length > 0 || todaySchedule.length > 0) {
+    proactiveRecommendations.push({
+      id: 'today-agenda',
+      category: 'schedule',
+      title: 'Revise sua agenda de hoje',
+      description: 'Confirme horarios e ajuste prioridade antes da proxima janela de estudo.',
+      whyThis: todayReminders.length > 0
+        ? `Existem ${todayReminders.length} lembrete(s) ativo(s) hoje.`
+        : 'Existe agenda ativa hoje com compromissos proximos.',
+      actionLabel: 'Ir para calendario',
+      actionTo: '/schedule',
+    })
+  }
+
+  if (hasDocuments && (artifacts?.length ?? 0) === 0) {
+    proactiveRecommendations.push({
+      id: 'first-artifact',
+      category: 'coverage',
+      title: 'Gere seu primeiro artefato consolidado',
+      description: 'Converter estudo em artefato melhora revisao e reaproveitamento no chat.',
+      whyThis: 'Voce ja tem documentos indexados, mas ainda nao salvou artefatos.',
+      actionLabel: 'Abrir artefatos',
+      actionTo: '/artifacts',
+    })
+  }
+
+  if (dailyQuestion?.question) {
+    proactiveRecommendations.push({
+      id: 'daily-question',
+      category: 'quality',
+      title: 'Responda a pergunta do dia',
+      description: 'Uma resposta curta agora ajuda a manter ritmo de consolidacao.',
+      whyThis: 'Uma pergunta contextual foi gerada com base nos seus documentos.',
+      actionLabel: 'Responder no dashboard',
+      actionTo: '/dashboard',
+    })
+  }
+
+  if (hasDocuments) {
+    proactiveRecommendations.push({
+      id: 'coverage-gap-analysis',
+      category: 'coverage',
+      title: 'Rode o mapa de lacunas',
+      description: 'Identifique topicos sem cobertura forte em flashcards e tarefas.',
+      whyThis: 'Seus documentos ja permitem analise de cobertura por topico.',
+      actionLabel: 'Abrir mapa de lacunas',
+      actionTo: '/dashboard#gap-analysis-panel',
+    })
+  }
 
   return (
     <PageShell className="space-y-4 pb-20 sm:space-y-6 md:pb-0">
@@ -687,8 +962,13 @@ export function Dashboard() {
 
         <div className="grid gap-4 sm:gap-6 xl:grid-cols-[minmax(0,1fr)_330px]">
           <div className="space-y-4 sm:space-y-6">
+            <ProactiveRecommendationsPanel
+              recommendations={proactiveRecommendations}
+              enabled={proactiveCopilotEnabled}
+              compact={isMobile}
+            />
             <DailyQuestionPanel data={dailyQuestion} loading={isDailyQuestionLoading} compact={isMobile} />
-            <GapAnalysisPanel docs={docs} loadingDocs={isDocsLoading} compact={isMobile} />
+            <GapAnalysisPanel id="gap-analysis-panel" docs={docs} loadingDocs={isDocsLoading} compact={isMobile} />
 
             <SurfaceCard className="overflow-hidden bg-[color:var(--ui-surface-2)] p-0" contentClassName="p-0">
               <div className="flex items-center justify-between px-4 py-4 sm:px-5">
