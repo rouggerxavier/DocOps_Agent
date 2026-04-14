@@ -15,6 +15,7 @@ import {
   RefreshCw,
   ScrollText,
   Sparkles,
+  Target,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
@@ -28,6 +29,7 @@ import {
   type DailyQuestionResponse,
   type DocItem,
   type EvaluateAnswerResponse,
+  type GapAnalysisResponse,
 } from '@/api/client'
 import { useAuth } from '@/auth/AuthProvider'
 import { cn } from '@/lib/utils'
@@ -49,6 +51,36 @@ const SCORE_LABEL: Record<string, string> = {
   parcial: 'Parcial',
   incorreto: 'Incorreto',
   sem_resposta: 'Sem resposta',
+}
+
+const GAP_PRIORITY_STYLE: Record<string, string> = {
+  high: 'border-rose-500/35 bg-rose-500/10 text-rose-200',
+  normal: 'border-amber-500/35 bg-amber-500/10 text-amber-200',
+  low: 'border-emerald-500/35 bg-emerald-500/10 text-emerald-200',
+}
+
+const GAP_PRIORITY_LABEL: Record<string, string> = {
+  high: 'Alta',
+  normal: 'Normal',
+  low: 'Baixa',
+}
+
+function getApiErrorDetail(error: unknown): string {
+  const fallback = 'Nao foi possivel concluir a analise de lacunas.'
+  const maybeError = error as {
+    response?: {
+      data?: {
+        detail?: string
+      }
+    }
+    message?: string
+  }
+
+  return (
+    maybeError?.response?.data?.detail
+    || maybeError?.message
+    || fallback
+  )
 }
 
 function SurfaceCard({
@@ -306,6 +338,216 @@ function DailyQuestionPanel({
   )
 }
 
+function GapAnalysisPanel({
+  docs,
+  loadingDocs,
+  compact = false,
+}: {
+  docs: DocItem[] | undefined
+  loadingDocs: boolean
+  compact?: boolean
+}) {
+  const [selectedDocNames, setSelectedDocNames] = useState<string[]>([])
+  const [result, setResult] = useState<GapAnalysisResponse | null>(null)
+  const [errorText, setErrorText] = useState<string | null>(null)
+  const hasDocs = !!docs?.length
+  const docPreview = docs?.slice(0, compact ? 4 : 6) ?? []
+  const resultPreviewCount = compact ? 3 : 5
+
+  useEffect(() => {
+    if (!docs?.length) {
+      setSelectedDocNames([])
+      return
+    }
+    setSelectedDocNames((prev) => prev.filter((name) => docs.some((doc) => doc.file_name === name)))
+  }, [docs])
+
+  const gapMutation = useMutation({
+    mutationFn: () => apiClient.runGapAnalysis(selectedDocNames),
+    onSuccess: (payload) => {
+      setResult(payload)
+      setErrorText(null)
+    },
+    onError: (error) => {
+      setErrorText(getApiErrorDetail(error))
+    },
+  })
+
+  function toggleDoc(docName: string) {
+    setSelectedDocNames((prev) => (
+      prev.includes(docName)
+        ? prev.filter((item) => item !== docName)
+        : [...prev, docName]
+    ))
+  }
+
+  function runAnalysis() {
+    setErrorText(null)
+    gapMutation.mutate()
+  }
+
+  return (
+    <SurfaceCard className="overflow-hidden bg-[color:var(--ui-surface-2)]">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--ui-text-meta)]">Recomendacoes</p>
+          <h3 className="mt-2 font-headline text-lg font-bold text-[color:var(--ui-text)] sm:text-xl">Mapa de lacunas</h3>
+          <p className="mt-1 text-xs text-[color:var(--ui-text-dim)] sm:text-sm">
+            Detecta topicos importantes ainda sem cobertura forte em tarefas e flashcards.
+          </p>
+        </div>
+        <div className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[color:var(--ui-accent-soft)]">
+          <Target className="h-4 w-4 text-[color:var(--ui-accent)]" />
+        </div>
+      </div>
+
+      {loadingDocs ? (
+        <div className="mt-4 space-y-2">
+          <Skeleton className="h-9 w-full rounded-lg" />
+          <Skeleton className="h-9 w-full rounded-lg" />
+          <Skeleton className="h-24 w-full rounded-lg" />
+        </div>
+      ) : !hasDocs ? (
+        <div className="mt-4 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] px-4 py-3">
+          <p className="text-sm text-[color:var(--ui-text-dim)]">
+            Insira ao menos um documento para liberar a analise de lacunas.
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="mt-4">
+            <p className="mb-2 text-[11px] uppercase tracking-[0.12em] text-[color:var(--ui-text-meta)]">
+              Escopo opcional por documento
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {docPreview.map((doc) => {
+                const active = selectedDocNames.includes(doc.file_name)
+                return (
+                  <button
+                    key={doc.doc_id}
+                    type="button"
+                    onClick={() => toggleDoc(doc.file_name)}
+                    className={cn(
+                      'rounded-full border px-3 py-1 text-[11px] font-medium transition-colors',
+                      active
+                        ? 'border-[color:var(--ui-accent)] bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]'
+                        : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] text-[color:var(--ui-text-dim)] hover:border-[color:var(--ui-border-strong)]',
+                    )}
+                  >
+                    {doc.file_name}
+                  </button>
+                )
+              })}
+            </div>
+            {docs.length > docPreview.length ? (
+              <p className="mt-2 text-[11px] text-[color:var(--ui-text-meta)]">
+                Mostrando {docPreview.length} de {docs.length} docs. Sem filtro, analisamos o workspace inteiro.
+              </p>
+            ) : null}
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Button
+              type="button"
+              onClick={runAnalysis}
+              disabled={gapMutation.isPending}
+              className="h-9 bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)]"
+            >
+              {gapMutation.isPending ? 'Analisando...' : 'Analisar lacunas'}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setSelectedDocNames([])}
+              disabled={gapMutation.isPending || selectedDocNames.length === 0}
+              className="h-9 text-xs text-[color:var(--ui-text-dim)]"
+            >
+              Limpar filtro
+            </Button>
+          </div>
+
+          {gapMutation.isPending ? (
+            <div className="mt-4 space-y-2">
+              <Skeleton className="h-20 w-full rounded-xl" />
+              <Skeleton className="h-20 w-full rounded-xl" />
+            </div>
+          ) : null}
+
+          {errorText ? (
+            <div className="mt-4 rounded-xl border border-rose-500/35 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+              {errorText}
+            </div>
+          ) : null}
+
+          {!gapMutation.isPending && result ? (
+            <div className="mt-4 space-y-3">
+              <p className="text-xs text-[color:var(--ui-text-meta)]">
+                Analise concluida em {result.docs_analyzed} documento(s).
+              </p>
+
+              {result.gaps.length === 0 ? (
+                <div className="rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-4 py-3">
+                  <p className="text-sm font-medium text-emerald-200">Nenhuma lacuna relevante encontrada agora.</p>
+                  <p className="mt-1 text-xs text-emerald-100/80">
+                    Continue o ritmo no chat e gere flashcards para manter a cobertura.
+                  </p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <Button variant="ghost" size="sm" asChild className="h-8 px-2 text-xs text-emerald-100">
+                      <Link to="/chat">Revisar no chat</Link>
+                    </Button>
+                    <Button variant="ghost" size="sm" asChild className="h-8 px-2 text-xs text-emerald-100">
+                      <Link to="/flashcards">Abrir flashcards</Link>
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {result.gaps.slice(0, resultPreviewCount).map((gap) => {
+                    const priority = gap.prioridade || 'normal'
+                    return (
+                      <div key={`${gap.topico}-${gap.sugestao}`} className="rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] px-4 py-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="text-sm font-semibold text-[color:var(--ui-text)]">{gap.topico}</p>
+                          <span className={cn(
+                            'rounded-full border px-2 py-0.5 text-[11px] font-semibold',
+                            GAP_PRIORITY_STYLE[priority] ?? GAP_PRIORITY_STYLE.normal,
+                          )}>
+                            Prioridade {GAP_PRIORITY_LABEL[priority] ?? GAP_PRIORITY_LABEL.normal}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-xs text-[color:var(--ui-text-dim)]">{gap.descricao}</p>
+                        <p className="mt-2 text-xs text-[color:var(--ui-text)]">
+                          <span className="text-[color:var(--ui-text-meta)]">Sugestao: </span>{gap.sugestao}
+                        </p>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <Button variant="ghost" size="sm" asChild className="h-7 px-2 text-xs text-[color:var(--ui-accent)]">
+                            <Link to="/chat">Revisar no chat</Link>
+                          </Button>
+                          <Button variant="ghost" size="sm" asChild className="h-7 px-2 text-xs text-amber-300">
+                            <Link to="/flashcards">Criar flashcards</Link>
+                          </Button>
+                          <Button variant="ghost" size="sm" asChild className="h-7 px-2 text-xs text-[color:var(--ui-text-dim)]">
+                            <Link to="/tasks">Virar tarefa</Link>
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {result.gaps.length > resultPreviewCount ? (
+                    <p className="text-xs text-[color:var(--ui-text-meta)]">
+                      Mostrando {resultPreviewCount} de {result.gaps.length} lacunas encontradas.
+                    </p>
+                  ) : null}
+                </div>
+              )}
+            </div>
+          ) : null}
+        </>
+      )}
+    </SurfaceCard>
+  )
+}
+
 export function Dashboard() {
   const { user } = useAuth()
   const [now, setNow] = useState(() => new Date())
@@ -500,6 +742,7 @@ export function Dashboard() {
       <div className="grid gap-4 sm:gap-6 xl:grid-cols-[minmax(0,1fr)_330px]">
         <div className="space-y-6">
           <DailyQuestionPanel data={dailyQuestion} loading={isDailyQuestionLoading} compact={isMobile} />
+          <GapAnalysisPanel docs={docs} loadingDocs={isDocsLoading} compact={isMobile} />
 
           <SurfaceCard className="overflow-hidden bg-[color:var(--ui-surface-2)] p-0">
             <div className="flex items-center justify-between px-4 py-4 sm:px-5">
