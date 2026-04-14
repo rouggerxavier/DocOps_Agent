@@ -33,6 +33,7 @@ import {
 } from '@/api/client'
 import { useAuth } from '@/auth/AuthProvider'
 import { useCapabilities } from '@/features/CapabilitiesProvider'
+import { trackPremiumFeatureActivation, trackPremiumTouchpointViewed, trackUpgradeCompleted, trackUpgradeInitiated } from '@/features/premiumAnalytics'
 import { cn } from '@/lib/utils'
 import { PageShell } from '@/components/ui/page-shell'
 
@@ -266,16 +267,20 @@ function OnboardingSteps() {
 function DailyQuestionPanel({
   data,
   loading,
+  touchpoint,
   locked = false,
   entitlementTier = 'free',
   onRefreshAccess,
+  onUpgradeIntent,
   compact = false,
 }: {
   data: DailyQuestionResponse | undefined
   loading: boolean
+  touchpoint: string
   locked?: boolean
   entitlementTier?: string
-  onRefreshAccess?: () => Promise<void> | void
+  onRefreshAccess?: (touchpoint: string) => Promise<void> | void
+  onUpgradeIntent?: (touchpoint: string) => void
   compact?: boolean
 }) {
   const [showHint, setShowHint] = useState(false)
@@ -315,11 +320,11 @@ function DailyQuestionPanel({
             Seu plano atual ({entitlementTier}) nao inclui `premium_proactive_copilot`.
           </p>
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={() => { void onRefreshAccess?.() }}>
+            <Button variant="outline" size="sm" onClick={() => { void onRefreshAccess?.(touchpoint) }}>
               Ja fiz upgrade, atualizar acesso
             </Button>
             <Button variant="ghost" size="sm" asChild>
-              <Link to="/settings">Ver recursos premium</Link>
+              <Link to="/settings" onClick={() => onUpgradeIntent?.(touchpoint)}>Ver recursos premium</Link>
             </Button>
           </div>
         </div>
@@ -434,17 +439,21 @@ function DailyQuestionPanel({
 function GapAnalysisPanel({
   docs,
   loadingDocs,
+  touchpoint,
   locked = false,
   entitlementTier = 'free',
   onRefreshAccess,
+  onUpgradeIntent,
   compact = false,
   id,
 }: {
   docs: DocItem[] | undefined
   loadingDocs: boolean
+  touchpoint: string
   locked?: boolean
   entitlementTier?: string
-  onRefreshAccess?: () => Promise<void> | void
+  onRefreshAccess?: (touchpoint: string) => Promise<void> | void
+  onUpgradeIntent?: (touchpoint: string) => void
   compact?: boolean
   id?: string
 }) {
@@ -468,6 +477,15 @@ function GapAnalysisPanel({
     onSuccess: (payload) => {
       setResult(payload)
       setErrorText(null)
+      trackPremiumFeatureActivation({
+        touchpoint,
+        capability: 'premium_proactive_copilot',
+        metadata: {
+          surface: 'dashboard',
+          docs_analyzed: payload.docs_analyzed,
+          gap_count: payload.gaps.length,
+        },
+      })
     },
     onError: (error) => {
       setErrorText(getApiErrorDetail(error))
@@ -511,11 +529,11 @@ function GapAnalysisPanel({
             Este fluxo exige o entitlement `premium_proactive_copilot`.
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={() => { void onRefreshAccess?.() }}>
+            <Button variant="outline" size="sm" onClick={() => { void onRefreshAccess?.(touchpoint) }}>
               Ja fiz upgrade, atualizar acesso
             </Button>
             <Button variant="ghost" size="sm" asChild className="text-amber-100">
-              <Link to="/settings">Ver recursos premium</Link>
+              <Link to="/settings" onClick={() => onUpgradeIntent?.(touchpoint)}>Ver recursos premium</Link>
             </Button>
           </div>
         </div>
@@ -670,15 +688,19 @@ function ProactiveRecommendationsPanel({
   recommendations,
   featureEnabled,
   capabilityUnlocked,
+  touchpoint,
   entitlementTier = 'free',
   onRefreshAccess,
+  onUpgradeIntent,
   compact = false,
 }: {
   recommendations: ProactiveRecommendation[]
   featureEnabled: boolean
   capabilityUnlocked: boolean
+  touchpoint: string
   entitlementTier?: string
-  onRefreshAccess?: () => Promise<void> | void
+  onRefreshAccess?: (touchpoint: string) => Promise<void> | void
+  onUpgradeIntent?: (touchpoint: string) => void
   compact?: boolean
 }) {
   const [prefs, setPrefs] = useState<RecommendationPrefs>(() => loadRecommendationPrefs())
@@ -756,11 +778,11 @@ function ProactiveRecommendationsPanel({
           Seu plano atual ({entitlementTier}) nao inclui `premium_proactive_copilot`.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={() => { void onRefreshAccess?.() }}>
+          <Button variant="outline" size="sm" onClick={() => { void onRefreshAccess?.(touchpoint) }}>
             Ja fiz upgrade, atualizar acesso
           </Button>
           <Button variant="ghost" size="sm" asChild className="text-amber-100">
-            <Link to="/settings">Ver recursos premium</Link>
+            <Link to="/settings" onClick={() => onUpgradeIntent?.(touchpoint)}>Ver recursos premium</Link>
           </Button>
         </div>
       </SurfaceCard>
@@ -891,6 +913,8 @@ export function Dashboard() {
   const proactiveCopilotUnlocked = capabilities.hasCapability('premium_proactive_copilot')
   const proactiveCopilotEnabled = proactiveCopilotFeatureEnabled && proactiveCopilotUnlocked
   const proactiveCopilotLocked = proactiveCopilotFeatureEnabled && !proactiveCopilotUnlocked
+  const [lastUpgradeTouchpoint, setLastUpgradeTouchpoint] = useState('dashboard.proactive_recommendations')
+  const [wasProactiveLocked, setWasProactiveLocked] = useState(proactiveCopilotLocked)
 
   const { data: dailyQuestion, isLoading: isDailyQuestionLoading } = useQuery<DailyQuestionResponse>({
     queryKey: ['daily-question'],
@@ -919,6 +943,50 @@ export function Dashboard() {
     media.addListener(handler)
     return () => media.removeListener(handler)
   }, [])
+
+  useEffect(() => {
+    if (!proactiveCopilotLocked) return
+    trackPremiumTouchpointViewed({
+      touchpoint: 'dashboard.proactive_recommendations',
+      capability: 'premium_proactive_copilot',
+      metadata: { surface: 'dashboard' },
+    })
+    trackPremiumTouchpointViewed({
+      touchpoint: 'dashboard.daily_question',
+      capability: 'premium_proactive_copilot',
+      metadata: { surface: 'dashboard' },
+    })
+    trackPremiumTouchpointViewed({
+      touchpoint: 'dashboard.gap_analysis',
+      capability: 'premium_proactive_copilot',
+      metadata: { surface: 'dashboard' },
+    })
+  }, [proactiveCopilotLocked])
+
+  useEffect(() => {
+    if (wasProactiveLocked && !proactiveCopilotLocked) {
+      trackUpgradeCompleted({
+        touchpoint: lastUpgradeTouchpoint,
+        capability: 'premium_proactive_copilot',
+        metadata: { surface: 'dashboard' },
+      })
+      trackPremiumFeatureActivation({
+        touchpoint: lastUpgradeTouchpoint,
+        capability: 'premium_proactive_copilot',
+        metadata: { surface: 'dashboard', source: 'unlock_transition' },
+      })
+    }
+    setWasProactiveLocked(proactiveCopilotLocked)
+  }, [lastUpgradeTouchpoint, proactiveCopilotLocked, wasProactiveLocked])
+
+  useEffect(() => {
+    if (!proactiveCopilotEnabled || !dailyQuestion?.question) return
+    trackPremiumFeatureActivation({
+      touchpoint: 'dashboard.daily_question',
+      capability: 'premium_proactive_copilot',
+      metadata: { surface: 'dashboard', source: 'daily_question' },
+    })
+  }, [dailyQuestion?.question, proactiveCopilotEnabled])
 
   const firstName = user?.name?.trim().split(/\s+/)[0] || 'arquiteto'
   const todayLabel = now.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })
@@ -1003,7 +1071,17 @@ export function Dashboard() {
     })
   }
 
-  async function handleRefreshProactiveAccess() {
+  function handleProactiveUpgradeIntent(touchpoint: string, source: 'link' | 'refresh_access' = 'link') {
+    setLastUpgradeTouchpoint(touchpoint)
+    trackUpgradeInitiated({
+      touchpoint,
+      capability: 'premium_proactive_copilot',
+      metadata: { surface: 'dashboard', source },
+    })
+  }
+
+  async function handleRefreshProactiveAccess(touchpoint: string) {
+    handleProactiveUpgradeIntent(touchpoint, 'refresh_access')
     await capabilities.refresh()
     toast.info('Acesso premium atualizado. Se o upgrade ja foi aplicado, recarregamos suas capacidades.')
   }
@@ -1063,25 +1141,31 @@ export function Dashboard() {
               recommendations={proactiveRecommendations}
               featureEnabled={proactiveCopilotFeatureEnabled}
               capabilityUnlocked={proactiveCopilotUnlocked}
+              touchpoint="dashboard.proactive_recommendations"
               entitlementTier={capabilities.entitlementTier}
               onRefreshAccess={handleRefreshProactiveAccess}
+              onUpgradeIntent={handleProactiveUpgradeIntent}
               compact={isMobile}
             />
             <DailyQuestionPanel
               data={dailyQuestion}
               loading={isDailyQuestionLoading}
+              touchpoint="dashboard.daily_question"
               locked={proactiveCopilotLocked}
               entitlementTier={capabilities.entitlementTier}
               onRefreshAccess={handleRefreshProactiveAccess}
+              onUpgradeIntent={handleProactiveUpgradeIntent}
               compact={isMobile}
             />
             <GapAnalysisPanel
               id="gap-analysis-panel"
               docs={docs}
               loadingDocs={isDocsLoading}
+              touchpoint="dashboard.gap_analysis"
               locked={proactiveCopilotLocked}
               entitlementTier={capabilities.entitlementTier}
               onRefreshAccess={handleRefreshProactiveAccess}
+              onUpgradeIntent={handleProactiveUpgradeIntent}
               compact={isMobile}
             />
 

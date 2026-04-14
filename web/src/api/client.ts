@@ -472,6 +472,56 @@ export interface GapAnalysisResponse {
   docs_analyzed: number
 }
 
+export type PremiumAnalyticsEventType =
+  | 'premium_touchpoint_viewed'
+  | 'upgrade_initiated'
+  | 'upgrade_completed'
+  | 'premium_feature_activation'
+
+export interface PremiumAnalyticsTrackPayload {
+  event_type: PremiumAnalyticsEventType
+  touchpoint: string
+  capability?: string
+  metadata?: Record<string, any>
+}
+
+export interface PremiumAnalyticsTrackResponse {
+  status: string
+  id: number
+  event_type: PremiumAnalyticsEventType
+  touchpoint: string
+  capability?: string | null
+  created_at: string
+}
+
+export interface PremiumFunnelStageStats {
+  events: number
+  users: number
+}
+
+export interface PremiumFunnelTouchpoint {
+  touchpoint: string
+  capability?: string | null
+  stages: Record<PremiumAnalyticsEventType, PremiumFunnelStageStats>
+  conversion: {
+    view_to_upgrade_initiated: number | null
+    initiated_to_completed: number | null
+    completed_to_activation: number | null
+    view_to_activation: number | null
+  }
+}
+
+export interface PremiumFunnelResponse {
+  window_days: number
+  generated_at: string
+  totals: {
+    events: number
+    users: number
+    touchpoints: number
+  }
+  touchpoints: PremiumFunnelTouchpoint[]
+}
+
 // ── Reading Status ─────────────────────────────────────────────────────────────
 
 export type ReadingStatus = 'to_read' | 'reading' | 'done'
@@ -1056,6 +1106,12 @@ export const apiClient = {
     api.post('/api/pipeline/gap-analysis', { doc_names: docNames }, { timeout: 90000 }).then(r => r.data),
 
   // ── Reading Status ──────────────────────────────────────────────────────────
+
+  trackPremiumAnalyticsEvent: (payload: PremiumAnalyticsTrackPayload): Promise<PremiumAnalyticsTrackResponse> =>
+    api.post('/api/analytics/premium/events', payload).then(r => r.data),
+
+  getPremiumFunnel: (windowDays = 30): Promise<PremiumFunnelResponse> =>
+    api.get('/api/analytics/premium/funnel', { params: { window_days: windowDays } }).then(r => r.data),
 
   getReadingStatus: (): Promise<Record<string, ReadingStatus>> =>
     api.get('/api/docs/reading-status').then(r => r.data),

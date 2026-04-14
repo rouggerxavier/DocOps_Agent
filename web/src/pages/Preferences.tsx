@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { RotateCcw, SlidersHorizontal, Sparkles } from 'lucide-react'
@@ -6,6 +6,7 @@ import { toast } from 'sonner'
 
 import { apiClient, type UserPreferences, type UserPreferencesUpdatePayload } from '@/api/client'
 import { useCapabilities } from '@/features/CapabilitiesProvider'
+import { trackPremiumFeatureActivation, trackPremiumTouchpointViewed, trackUpgradeCompleted, trackUpgradeInitiated } from '@/features/premiumAnalytics'
 import { cn } from '@/lib/utils'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -106,6 +107,8 @@ export function Preferences() {
   const personalizationEnabled = capabilities.isEnabled('personalization_enabled')
   const personalizationUnlocked = capabilities.hasCapability('premium_personalization')
   const personalizationLocked = personalizationEnabled && !personalizationUnlocked
+  const [lastUpgradeTouchpoint, setLastUpgradeTouchpoint] = useState('preferences.memory')
+  const [wasPersonalizationLocked, setWasPersonalizationLocked] = useState(personalizationLocked)
 
   const preferencesQuery = useQuery({
     queryKey: ['user-preferences'],
@@ -151,7 +154,51 @@ export function Preferences() {
     updateMutation.mutate(patch)
   }
 
+  useEffect(() => {
+    if (!personalizationLocked) return
+    trackPremiumTouchpointViewed({
+      touchpoint: 'preferences.memory',
+      capability: 'premium_personalization',
+      metadata: { surface: 'preferences' },
+    })
+  }, [personalizationLocked])
+
+  useEffect(() => {
+    if (wasPersonalizationLocked && !personalizationLocked) {
+      trackUpgradeCompleted({
+        touchpoint: lastUpgradeTouchpoint,
+        capability: 'premium_personalization',
+        metadata: { surface: 'preferences' },
+      })
+      trackPremiumFeatureActivation({
+        touchpoint: 'preferences.memory',
+        capability: 'premium_personalization',
+        metadata: { surface: 'preferences', source: 'unlock_transition' },
+      })
+    }
+    setWasPersonalizationLocked(personalizationLocked)
+  }, [lastUpgradeTouchpoint, personalizationLocked, wasPersonalizationLocked])
+
+  useEffect(() => {
+    if (!(personalizationEnabled && personalizationUnlocked) || preferencesQuery.isLoading || preferencesQuery.isError) return
+    trackPremiumFeatureActivation({
+      touchpoint: 'preferences.memory',
+      capability: 'premium_personalization',
+      metadata: { surface: 'preferences', source: 'preferences_loaded' },
+    })
+  }, [personalizationEnabled, personalizationUnlocked, preferencesQuery.isError, preferencesQuery.isLoading])
+
+  const handleUpgradeIntent = (source: 'link' | 'refresh_access') => {
+    setLastUpgradeTouchpoint('preferences.memory')
+    trackUpgradeInitiated({
+      touchpoint: 'preferences.memory',
+      capability: 'premium_personalization',
+      metadata: { surface: 'preferences', source },
+    })
+  }
+
   const handleRefreshCapabilities = async () => {
+    handleUpgradeIntent('refresh_access')
     await capabilities.refresh()
     await queryClient.invalidateQueries({ queryKey: ['user-preferences'] })
     toast.info('Acesso atualizado. Se o upgrade já foi aplicado, recarregamos as capacidades.')
@@ -216,7 +263,7 @@ export function Preferences() {
                 Já fiz upgrade, atualizar acesso
               </Button>
               <Button variant="ghost" size="sm" asChild>
-                <Link to="/dashboard">Ver recursos premium no dashboard</Link>
+                <Link to="/dashboard" onClick={() => handleUpgradeIntent('link')}>Ver recursos premium no dashboard</Link>
               </Button>
             </div>
           </CardContent>

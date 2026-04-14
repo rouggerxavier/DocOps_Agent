@@ -10,6 +10,7 @@ import ReactMarkdown from 'react-markdown'
 import { Skeleton } from '@/components/ui/skeleton'
 import { apiClient, type ArtifactFilterOptions, type ArtifactItem, type ArtifactTemplate, type DocItem } from '@/api/client'
 import { useCapabilities } from '@/features/CapabilitiesProvider'
+import { trackPremiumFeatureActivation, trackPremiumTouchpointViewed, trackUpgradeCompleted, trackUpgradeInitiated } from '@/features/premiumAnalytics'
 import { formatBytes, formatDate } from '@/lib/utils'
 
 const MARKDOWN_FILE_RE = /\.(md|markdown|txt)$/i
@@ -221,6 +222,15 @@ function SummarizeDocDialog({
   const selectedTemplateIsLocked = Boolean(selectedTemplate?.locked)
 
   useEffect(() => {
+    if (!templatesLocked) return
+    trackPremiumTouchpointViewed({
+      touchpoint: 'artifacts.summarize_templates',
+      capability: 'premium_artifact_templates',
+      metadata: { surface: 'artifacts', dialog: 'summarize' },
+    })
+  }, [templatesLocked])
+
+  useEffect(() => {
     if (!templatesFeatureEnabled) return
     if (!templateOptions.length) { setSelectedTemplateId(''); return }
     const hasActive = templateOptions.some(item => item.template_id === selectedTemplateId && !item.locked)
@@ -260,6 +270,17 @@ function SummarizeDocDialog({
       setResult(String(payload.answer ?? ''))
       setArtifactFilename(payload.artifact_filename ?? null)
       setResultTemplateLabel(payload.template_label ? String(payload.template_label) : null)
+      if (templatesFeatureEnabled && templatesUnlocked) {
+        trackPremiumFeatureActivation({
+          touchpoint: 'artifacts.summarize_templates',
+          capability: 'premium_artifact_templates',
+          metadata: {
+            surface: 'artifacts',
+            template_id: payload.template_id ? String(payload.template_id) : null,
+            summary_mode: mode,
+          },
+        })
+      }
       if (payload.artifact_filename) {
         toast.success(`Resumo salvo: ${payload.artifact_filename}`)
         qc.invalidateQueries({ queryKey: ['artifacts'] })
@@ -270,7 +291,7 @@ function SummarizeDocDialog({
       toast.error(jobQuery.data.error ?? 'Erro ao gerar resumo')
       setJobId(null)
     }
-  }, [jobId, jobQuery.data, qc])
+  }, [jobId, jobQuery.data, mode, qc, templatesFeatureEnabled, templatesUnlocked])
 
   const modeLabel = mode === 'brief' ? 'Resumo Breve' : 'Resumo Aprofundado'
   const isProcessing = startJob.isPending || !!jobId
@@ -880,6 +901,15 @@ function CreateArtifactDialog({
   const selectedTemplateIsLocked = Boolean(selectedTemplate?.locked)
 
   useEffect(() => {
+    if (!templatesLocked) return
+    trackPremiumTouchpointViewed({
+      touchpoint: 'artifacts.create_templates',
+      capability: 'premium_artifact_templates',
+      metadata: { surface: 'artifacts', dialog: 'create' },
+    })
+  }, [templatesLocked])
+
+  useEffect(() => {
     if (!templatesFeatureEnabled) return
     if (!templateOptions.length) { setSelectedTemplateId(''); return }
     const hasActive = templateOptions.some(item => item.template_id === selectedTemplateId && !item.locked)
@@ -919,6 +949,17 @@ function CreateArtifactDialog({
       const payload = jobQuery.data.result ?? {}
       setResult(String(payload.answer ?? ''))
       setResultTemplateLabel(payload.template_label ? String(payload.template_label) : null)
+      if (templatesFeatureEnabled && templatesUnlocked) {
+        trackPremiumFeatureActivation({
+          touchpoint: 'artifacts.create_templates',
+          capability: 'premium_artifact_templates',
+          metadata: {
+            surface: 'artifacts',
+            artifact_type: type,
+            template_id: payload.template_id ? String(payload.template_id) : null,
+          },
+        })
+      }
       if (payload.filename) toast.success(`Artefato salvo: ${payload.filename}`)
       qc.invalidateQueries({ queryKey: ['artifacts'] })
       qc.invalidateQueries({ queryKey: ['artifact-filter-options'] })
@@ -927,7 +968,7 @@ function CreateArtifactDialog({
       toast.error(jobQuery.data.error ?? 'Erro ao gerar artefato')
       setJobId(null)
     }
-  }, [jobId, jobQuery.data, qc])
+  }, [jobId, jobQuery.data, qc, templatesFeatureEnabled, templatesUnlocked, type])
 
   const isProcessing = startJob.isPending || !!jobId
 
@@ -1204,6 +1245,8 @@ export function Artifacts() {
   const templatesUnlocked = capabilities.hasCapability('premium_artifact_templates')
   const templatesEnabled = templatesFeatureEnabled && templatesUnlocked
   const templatesLocked = templatesFeatureEnabled && !templatesUnlocked
+  const [lastUpgradeTouchpoint, setLastUpgradeTouchpoint] = useState('artifacts.templates')
+  const [wasTemplatesLocked, setWasTemplatesLocked] = useState(templatesLocked)
   const [showCreate, setShowCreate] = useState(false)
   const [showSummarize, setShowSummarize] = useState(false)
   const [showDigest, setShowDigest] = useState(false)
@@ -1250,6 +1293,49 @@ export function Artifacts() {
     onError: () => toast.error('Erro ao remover artefato.'),
   })
 
+  useEffect(() => {
+    if (!templatesLocked) return
+    trackPremiumTouchpointViewed({
+      touchpoint: 'artifacts.templates',
+      capability: 'premium_artifact_templates',
+      metadata: { surface: 'artifacts' },
+    })
+  }, [templatesLocked])
+
+  useEffect(() => {
+    if (wasTemplatesLocked && !templatesLocked) {
+      trackUpgradeCompleted({
+        touchpoint: lastUpgradeTouchpoint,
+        capability: 'premium_artifact_templates',
+        metadata: { surface: 'artifacts' },
+      })
+      trackPremiumFeatureActivation({
+        touchpoint: 'artifacts.templates',
+        capability: 'premium_artifact_templates',
+        metadata: { surface: 'artifacts', source: 'unlock_transition' },
+      })
+    }
+    setWasTemplatesLocked(templatesLocked)
+  }, [lastUpgradeTouchpoint, templatesLocked, wasTemplatesLocked])
+
+  useEffect(() => {
+    if (!templatesEnabled) return
+    trackPremiumFeatureActivation({
+      touchpoint: 'artifacts.templates',
+      capability: 'premium_artifact_templates',
+      metadata: { surface: 'artifacts', source: 'templates_enabled' },
+    })
+  }, [templatesEnabled])
+
+  function handleTemplateUpgradeIntent(source: 'link' | 'refresh_access', touchpoint = 'artifacts.templates') {
+    setLastUpgradeTouchpoint(touchpoint)
+    trackUpgradeInitiated({
+      touchpoint,
+      capability: 'premium_artifact_templates',
+      metadata: { surface: 'artifacts', source },
+    })
+  }
+
   async function handleDownload(artifactId: number, filename: string) {
     const key = `${artifactId}:file`; setDownloadingKey(key)
     try { const blob = await apiClient.getArtifactBlobById(artifactId); downloadBlobFile(blob, filename) }
@@ -1262,7 +1348,8 @@ export function Artifacts() {
     catch { toast.error('Erro ao baixar PDF') } finally { setDownloadingKey(null) }
   }
 
-  async function handleRefreshTemplateAccess() {
+  async function handleRefreshTemplateAccess(touchpoint = 'artifacts.templates') {
+    handleTemplateUpgradeIntent('refresh_access', touchpoint)
     await capabilities.refresh()
     await qc.invalidateQueries({ queryKey: ['artifact-templates'] })
     toast.info('Acesso premium atualizado. Se o upgrade ja foi aplicado, recarregamos os templates.')
@@ -1324,13 +1411,25 @@ export function Artifacts() {
             <p className="mt-1 text-xs text-amber-100/85">
               Faca upgrade para desbloquear previews e geracao com templates premium.
             </p>
-            <button
-              type="button"
-              onClick={() => { void handleRefreshTemplateAccess() }}
-              className="mt-2 rounded-lg border border-amber-500/45 px-2.5 py-1 text-xs text-amber-100 transition-colors hover:bg-amber-500/10"
-            >
-              Ja fiz upgrade, atualizar acesso
-            </button>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => { void handleRefreshTemplateAccess('artifacts.templates') }}
+                className="rounded-lg border border-amber-500/45 px-2.5 py-1 text-xs text-amber-100 transition-colors hover:bg-amber-500/10"
+              >
+                Ja fiz upgrade, atualizar acesso
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleTemplateUpgradeIntent('link', 'artifacts.templates')
+                  window.location.href = '/settings'
+                }}
+                className="rounded-lg border border-amber-500/30 px-2.5 py-1 text-xs text-amber-100/90 transition-colors hover:bg-amber-500/10"
+              >
+                Ver recursos premium
+              </button>
+            </div>
           </div>
         )}
 
@@ -1597,7 +1696,7 @@ export function Artifacts() {
           templatesFeatureEnabled={templatesFeatureEnabled}
           templatesUnlocked={templatesUnlocked}
           entitlementTier={capabilities.entitlementTier}
-          onRefreshAccess={handleRefreshTemplateAccess}
+          onRefreshAccess={() => handleRefreshTemplateAccess('artifacts.summarize_templates')}
         />
       )}
       {showDigest && <SmartDigestDialog onClose={() => setShowDigest(false)} />}
@@ -1607,7 +1706,7 @@ export function Artifacts() {
           templatesFeatureEnabled={templatesFeatureEnabled}
           templatesUnlocked={templatesUnlocked}
           entitlementTier={capabilities.entitlementTier}
-          onRefreshAccess={handleRefreshTemplateAccess}
+          onRefreshAccess={() => handleRefreshTemplateAccess('artifacts.create_templates')}
         />
       )}
       {previewFile && <PreviewDialog artifact={previewFile} onClose={() => setPreviewFile(null)} />}

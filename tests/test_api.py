@@ -26,7 +26,7 @@ from sqlalchemy.pool import StaticPool
 from docops.api.app import app
 from docops.auth.dependencies import get_current_user
 from docops.db.database import Base, get_db
-from docops.db.models import User, UserPreferenceRecord
+from docops.db.models import PremiumAnalyticsEventRecord, User, UserPreferenceRecord
 
 
 # ── Banco de dados em memória para testes ─────────────────────────────────────
@@ -596,6 +596,124 @@ def test_capabilities_reflect_entitlement_state(monkeypatch):
         item["key"] == "premium_chat_to_artifact"
         for item in payload["entitlement_capabilities"]
     )
+    _clear_auth_override()
+
+
+def test_premium_analytics_event_tracking_persists_record():
+    auth_client, _ = _make_auth_client()
+    Base.metadata.create_all(bind=_test_engine)
+
+    db = _TestSession()
+    try:
+        db.query(PremiumAnalyticsEventRecord).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    response = auth_client.post(
+        "/api/analytics/premium/events",
+        json={
+            "event_type": "premium_touchpoint_viewed",
+            "touchpoint": "dashboard.gap_analysis",
+            "capability": "premium_proactive_copilot",
+            "metadata": {"surface": "dashboard"},
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "recorded"
+    assert payload["event_type"] == "premium_touchpoint_viewed"
+    assert payload["touchpoint"] == "dashboard.gap_analysis"
+    assert payload["capability"] == "premium_proactive_copilot"
+
+    db = _TestSession()
+    try:
+        row = db.query(PremiumAnalyticsEventRecord).filter_by(id=payload["id"]).first()
+        assert row is not None
+        assert row.event_type == "premium_touchpoint_viewed"
+        assert row.touchpoint == "dashboard.gap_analysis"
+        assert row.capability == "premium_proactive_copilot"
+    finally:
+        db.close()
+    _clear_auth_override()
+
+
+def test_premium_analytics_funnel_groups_by_touchpoint():
+    auth_client_1, _ = _make_auth_client_for_user(1)
+    Base.metadata.create_all(bind=_test_engine)
+
+    db = _TestSession()
+    try:
+        db.query(PremiumAnalyticsEventRecord).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    for event_type in (
+        "premium_touchpoint_viewed",
+        "upgrade_initiated",
+        "upgrade_completed",
+        "premium_feature_activation",
+    ):
+        resp = auth_client_1.post(
+            "/api/analytics/premium/events",
+            json={
+                "event_type": event_type,
+                "touchpoint": "dashboard.gap_analysis",
+                "capability": "premium_proactive_copilot",
+            },
+        )
+        assert resp.status_code == 200
+
+    auth_client_2, _ = _make_auth_client_for_user(2)
+    resp_user_2 = auth_client_2.post(
+        "/api/analytics/premium/events",
+        json={
+            "event_type": "premium_touchpoint_viewed",
+            "touchpoint": "dashboard.gap_analysis",
+            "capability": "premium_proactive_copilot",
+        },
+    )
+    assert resp_user_2.status_code == 200
+
+    auth_client_1_again, _ = _make_auth_client_for_user(1)
+    resp_other = auth_client_1_again.post(
+        "/api/analytics/premium/events",
+        json={
+            "event_type": "premium_touchpoint_viewed",
+            "touchpoint": "preferences.memory",
+            "capability": "premium_personalization",
+        },
+    )
+    assert resp_other.status_code == 200
+
+    funnel_response = auth_client_1_again.get("/api/analytics/premium/funnel", params={"window_days": 30})
+    assert funnel_response.status_code == 200
+    funnel = funnel_response.json()
+    assert funnel["totals"]["touchpoints"] >= 2
+    assert funnel["totals"]["users"] >= 2
+
+    by_touchpoint = {item["touchpoint"]: item for item in funnel["touchpoints"]}
+    gap = by_touchpoint["dashboard.gap_analysis"]
+    assert gap["stages"]["premium_touchpoint_viewed"]["users"] == 2
+    assert gap["stages"]["upgrade_initiated"]["users"] == 1
+    assert gap["stages"]["upgrade_completed"]["users"] == 1
+    assert gap["stages"]["premium_feature_activation"]["users"] == 1
+    assert gap["conversion"]["view_to_upgrade_initiated"] == 0.5
+    assert gap["conversion"]["view_to_activation"] == 0.5
+    _clear_auth_override()
+
+
+def test_premium_analytics_rejects_invalid_event_type():
+    auth_client, _ = _make_auth_client()
+    response = auth_client.post(
+        "/api/analytics/premium/events",
+        json={
+            "event_type": "not_supported",
+            "touchpoint": "dashboard.gap_analysis",
+        },
+    )
+    assert response.status_code == 422
     _clear_auth_override()
 
 
