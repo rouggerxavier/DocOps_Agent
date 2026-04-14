@@ -15,6 +15,7 @@ import { Badge } from '@/components/ui/badge'
 import {
   apiClient,
   ChatStreamError,
+  extractLockedFeatureDetail,
   type ChatResponse,
   type ChatQualitySignal,
   type SourceItem,
@@ -1061,14 +1062,25 @@ function StreamStatusCard({
 }
 
 function MessageBubble({
-  message, onSourceClick, onCitationClick, canSaveAsArtifact, savingAsArtifact, onSaveAsArtifact,
+  message,
+  onSourceClick,
+  onCitationClick,
+  canSaveAsArtifact,
+  showArtifactUnlockCta,
+  artifactEntitlementTier,
+  savingAsArtifact,
+  onSaveAsArtifact,
+  onRefreshArtifactAccess,
 }: {
   message: Message
   onSourceClick?: (sources: SourceItem[]) => void
   onCitationClick?: (source: SourceItem, allSources: SourceItem[]) => void
   canSaveAsArtifact?: boolean
+  showArtifactUnlockCta?: boolean
+  artifactEntitlementTier?: string
   savingAsArtifact?: boolean
   onSaveAsArtifact?: () => void
+  onRefreshArtifactAccess?: () => void
 }) {
   const isUser = message.role === 'user'
 
@@ -1169,6 +1181,21 @@ function MessageBubble({
           </div>
         )}
 
+        {!isUser && showArtifactUnlockCta && (
+          <div className="rounded-xl border border-amber-600/35 bg-amber-950/15 px-3 py-2">
+            <p className="text-[11px] text-amber-100/90">
+              Salvar como artefato exige plano premium ({artifactEntitlementTier ?? 'free'}).
+            </p>
+            <button
+              type="button"
+              onClick={onRefreshArtifactAccess}
+              className="mt-1.5 rounded-md border border-amber-500/45 px-2 py-1 text-[11px] text-amber-100 transition-colors hover:bg-amber-500/10"
+            >
+              Ja fiz upgrade, atualizar acesso
+            </button>
+          </div>
+        )}
+
         {!isUser && message.sources && message.sources.length > 0 && (
           <div className="space-y-2">
             <button
@@ -1245,12 +1272,22 @@ export function Chat() {
   const isStreamingEnabled = capabilities.isEnabled('chat_streaming_enabled')
   const isStrictGroundingEnabled = capabilities.isEnabled('strict_grounding_enabled')
   const isChatToArtifactEnabled = capabilities.isEnabled('premium_chat_to_artifact_enabled')
+  const isChatToArtifactUnlocked = (
+    isChatToArtifactEnabled
+    && capabilities.hasCapability('premium_chat_to_artifact')
+  )
+  const isChatToArtifactLocked = isChatToArtifactEnabled && !isChatToArtifactUnlocked
   const isPersonalizationEnabled = capabilities.isEnabled('personalization_enabled')
+  const isPersonalizationUnlocked = (
+    isPersonalizationEnabled
+    && capabilities.hasCapability('premium_personalization')
+  )
+  const isPersonalizationLocked = isPersonalizationEnabled && !isPersonalizationUnlocked
 
   const preferencesQuery = useQuery<UserPreferences>({
     queryKey: ['user-preferences'],
     queryFn: apiClient.getPreferences,
-    enabled: isPersonalizationEnabled,
+    enabled: isPersonalizationUnlocked,
     staleTime: 30_000,
     retry: 1,
   })
@@ -1891,6 +1928,11 @@ export function Chat() {
     },
   })
 
+  async function handleRefreshPremiumAccess() {
+    await capabilities.refresh()
+    toast.info('Acesso premium atualizado. Se o upgrade ja foi aplicado, recarregamos suas capacidades.')
+  }
+
   const saveChatArtifactMut = useMutation({
     mutationFn: async (payload: {
       turnRef: string
@@ -1935,6 +1977,15 @@ export function Chat() {
       setSavingArtifactTurnRef(null)
     },
     onError: (error: any) => {
+      const lockedDetail = extractLockedFeatureDetail(error)
+      if (lockedDetail) {
+        toast.error(
+          `Salvar como artefato bloqueado: ${lockedDetail.capability} exige plano ${lockedDetail.required_tier}.`
+        )
+        setSavingArtifactTurnRef(null)
+        void handleRefreshPremiumAccess()
+        return
+      }
       const detail = error?.response?.data?.detail ?? error?.message ?? 'Falha ao salvar artefato.'
       toast.error(String(detail))
       setSavingArtifactTurnRef(null)
@@ -2043,7 +2094,7 @@ export function Chat() {
       .slice(-6)
       .map(m => ({ role: m.role, content: m.content }))
     const strictGroundingFromPreferences = (
-      isPersonalizationEnabled
+      isPersonalizationUnlocked
       && resolvedComposerPreferences.strictness_preference === 'strict'
       && isStrictGroundingEnabled
     )
@@ -2051,7 +2102,7 @@ export function Chat() {
       isStrictGroundingEnabled
       && (strictGrounding || strictGroundingFromPreferences)
     )
-    const messageForBackend = isPersonalizationEnabled
+    const messageForBackend = isPersonalizationUnlocked
       ? `${text}${buildPreferenceInstructionBlock(resolvedComposerPreferences)}`
       : text
 
@@ -2135,10 +2186,12 @@ export function Chat() {
     flashcardBatchMut.isPending
     || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)
   )
-  const isPersonalizationLoading = isPersonalizationEnabled && preferencesQuery.isLoading
-  const personalizationLoadFailed = isPersonalizationEnabled && preferencesQuery.isError
+  const isPersonalizationLoading = isPersonalizationUnlocked && preferencesQuery.isLoading
+  const personalizationLoadFailed = isPersonalizationUnlocked && preferencesQuery.isError
   const personalizationBannerText = !isPersonalizationEnabled
     ? ''
+    : isPersonalizationLocked
+      ? `Memoria premium bloqueada no plano atual (${capabilities.entitlementTier}).`
     : isPersonalizationLoading
       ? 'Carregando suas preferencias...'
       : personalizationLoadFailed
@@ -2450,16 +2503,20 @@ export function Chat() {
               .find(item => item.role === 'user')
               ?.content ?? msg.prompt_hint ?? ''
             const turnRef = `${activeSessionId}:${i}`
-            const canSaveAsArtifact = isChatToArtifactEnabled && shouldOfferChatArtifactCTA({
+            const shouldOfferArtifactCta = shouldOfferChatArtifactCTA({
               ...msg,
               prompt_hint: previousUserPrompt,
             })
+            const canSaveAsArtifact = isChatToArtifactUnlocked && shouldOfferArtifactCta
+            const showArtifactUnlockCta = isChatToArtifactLocked && shouldOfferArtifactCta
 
             return (
               <MessageBubble
                 key={i}
                 message={{ ...msg, prompt_hint: previousUserPrompt }}
                 canSaveAsArtifact={canSaveAsArtifact}
+                showArtifactUnlockCta={showArtifactUnlockCta}
+                artifactEntitlementTier={capabilities.entitlementTier}
                 savingAsArtifact={savingArtifactTurnRef === turnRef}
                 onSaveAsArtifact={() => {
                   if (!canSaveAsArtifact || saveChatArtifactMut.isPending) return
@@ -2471,6 +2528,7 @@ export function Chat() {
                     sessionId: activeSessionId,
                   })
                 }}
+                onRefreshArtifactAccess={() => { void handleRefreshPremiumAccess() }}
                 onSourceClick={sources => {
                   setActiveSources(sources)
                   setSelectedSource(null)
@@ -2559,7 +2617,7 @@ export function Chat() {
                 : 'rounded-2xl bg-[color:var(--ui-surface-container-low)]/85 p-2 shadow-[0_18px_40px_rgba(0,0,0,0.28)]',
             )}>
 
-          {isPersonalizationEnabled && !isMobile && (
+          {isPersonalizationUnlocked && !isMobile && (
             <div className="space-y-2 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)]/80 p-3">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-medium text-[color:var(--ui-text)]">Override desta mensagem</p>
