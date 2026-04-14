@@ -61,13 +61,14 @@ def _resolve_cors_settings() -> tuple[list[str], list[str], list[str], bool]:
 
 
 def create_app() -> FastAPI:
+    _in_prod = config.is_production
     app = FastAPI(
         title="DocOps Agent API",
         description="RAG agent for local documents - PDF, MD, TXT",
         version="0.2.0",
-        docs_url="/api/docs-ui",
-        redoc_url="/api/redoc",
-        openapi_url="/api/openapi.json",
+        docs_url=None if _in_prod else "/api/docs-ui",
+        redoc_url=None if _in_prod else "/api/redoc",
+        openapi_url=None if _in_prod else "/api/openapi.json",
     )
 
     # CORS allow list by environment.

@@ -109,7 +109,14 @@ def test_health():
     assert resp.json()["status"] == "ok"
 
 
+def test_ready_requires_auth():
+    """Unauthenticated request to /api/ready must return 401 (FIX-05)."""
+    resp = client.get("/api/ready")
+    assert resp.status_code == 401
+
+
 def test_ready_ok():
+    auth_client, _ = _make_auth_client()
     checks = {
         "database": {"ok": True, "detail": "ok"},
         "uploads_dir": {"ok": True, "detail": "ok"},
@@ -117,14 +124,16 @@ def test_ready_ok():
         "chroma_dir": {"ok": True, "detail": "ok"},
     }
     with patch("docops.api.routes.health._run_readiness_checks", return_value=(True, checks)):
-        resp = client.get("/api/ready")
+        resp = auth_client.get("/api/ready")
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
     assert body["checks"]["database"]["ok"] is True
+    _clear_auth_override()
 
 
 def test_ready_returns_503_when_dependency_fails():
+    auth_client, _ = _make_auth_client()
     checks = {
         "database": {"ok": False, "detail": "OperationalError"},
         "uploads_dir": {"ok": True, "detail": "ok"},
@@ -132,11 +141,12 @@ def test_ready_returns_503_when_dependency_fails():
         "chroma_dir": {"ok": True, "detail": "ok"},
     }
     with patch("docops.api.routes.health._run_readiness_checks", return_value=(False, checks)):
-        resp = client.get("/api/ready")
+        resp = auth_client.get("/api/ready")
     assert resp.status_code == 503
     body = resp.json()
     assert body["status"] == "unready"
     assert body["checks"]["database"]["ok"] is False
+    _clear_auth_override()
 
 
 # ── Auth: register ────────────────────────────────────────────────────────────
@@ -1213,13 +1223,16 @@ def test_create_artifact_forwards_template_id_and_returns_template_metadata(monk
 
 def test_artifact_duplicate_filename_requires_id_for_legacy_routes():
     from docops.db import crud
+    from docops.storage.paths import get_user_artifacts_dir
 
     # Full-suite CI can mutate app dependency overrides across modules.
     # Pin get_db here so API calls use the same in-memory DB as _TestSession.
     app.dependency_overrides[get_db] = _override_get_db
     Base.metadata.create_all(bind=_test_engine)
     auth_client, _ = _make_auth_client()
-    with tempfile.TemporaryDirectory() as tmpdir:
+    # Artifacts must be inside the user's artifacts dir so is_path_within passes (FIX-07).
+    user_artifacts_dir = get_user_artifacts_dir(1)
+    with tempfile.TemporaryDirectory(dir=user_artifacts_dir) as tmpdir:
         path_a = Path(tmpdir) / "artifact_a.md"
         path_b = Path(tmpdir) / "artifact_b.md"
         path_a.write_text("conteudo A", encoding="utf-8")

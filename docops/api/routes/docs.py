@@ -29,7 +29,6 @@ def tool_list_docs(user_id: int, db: Session) -> list[dict]:
         {
             "doc_id": row.doc_id,
             "file_name": row.file_name,
-            "source": row.source_path,
             "chunk_count": row.chunk_count,
         }
         for row in rows
@@ -58,7 +57,6 @@ async def list_docs(
         DocItem(
             doc_id=str(item.get("doc_id", "")),
             file_name=item.get("file_name", ""),
-            source=item.get("source", ""),
             chunk_count=int(item.get("chunk_count", 0)),
         )
         for item in rows
@@ -149,8 +147,11 @@ async def get_doc_file(
 
     from pathlib import Path as _P
     src = _P(doc.source_path) if doc.source_path else None
+    user_upload_dir = get_user_upload_dir(current_user.id)
     if not src or not src.exists() or not src.is_file():
         raise HTTPException(status_code=404, detail="Arquivo não disponível no servidor.")
+    if not is_path_within(src, user_upload_dir):
+        raise HTTPException(status_code=403, detail="Acesso negado.")
 
     mime, _ = _mimetypes.guess_type(str(src))
     if not mime:
