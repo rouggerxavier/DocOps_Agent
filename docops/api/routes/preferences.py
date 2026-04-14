@@ -11,6 +11,7 @@ from docops.config import config
 from docops.db import crud
 from docops.db.database import get_db
 from docops.db.models import User
+from docops.features.entitlements import require_capability
 from docops.features.flags import require_feature_enabled
 from docops.logging import get_logger
 from docops.observability import emit_event
@@ -25,10 +26,15 @@ _PREFERENCE_FIELDS = (
 )
 
 
-def _require_personalization_enabled() -> None:
+def _require_personalization_enabled(current_user: User) -> None:
     require_feature_enabled(
         "personalization_enabled",
         detail="Personalization preferences are disabled by feature flag.",
+    )
+    require_capability(
+        "premium_personalization",
+        current_user,
+        message="Personalization preferences require a premium entitlement.",
     )
 
 
@@ -51,7 +57,7 @@ def get_preferences(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> UserPreferencesResponse:
-    _require_personalization_enabled()
+    _require_personalization_enabled(current_user)
     _apply_retention_and_audit(db, current_user.id)
     payload = crud.get_effective_user_preferences(db, current_user.id)
     return UserPreferencesResponse(**payload)
@@ -63,7 +69,7 @@ def update_preferences(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> UserPreferencesResponse:
-    _require_personalization_enabled()
+    _require_personalization_enabled(current_user)
     retention_purged = _apply_retention_and_audit(db, current_user.id)
     previous = crud.get_effective_user_preferences(db, current_user.id)
     updates = body.model_dump(exclude_unset=True)
@@ -94,7 +100,7 @@ def reset_preferences(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> UserPreferencesResponse:
-    _require_personalization_enabled()
+    _require_personalization_enabled(current_user)
     retention_purged = _apply_retention_and_audit(db, current_user.id)
     previous = crud.get_effective_user_preferences(db, current_user.id)
     record = crud.reset_user_preference_record(db, user_id=current_user.id)
@@ -116,7 +122,7 @@ def delete_preferences(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> Response:
-    _require_personalization_enabled()
+    _require_personalization_enabled(current_user)
     retention_purged = _apply_retention_and_audit(db, current_user.id)
     deleted = crud.delete_user_preference_record(db, user_id=current_user.id)
     emit_event(

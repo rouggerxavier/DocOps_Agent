@@ -574,6 +574,28 @@ def test_capabilities_returns_feature_flags():
     assert payload["map"]["chat_streaming_enabled"] is True
     assert payload["map"]["strict_grounding_enabled"] is True
     assert "flags" in payload and len(payload["flags"]) >= 3
+    assert payload["entitlements_enabled"] is False
+    assert payload["entitlement_tier"] == "free"
+    assert "premium_chat_to_artifact" in payload["entitlement_map"]
+    assert "entitlement_capabilities" in payload and len(payload["entitlement_capabilities"]) >= 1
+    _clear_auth_override()
+
+
+def test_capabilities_reflect_entitlement_state(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PREMIUM_ENTITLEMENTS_ENABLED", "true")
+    monkeypatch.setenv("PREMIUM_DEFAULT_TIER", "free")
+
+    resp = auth_client.get("/api/capabilities")
+    assert resp.status_code == 200
+    payload = resp.json()
+    assert payload["entitlements_enabled"] is True
+    assert payload["entitlement_tier"] == "free"
+    assert payload["entitlement_map"]["premium_chat_to_artifact"] is False
+    assert any(
+        item["key"] == "premium_chat_to_artifact"
+        for item in payload["entitlement_capabilities"]
+    )
     _clear_auth_override()
 
 
@@ -584,6 +606,20 @@ def test_preferences_endpoint_requires_feature_flag(monkeypatch):
     resp = auth_client.get("/api/preferences")
     assert resp.status_code == 503
     assert "disabled" in str(resp.json().get("detail", "")).lower()
+    _clear_auth_override()
+
+
+def test_preferences_endpoint_locked_when_entitlements_enabled(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PERSONALIZATION_ENABLED", "true")
+    monkeypatch.setenv("FEATURE_PREMIUM_ENTITLEMENTS_ENABLED", "true")
+    monkeypatch.setenv("PREMIUM_DEFAULT_TIER", "free")
+
+    resp = auth_client.get("/api/preferences")
+    assert resp.status_code == 403
+    detail = resp.json().get("detail") or {}
+    assert detail.get("error") == "feature_locked"
+    assert detail.get("capability") == "premium_personalization"
     _clear_auth_override()
 
 
@@ -1189,6 +1225,20 @@ def test_artifact_template_catalog_returns_expected_blueprints():
     _clear_auth_override()
 
 
+def test_artifact_template_catalog_marks_locked_templates_when_entitlements_enabled(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PREMIUM_ENTITLEMENTS_ENABLED", "true")
+    monkeypatch.setenv("PREMIUM_DEFAULT_TIER", "free")
+
+    resp = auth_client.get("/api/artifact/templates")
+    assert resp.status_code == 200
+    data = {item["template_id"]: item for item in resp.json()}
+    assert data["brief"]["locked"] is False
+    assert data["exam_pack"]["locked"] is True
+    assert data["deep_dossier"]["locked"] is True
+    _clear_auth_override()
+
+
 def test_create_artifact_forwards_template_id_and_returns_template_metadata(monkeypatch):
     auth_client, _ = _make_auth_client()
     captured: dict = {}
@@ -1218,6 +1268,22 @@ def test_create_artifact_forwards_template_id_and_returns_template_metadata(monk
     assert data["template_id"] == "exam_pack"
     assert data["template_label"] == "Exam Prep Pack"
     assert captured["template_id"] == "exam_pack"
+    _clear_auth_override()
+
+
+def test_create_artifact_blocks_premium_template_when_entitlements_enabled(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PREMIUM_ENTITLEMENTS_ENABLED", "true")
+    monkeypatch.setenv("PREMIUM_DEFAULT_TIER", "free")
+
+    resp = auth_client.post(
+        "/api/artifact",
+        json={"type": "checklist", "topic": "Revisao final", "template_id": "exam_pack"},
+    )
+    assert resp.status_code == 403
+    detail = resp.json().get("detail") or {}
+    assert detail.get("error") == "feature_locked"
+    assert detail.get("capability") == "premium_artifact_templates"
     _clear_auth_override()
 
 
@@ -1460,6 +1526,23 @@ def test_chat_to_artifact_endpoint_requires_feature_flag(monkeypatch):
     _clear_auth_override()
 
 
+def test_chat_to_artifact_endpoint_locked_when_entitlements_enabled(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PREMIUM_CHAT_TO_ARTIFACT_ENABLED", "true")
+    monkeypatch.setenv("FEATURE_PREMIUM_ENTITLEMENTS_ENABLED", "true")
+    monkeypatch.setenv("PREMIUM_DEFAULT_TIER", "free")
+
+    resp = auth_client.post(
+        "/api/artifact/from-chat",
+        json={"answer": "Resumo premium", "session_id": "session-lock", "turn_ref": "turn-1"},
+    )
+    assert resp.status_code == 403
+    detail = resp.json().get("detail") or {}
+    assert detail.get("error") == "feature_locked"
+    assert detail.get("capability") == "premium_chat_to_artifact"
+    _clear_auth_override()
+
+
 def test_chat_to_artifact_one_click_creates_linked_artifact(monkeypatch):
     from docops.db import crud
 
@@ -1622,6 +1705,28 @@ def test_summarize_forwards_template_id_and_returns_template_metadata(monkeypatc
     assert captured["template_id"] == "deep_dossier"
     assert data["template_id"] == "deep_dossier"
     assert data["template_label"] == "Dossie Analitico"
+    _clear_auth_override()
+
+
+def test_summarize_blocks_premium_template_when_entitlements_enabled(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    fake_doc = MagicMock(file_name="manual.pdf", doc_id="doc-uuid-1")
+    monkeypatch.setattr("docops.api.routes.summarize.require_user_document", lambda *_a, **_k: fake_doc)
+    monkeypatch.setenv("FEATURE_PREMIUM_ENTITLEMENTS_ENABLED", "true")
+    monkeypatch.setenv("PREMIUM_DEFAULT_TIER", "free")
+
+    resp = auth_client.post(
+        "/api/summarize",
+        json={
+            "doc": "manual.pdf",
+            "summary_mode": "deep",
+            "template_id": "deep_dossier",
+        },
+    )
+    assert resp.status_code == 403
+    detail = resp.json().get("detail") or {}
+    assert detail.get("error") == "feature_locked"
+    assert detail.get("capability") == "premium_artifact_templates"
     _clear_auth_override()
 
 
@@ -1811,6 +1916,19 @@ def test_pipeline_gap_analysis_500_payload_is_sanitized(monkeypatch):
     resp = auth_client.post("/api/pipeline/gap-analysis", json={"doc_names": []})
     assert resp.status_code == 500
     assert resp.json()["detail"] == "Erro interno ao executar análise de lacunas."
+    _clear_auth_override()
+
+
+def test_pipeline_gap_analysis_locked_when_entitlements_enabled(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PREMIUM_ENTITLEMENTS_ENABLED", "true")
+    monkeypatch.setenv("PREMIUM_DEFAULT_TIER", "free")
+
+    resp = auth_client.post("/api/pipeline/gap-analysis", json={"doc_names": []})
+    assert resp.status_code == 403
+    detail = resp.json().get("detail") or {}
+    assert detail.get("error") == "feature_locked"
+    assert detail.get("capability") == "premium_proactive_copilot"
     _clear_auth_override()
 
 

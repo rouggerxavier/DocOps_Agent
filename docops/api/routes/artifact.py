@@ -35,6 +35,7 @@ from docops.db.crud import (
 )
 from docops.db.database import SessionLocal, get_db
 from docops.db.models import ArtifactRecord, User
+from docops.features.entitlements import is_capability_allowed, is_premium_template, require_capability
 from docops.logging import get_logger
 from docops.observability import emit_event
 from docops.services.artifact_templates import apply_template_layout, list_template_payloads, resolve_template
@@ -128,6 +129,16 @@ def _resolve_chat_doc_context(
     return final_doc_ids, final_doc_names
 
 
+def _require_template_entitlement(template_id: str, current_user: User) -> None:
+    if not is_premium_template(template_id):
+        return
+    require_capability(
+        "premium_artifact_templates",
+        current_user,
+        message="Advanced artifact templates require a premium entitlement.",
+    )
+
+
 def _run_artifact(
     type_: str,
     topic: str,
@@ -197,9 +208,16 @@ def _run_artifact(
 async def list_artifact_templates(
     summary_mode: str | None = Query(default=None),
     artifact_type: str | None = Query(default=None),
+    current_user: User = Depends(get_current_user),
 ) -> List[ArtifactTemplateItem]:
     payloads = list_template_payloads(summary_mode=summary_mode, artifact_type=artifact_type)
-    return [ArtifactTemplateItem(**item) for item in payloads]
+    has_template_access = is_capability_allowed("premium_artifact_templates", current_user)
+    items: list[ArtifactTemplateItem] = []
+    for item in payloads:
+        template_id = str(item.get("template_id") or "")
+        locked = is_premium_template(template_id) and not has_template_access
+        items.append(ArtifactTemplateItem(**item, locked=locked))
+    return items
 
 
 def _resolve_artifact_by_id_or_404(db: Session, user_id: int, artifact_id: int) -> ArtifactRecord:
@@ -317,6 +335,12 @@ async def create_artifact(
     db: Session = Depends(get_db),
 ) -> ArtifactResponse:
     """Generate and save a structured artifact scoped to the current user."""
+    selected_template = resolve_template(
+        template_id=body.template_id,
+        artifact_type=body.type,
+    )
+    _require_template_entitlement(selected_template.template_id, current_user)
+
     logger.info(f"Artifact: type={body.type}, topic='{body.topic[:50]}' for user {current_user.id}")
     emit_event(
         logger,
@@ -343,7 +367,7 @@ async def create_artifact(
             body.topic,
             body.output,
             current_user.id,
-            body.template_id,
+            selected_template.template_id,
             doc_names,
             doc_ids,
         )
@@ -422,6 +446,11 @@ async def create_artifact_from_chat(
         "premium_chat_to_artifact_enabled",
         detail="Chat-to-artifact flow is disabled by feature flag.",
     )
+    require_capability(
+        "premium_chat_to_artifact",
+        current_user,
+        message="Chat-to-artifact is available only for premium users.",
+    )
 
     raw_answer = str(body.answer or "").strip()
     if not raw_answer:
@@ -438,6 +467,7 @@ async def create_artifact_from_chat(
         summary_mode="deep",
         artifact_type="summary",
     )
+    _require_template_entitlement(selected_template.template_id, current_user)
     base_title = str(body.title or body.user_prompt or "Resumo aprofundado do chat").strip()[:180]
     context_parts = []
     if normalized_doc_names:
@@ -520,6 +550,12 @@ async def create_artifact_async(
     db: Session = Depends(get_db),
 ) -> JobCreateResponse:
     """Create an async artifact generation job and return a pollable id."""
+    selected_template = resolve_template(
+        template_id=body.template_id,
+        artifact_type=body.type,
+    )
+    _require_template_entitlement(selected_template.template_id, current_user)
+
     selected_docs = []
     for doc_name in body.doc_names:
         selected_docs.append(require_user_document(db, current_user.id, doc_name))
@@ -551,7 +587,7 @@ async def create_artifact_async(
                     body.topic,
                     body.output,
                     current_user.id,
-                    body.template_id,
+                    selected_template.template_id,
                     doc_names,
                     doc_ids,
                 ),

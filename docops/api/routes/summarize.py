@@ -16,6 +16,7 @@ from docops.config import config
 from docops.db.crud import create_artifact_record
 from docops.db.database import SessionLocal, get_db
 from docops.db.models import User
+from docops.features.entitlements import is_premium_template, require_capability
 from docops.logging import get_logger
 from docops.services.artifact_templates import apply_template_layout, resolve_template
 from docops.services.ownership import require_user_document
@@ -237,6 +238,17 @@ async def summarize(
 ) -> SummarizeResponse:
     """Summarize one document owned by current_user."""
     document = require_user_document(db, current_user.id, body.doc)
+    selected_template = resolve_template(
+        template_id=body.template_id,
+        summary_mode=body.summary_mode,
+        artifact_type="summary",
+    )
+    if is_premium_template(selected_template.template_id):
+        require_capability(
+            "premium_artifact_templates",
+            current_user,
+            message="Advanced summary templates require a premium entitlement.",
+        )
 
     logger.info(
         "Summarize request user=%s doc=%s mode=%s",
@@ -253,7 +265,7 @@ async def summarize(
             body.save,
             body.summary_mode,
             current_user.id,
-            body.template_id,
+            selected_template.template_id,
             body.debug_summary,
             body.deep_profile,
         )
@@ -327,6 +339,17 @@ async def summarize_async(
 ) -> JobCreateResponse:
     """Create an async summarize job and return a pollable job id."""
     document = require_user_document(db, current_user.id, body.doc)
+    selected_template = resolve_template(
+        template_id=body.template_id,
+        summary_mode=body.summary_mode,
+        artifact_type="summary",
+    )
+    if is_premium_template(selected_template.template_id):
+        require_capability(
+            "premium_artifact_templates",
+            current_user,
+            message="Advanced summary templates require a premium entitlement.",
+        )
     job = create_job(user_id=current_user.id, job_type="summarize", stage="queued")
 
     async def _runner(job_id: str) -> dict:
@@ -340,7 +363,7 @@ async def summarize_async(
                 body.save,
                 body.summary_mode,
                 current_user.id,
-                body.template_id,
+                selected_template.template_id,
                 body.debug_summary,
                 body.deep_profile,
             ),
