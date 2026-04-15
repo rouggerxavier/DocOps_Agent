@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import React, { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Canvas, extend, useFrame, useThree } from '@react-three/fiber'
 import { useAspect, useTexture } from '@react-three/drei'
 import { Mesh } from 'three'
@@ -34,9 +34,11 @@ type HeroFuturisticProps = {
   className?: string
   interactive?: boolean
   fallbackMode?: 'still' | 'gradient'
+  variant?: 'card' | 'hero'
+  focus?: 'center' | 'right'
 }
 
-function PostProcessing({ animated }: { animated: boolean }) {
+function PostProcessing({ animated, scanEnabled = true }: { animated: boolean; scanEnabled?: boolean }) {
   const { gl, scene, camera } = useThree()
   const progressRef = useRef({ value: 0 })
   const elapsedRef = useRef(0)
@@ -62,20 +64,28 @@ function PostProcessing({ animated }: { animated: boolean }) {
       smoothstep(0.9, 1.0, oneMinus(scanLine))
     )
 
-    postProcessing.outputNode = withScanEffect.add(bloomPass)
+    postProcessing.outputNode = scanEnabled ? withScanEffect.add(bloomPass) : scenePassColor.add(bloomPass)
     return postProcessing
-  }, [camera, gl, scene])
+  }, [camera, gl, scanEnabled, scene])
 
   useFrame((_, delta) => {
     elapsedRef.current += delta
-    progressRef.current.value = animated ? Math.sin(elapsedRef.current * 0.45) * 0.5 + 0.5 : 0.44
+    progressRef.current.value = animated && scanEnabled ? Math.sin(elapsedRef.current * 0.45) * 0.5 + 0.5 : 0.44
     void renderPipeline.render()
   }, 1)
 
   return null
 }
 
-function Scene({ animated, interactive }: { animated: boolean; interactive: boolean }) {
+function Scene({
+  animated,
+  interactive,
+  focus,
+}: {
+  animated: boolean
+  interactive: boolean
+  focus: 'center' | 'right'
+}) {
   const [rawMap, depthMap] = useTexture([TEXTUREMAP.src, DEPTHMAP.src])
   const meshRef = useRef<Mesh>(null)
   const [visible, setVisible] = useState(false)
@@ -119,6 +129,9 @@ function Scene({ animated, interactive }: { animated: boolean; interactive: bool
   }, [depthMap, rawMap])
 
   const [w, h] = useAspect(WIDTH, HEIGHT)
+  const scaleFactor = focus === 'right' ? 0.32 : 0.48
+  const offsetX = focus === 'right' ? 0.84 : 0
+  const offsetY = focus === 'right' ? 0.02 : 0
 
   useFrame((state, delta) => {
     elapsedRef.current += delta
@@ -137,44 +150,112 @@ function Scene({ animated, interactive }: { animated: boolean; interactive: bool
   })
 
   return (
-    <mesh ref={meshRef} scale={[w * 0.48, h * 0.48, 1]} material={material}>
+    <mesh ref={meshRef} position={[offsetX, offsetY, 0]} scale={[w * scaleFactor, h * scaleFactor, 1]} material={material}>
       <planeGeometry />
     </mesh>
   )
 }
 
-function HeroFallback({ mode }: { mode: 'still' | 'gradient' }) {
+function HeroFallback({
+  mode,
+  variant,
+  focus,
+}: {
+  mode: 'still' | 'gradient'
+  variant: 'card' | 'hero'
+  focus: 'center' | 'right'
+}) {
+  const isHero = variant === 'hero'
+  const rightFocus = focus === 'right'
   return (
-    <div className="absolute inset-0 overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(90%_72%_at_72%_18%,rgba(147,197,253,0.2),transparent_56%),radial-gradient(62%_52%_at_24%_24%,rgba(244,240,232,0.1),transparent_72%),linear-gradient(160deg,rgba(21,24,27,0.96),rgba(12,14,16,1))]" />
+    <div className={cn('absolute inset-0', isHero ? 'overflow-visible' : 'overflow-hidden')}>
+      <div
+        className={cn(
+          'absolute inset-0',
+          isHero && rightFocus
+            ? 'bg-[linear-gradient(180deg,rgba(6,8,12,1)_0%,rgba(6,8,12,1)_100%)]'
+            : 'bg-[radial-gradient(90%_72%_at_72%_18%,rgba(147,197,253,0.2),transparent_56%),radial-gradient(62%_52%_at_24%_24%,rgba(244,240,232,0.1),transparent_72%),linear-gradient(160deg,rgba(21,24,27,0.96),rgba(12,14,16,1))]'
+        )}
+      />
       {mode === 'still' ? (
         <img
           src={TEXTUREMAP.src}
           alt=""
           aria-hidden="true"
-          className="absolute inset-0 h-full w-full object-contain px-4 py-6 opacity-72 mix-blend-screen sm:px-12 sm:py-14"
+          className={cn(
+            'absolute inset-0 h-full w-full mix-blend-screen',
+            isHero
+              ? 'hidden'
+              : 'object-contain px-4 py-6 opacity-72 sm:px-12 sm:py-14'
+          )}
         />
       ) : null}
-      <div className="absolute inset-x-[14%] top-1/2 h-px -translate-y-1/2 bg-[linear-gradient(90deg,transparent,rgba(147,197,253,0.95),transparent)] opacity-85" />
-      <div className="absolute inset-0 bg-[radial-gradient(72%_56%_at_50%_52%,transparent_42%,rgba(0,0,0,0.48)_100%)]" />
+      <div
+        className={cn(
+          'absolute h-px -translate-y-1/2 bg-[linear-gradient(90deg,transparent,rgba(147,197,253,0.95),transparent)]',
+          isHero ? 'hidden' : 'inset-x-[14%] top-1/2 opacity-85'
+        )}
+      />
+      <div
+        className={cn(
+          'absolute inset-0',
+          isHero
+            ? 'bg-[radial-gradient(84%_70%_at_80%_54%,transparent_40%,rgba(6,8,12,0.54)_100%)]'
+            : 'bg-[radial-gradient(72%_56%_at_50%_52%,transparent_42%,rgba(0,0,0,0.48)_100%)]'
+        )}
+      />
     </div>
   )
 }
 
-function HeroBaseLayer({ mode }: { mode: 'still' | 'gradient' }) {
+function HeroBaseLayer({
+  mode,
+  variant,
+  focus,
+}: {
+  mode: 'still' | 'gradient'
+  variant: 'card' | 'hero'
+  focus: 'center' | 'right'
+}) {
+  const isHero = variant === 'hero'
+  const rightFocus = focus === 'right'
   return (
-    <div className="absolute inset-0 overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(90%_72%_at_72%_18%,rgba(147,197,253,0.16),transparent_56%),radial-gradient(62%_52%_at_24%_24%,rgba(244,240,232,0.08),transparent_72%),linear-gradient(160deg,rgba(21,24,27,0.96),rgba(12,14,16,1))]" />
+    <div className={cn('absolute inset-0', isHero ? 'overflow-visible' : 'overflow-hidden')}>
+      <div
+        className={cn(
+          'absolute inset-0',
+          isHero && rightFocus
+            ? 'bg-[linear-gradient(180deg,rgba(6,8,12,1)_0%,rgba(6,8,12,1)_100%)]'
+            : 'bg-[radial-gradient(90%_72%_at_72%_18%,rgba(147,197,253,0.16),transparent_56%),radial-gradient(62%_52%_at_24%_24%,rgba(244,240,232,0.08),transparent_72%),linear-gradient(160deg,rgba(21,24,27,0.96),rgba(12,14,16,1))]'
+        )}
+      />
       {mode === 'still' ? (
         <img
           src={TEXTUREMAP.src}
           alt=""
           aria-hidden="true"
-          className="absolute inset-0 h-full w-full object-contain px-5 py-7 opacity-28 mix-blend-screen sm:px-10 sm:py-12"
+          className={cn(
+            'absolute inset-0 h-full w-full mix-blend-screen',
+            isHero
+              ? 'hidden'
+              : 'object-contain px-5 py-7 opacity-28 sm:px-10 sm:py-12'
+          )}
         />
       ) : null}
-      <div className="absolute inset-x-[12%] top-1/2 h-px -translate-y-1/2 bg-[linear-gradient(90deg,transparent,rgba(147,197,253,0.65),transparent)] opacity-70" />
-      <div className="absolute inset-0 bg-[radial-gradient(72%_56%_at_50%_52%,transparent_40%,rgba(0,0,0,0.42)_100%)]" />
+      <div
+        className={cn(
+          'absolute h-px -translate-y-1/2 bg-[linear-gradient(90deg,transparent,rgba(147,197,253,0.65),transparent)]',
+          isHero ? 'hidden' : 'inset-x-[12%] top-1/2 opacity-70'
+        )}
+      />
+      <div
+        className={cn(
+          'absolute inset-0',
+          isHero
+            ? 'bg-[radial-gradient(84%_70%_at_78%_54%,transparent_42%,rgba(6,8,12,0.5)_100%)]'
+            : 'bg-[radial-gradient(72%_56%_at_50%_52%,transparent_40%,rgba(0,0,0,0.42)_100%)]'
+        )}
+      />
     </div>
   )
 }
@@ -201,9 +282,57 @@ export function HeroFuturistic({
   className,
   interactive = true,
   fallbackMode = 'still',
+  variant = 'card',
+  focus = 'center',
 }: HeroFuturisticProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
+  const rendererRef = useRef<THREE.WebGPURenderer | null>(null)
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const [canvasReady, setCanvasReady] = useState(false)
+  const isHero = variant === 'hero'
+  const camera = focus === 'right'
+    ? { position: [0.02, -0.02, 2.1] as [number, number, number], fov: 38 }
+    : { position: [0, 0, 1.6] as [number, number, number], fov: 32 }
+
+  const syncCanvasElementLayout = useCallback(() => {
+    const canvas = rendererRef.current?.domElement as HTMLCanvasElement | undefined
+    if (!canvas) {
+      return
+    }
+
+    canvas.setAttribute('data-webgpu-canvas', isHero ? 'hero' : 'card')
+    canvas.style.position = 'absolute'
+    canvas.style.inset = '0'
+    canvas.style.width = '100%'
+    canvas.style.height = '100%'
+    canvas.style.display = 'block'
+    canvas.style.backgroundColor = 'transparent'
+    canvas.style.border = '0'
+    canvas.style.outline = 'none'
+    canvas.style.borderRadius = '0'
+    canvas.style.pointerEvents = isHero ? 'none' : 'auto'
+  }, [isHero])
+
+  const syncRendererSize = useCallback(() => {
+    const node = containerRef.current
+    const renderer = rendererRef.current
+    const cameraInstance = cameraRef.current
+    if (!node || !renderer || !cameraInstance) {
+      return
+    }
+
+    syncCanvasElementLayout()
+
+    const rect = node.getBoundingClientRect()
+    const width = Math.max(1, Math.round(rect.width))
+    const height = Math.max(1, Math.round(rect.height))
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 1.5)
+
+    renderer.setPixelRatio(pixelRatio)
+    renderer.setSize(width, height, false)
+    cameraInstance.aspect = width / height
+    cameraInstance.updateProjectionMatrix()
+  }, [syncCanvasElementLayout])
 
   useEffect(() => {
     const node = containerRef.current
@@ -215,6 +344,9 @@ export function HeroFuturistic({
       const rect = node.getBoundingClientRect()
       const sized = rect.width >= 16 && rect.height >= 16
       setCanvasReady(sized)
+      if (sized) {
+        syncRendererSize()
+      }
     }
 
     syncCanvasReadiness()
@@ -231,25 +363,35 @@ export function HeroFuturistic({
     return () => {
       observer.disconnect()
     }
-  }, [])
+  }, [syncRendererSize])
 
   return (
     <div
       ref={containerRef}
+      data-webgpu-layer={isHero ? 'hero' : 'card'}
       className={cn(
-        'relative isolate min-h-[260px] overflow-hidden rounded-[2rem] border border-[color:var(--ui-border)] bg-[color:var(--ui-surface)] shadow-[0_24px_80px_rgba(0,0,0,0.38)] sm:min-h-[360px]',
+        'relative isolate',
+        isHero
+          ? 'h-full w-full overflow-visible'
+          : 'min-h-[260px] rounded-[2rem] border border-[color:var(--ui-border)] bg-[color:var(--ui-surface)] shadow-[0_24px_80px_rgba(0,0,0,0.38)] sm:min-h-[360px]',
         className
       )}
     >
-      <HeroBaseLayer mode={fallbackMode} />
+      <HeroBaseLayer mode={fallbackMode} variant={variant} focus={focus} />
       {canvasReady && (
-        <WebGPUErrorBoundary fallback={<HeroFallback mode={fallbackMode} />}>
+        <WebGPUErrorBoundary fallback={<HeroFallback mode={fallbackMode} variant={variant} focus={focus} />}>
           <Canvas
             flat
             frameloop="always"
             dpr={[1, 1.5]}
-            className="relative z-10 h-full w-full"
-            camera={{ position: [0, 0, 1.6], fov: 32 }}
+            className="absolute inset-0 z-10"
+            camera={camera}
+            onCreated={(state) => {
+              rendererRef.current = state.gl as unknown as THREE.WebGPURenderer
+              cameraRef.current = state.camera as unknown as THREE.PerspectiveCamera
+              syncCanvasElementLayout()
+              syncRendererSize()
+            }}
             gl={async (props) => {
               const renderer = new THREE.WebGPURenderer({ ...props, antialias: true } as any)
               await renderer.init()
@@ -257,14 +399,14 @@ export function HeroFuturistic({
             }}
           >
             <Suspense fallback={null}>
-              <PostProcessing animated={true} />
-              <Scene animated={true} interactive={interactive} />
+              <PostProcessing animated={true} scanEnabled={!isHero} />
+              <Scene animated={true} interactive={interactive} focus={focus} />
             </Suspense>
           </Canvas>
         </WebGPUErrorBoundary>
       )}
-      <div className="pointer-events-none absolute inset-0 rounded-[2rem] border border-white/5" />
-      <div className="pointer-events-none absolute inset-x-8 bottom-8 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.16),transparent)]" />
+      {!isHero && <div className="pointer-events-none absolute inset-0 rounded-[2rem] border border-white/5" />}
+      {!isHero && <div className="pointer-events-none absolute inset-x-8 bottom-8 h-px bg-[linear-gradient(90deg,transparent,rgba(255,255,255,0.16),transparent)]" />}
     </div>
   )
 }

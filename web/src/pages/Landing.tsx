@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { motion, MotionConfig } from 'framer-motion'
 import { ArrowRight, BookOpen, CalendarDays, CheckCircle2, FileText, Layers, Shield } from 'lucide-react'
 import { HeroFuturistic } from '@/components/HeroFuturistic'
+import { HeroFuturisticMobileLegacy } from '@/components/HeroFuturisticMobileLegacy'
 
 const EASE = [0.2, 0.8, 0.2, 1] as const
 const VIEWPORT = { once: true, margin: '-48px' } as const
@@ -10,7 +11,7 @@ export function Landing() {
   return (
     <MotionConfig reducedMotion="user">
       <div className="min-h-screen bg-surface text-on-surface font-body selection:bg-secondary-container selection:text-on-secondary-container">
-        <header className="fixed top-0 left-0 z-50 w-full border-b border-white/5 bg-surface/85 backdrop-blur-xl">
+        <header className="fixed top-0 left-0 z-50 w-full border-b border-white/5 bg-surface/85 backdrop-blur-xl lg:border-b-0 lg:bg-[rgba(6,8,12,1)] lg:backdrop-blur-none">
           <div className="mx-auto flex max-w-[1440px] items-center justify-between px-4 py-4 sm:px-6 md:px-12 md:py-6">
             <span className="text-xl font-extrabold tracking-tighter text-primary sm:text-2xl">DocOps Agent</span>
             <nav className="hidden items-center gap-8 md:flex">
@@ -35,91 +36,111 @@ export function Landing() {
           </div>
         </header>
 
-        <main className="pb-28 pt-24 sm:pt-28 md:pb-0 md:pt-32">
-          <section className="mx-auto mb-20 grid max-w-[1440px] items-center gap-10 px-4 sm:px-6 md:mb-32 md:gap-16 md:px-12 lg:grid-cols-2">
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.55, ease: EASE }}
-              className="space-y-7"
-            >
-              <div className="inline-flex items-center gap-2 rounded-full border-l-4 border-secondary bg-surface-container-high px-3 py-1">
-                <Shield className="h-3.5 w-3.5 text-secondary" />
-                <span className="font-label text-[11px] font-bold uppercase tracking-widest text-secondary">
-                  AGENTE DE DOCUMENTOS COM IA
-                </span>
-              </div>
+        <main className="pb-28 pt-24 sm:pt-28 md:pb-0 md:pt-32 lg:pt-[88px]">
+          <section
+            data-hero-root="desktop"
+            className="relative mb-20 w-full px-4 sm:px-6 md:mb-32 md:px-12 lg:mb-0 lg:min-h-[780px] lg:overflow-hidden lg:px-0 xl:min-h-[840px]"
+          >
+            <HeroFuturistic
+              className="pointer-events-none absolute inset-0 hidden lg:block"
+              interactive={false}
+              fallbackMode="still"
+              variant="hero"
+              focus="right"
+            />
+            <div className="pointer-events-none absolute inset-0 hidden lg:block bg-[linear-gradient(90deg,rgba(6,8,12,0.97)_0%,rgba(6,8,12,0.92)_40%,rgba(6,8,12,0.5)_62%,rgba(6,8,12,0.58)_100%)]" />
+            <div className="pointer-events-none absolute inset-0 hidden lg:block bg-[radial-gradient(98%_92%_at_86%_50%,transparent_34%,rgba(6,8,12,0.44)_100%)]" />
+            <div className="pointer-events-none absolute inset-y-0 left-0 hidden lg:block w-[68%] bg-[radial-gradient(92%_88%_at_20%_46%,rgba(6,8,12,0.46),transparent_74%)]" />
+            <div className="pointer-events-none absolute inset-y-0 left-[42%] hidden lg:block w-[18%] bg-gradient-to-r from-[rgba(6,8,12,0.46)] via-[rgba(6,8,12,0.22)] to-transparent" />
+            <div className="pointer-events-none absolute inset-y-[6%] right-[1.5%] hidden lg:block w-[26%] bg-[radial-gradient(84%_84%_at_100%_50%,rgba(6,8,12,0.5),transparent_74%)]" />
 
-              <h1 className="font-headline text-[2.2rem] font-extrabold leading-[1.08] tracking-tight text-on-surface sm:text-5xl md:text-7xl">
-                Os documentos tem a resposta. <span className="text-secondary">Com fonte.</span>
-              </h1>
-
-              <p className="max-w-xl text-base leading-relaxed text-on-surface-variant sm:text-lg md:text-xl">
-                Suba PDFs e textos, pergunte em linguagem natural e receba respostas rastreaveis.
-                O DocOps tambem cria planos de estudo e organiza sua agenda no chat.
-              </p>
-
-              <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
-                <Link
-                  to="/register"
-                  className="w-full rounded-xl bg-primary px-8 py-4 text-center font-headline text-base font-bold text-on-primary shadow-[0_10px_40px_-10px_rgba(147,197,253,0.3)] transition-all duration-300 hover:-translate-y-1 sm:w-auto sm:text-lg"
+            <div className="relative z-10 mx-auto grid max-w-[1600px] items-center gap-10 py-2 lg:min-h-[780px] lg:grid-cols-[minmax(0,1.12fr)_minmax(0,0.88fr)] lg:gap-20 lg:px-14 lg:py-10 xl:min-h-[840px] xl:px-20">
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.55, ease: EASE }}
+                  className="space-y-7 lg:max-w-[620px]"
                 >
-                  Criar conta
-                </Link>
-                <a
-                  href="#how-it-works"
-                  className="w-full rounded-xl border-b-2 border-outline-variant/30 bg-surface-container-highest px-8 py-4 text-center font-headline text-base font-bold text-on-surface transition-all duration-300 hover:bg-surface-container sm:w-auto sm:text-lg"
+                  <div className="inline-flex items-center gap-2 rounded-full border-l-4 border-secondary bg-surface-container-high px-3 py-1">
+                    <Shield className="h-3.5 w-3.5 text-secondary" />
+                    <span className="font-label text-[11px] font-bold uppercase tracking-widest text-secondary">
+                      AGENTE DE DOCUMENTOS COM IA
+                    </span>
+                  </div>
+
+                  <h1 className="font-headline text-[2.2rem] font-extrabold leading-[1.08] tracking-tight text-on-surface sm:text-5xl md:text-7xl">
+                    Os documentos tem a resposta. <span className="text-secondary">Com fonte.</span>
+                  </h1>
+
+                  <p className="max-w-xl text-base leading-relaxed text-on-surface-variant sm:text-lg md:text-xl">
+                    Suba PDFs e textos, pergunte em linguagem natural e receba respostas rastreaveis.
+                    O DocOps tambem cria planos de estudo e organiza sua agenda no chat.
+                  </p>
+
+                  <div className="flex flex-col gap-3 sm:flex-row sm:gap-4">
+                    <Link
+                      to="/register"
+                      className="w-full rounded-xl bg-primary px-8 py-4 text-center font-headline text-base font-bold text-on-primary shadow-[0_10px_40px_-10px_rgba(147,197,253,0.3)] transition-all duration-300 hover:-translate-y-1 sm:w-auto sm:text-lg"
+                    >
+                      Criar conta
+                    </Link>
+                    <a
+                      href="#how-it-works"
+                      className="w-full rounded-xl border-b-2 border-outline-variant/30 bg-surface-container-highest px-8 py-4 text-center font-headline text-base font-bold text-on-surface transition-all duration-300 hover:bg-surface-container sm:w-auto sm:text-lg"
+                    >
+                      Ver como funciona
+                    </a>
+                  </div>
+
+                  <div className="grid max-w-xl grid-cols-3 gap-2 sm:gap-4">
+                    <div className="rounded-xl border border-outline-variant/20 bg-surface-container-high px-3 py-3 text-center">
+                      <p className="font-headline text-lg font-bold text-primary sm:text-xl">+120</p>
+                      <p className="text-[11px] text-on-surface-variant sm:text-xs">documentos</p>
+                    </div>
+                    <div className="rounded-xl border border-outline-variant/20 bg-surface-container-high px-3 py-3 text-center">
+                      <p className="font-headline text-lg font-bold text-primary sm:text-xl">100%</p>
+                      <p className="text-[11px] text-on-surface-variant sm:text-xs">com fonte</p>
+                    </div>
+                    <div className="rounded-xl border border-outline-variant/20 bg-surface-container-high px-3 py-3 text-center">
+                      <p className="font-headline text-lg font-bold text-primary sm:text-xl">24/7</p>
+                      <p className="text-[11px] text-on-surface-variant sm:text-xs">assistente</p>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-4 pt-1 sm:gap-6">
+                    <div className="flex items-center gap-2 opacity-70">
+                      <FileText className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
+                      <span className="text-sm font-semibold">PDF, Word, texto</span>
+                    </div>
+                    <div className="flex items-center gap-2 opacity-70">
+                      <Layers className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
+                      <span className="text-sm font-semibold">Execucao local</span>
+                    </div>
+                    <div className="flex items-center gap-2 opacity-70">
+                      <CalendarDays className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
+                      <span className="text-sm font-semibold">Agenda integrada</span>
+                    </div>
+                  </div>
+                </motion.div>
+
+                <motion.div
+                  initial={{ opacity: 0, y: 24 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.6, delay: 0.08, ease: EASE }}
+                  className="group relative h-full min-h-[260px] sm:min-h-[360px] lg:hidden"
                 >
-                  Ver como funciona
-                </a>
-              </div>
+                  <div className="absolute -inset-4 rounded-[2rem] bg-primary/10 blur-3xl" />
+                  <div className="relative h-[260px] w-full sm:h-[420px]">
+                    <HeroFuturisticMobileLegacy className="absolute inset-0" interactive fallbackMode="still" />
+                    <div className="pointer-events-none absolute inset-0 rounded-[2rem] bg-gradient-to-tr from-primary/5 to-transparent" />
+                  </div>
+                </motion.div>
 
-              <div className="grid max-w-xl grid-cols-3 gap-2 sm:gap-4">
-                <div className="rounded-xl border border-outline-variant/20 bg-surface-container-high px-3 py-3 text-center">
-                  <p className="font-headline text-lg font-bold text-primary sm:text-xl">+120</p>
-                  <p className="text-[11px] text-on-surface-variant sm:text-xs">documentos</p>
-                </div>
-                <div className="rounded-xl border border-outline-variant/20 bg-surface-container-high px-3 py-3 text-center">
-                  <p className="font-headline text-lg font-bold text-primary sm:text-xl">100%</p>
-                  <p className="text-[11px] text-on-surface-variant sm:text-xs">com fonte</p>
-                </div>
-                <div className="rounded-xl border border-outline-variant/20 bg-surface-container-high px-3 py-3 text-center">
-                  <p className="font-headline text-lg font-bold text-primary sm:text-xl">24/7</p>
-                  <p className="text-[11px] text-on-surface-variant sm:text-xs">assistente</p>
-                </div>
+                <div className="hidden lg:block" aria-hidden="true" />
               </div>
-
-              <div className="flex flex-wrap gap-4 pt-1 sm:gap-6">
-                <div className="flex items-center gap-2 opacity-70">
-                  <FileText className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
-                  <span className="text-sm font-semibold">PDF, Word, texto</span>
-                </div>
-                <div className="flex items-center gap-2 opacity-70">
-                  <Layers className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
-                  <span className="text-sm font-semibold">Execucao local</span>
-                </div>
-                <div className="flex items-center gap-2 opacity-70">
-                  <CalendarDays className="h-4 w-4 text-primary sm:h-5 sm:w-5" />
-                  <span className="text-sm font-semibold">Agenda integrada</span>
-                </div>
-              </div>
-            </motion.div>
-
-            <motion.div
-              initial={{ opacity: 0, y: 24 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.08, ease: EASE }}
-              className="relative h-full min-h-[260px] group sm:min-h-[360px]"
-            >
-              <div className="absolute -inset-4 rounded-[2rem] bg-primary/10 blur-3xl" />
-              <div className="relative h-[260px] w-full sm:h-[420px] lg:h-[620px]">
-                <HeroFuturistic className="absolute inset-0" interactive fallbackMode="still" />
-                <div className="pointer-events-none absolute inset-0 rounded-[2rem] bg-gradient-to-tr from-primary/5 to-transparent" />
-              </div>
-            </motion.div>
           </section>
 
-          <section id="how-it-works" className="relative overflow-hidden bg-surface-container px-4 py-20 sm:px-6 md:px-12 md:py-32">
+          <section id="how-it-works" className="relative overflow-hidden bg-[linear-gradient(180deg,rgba(6,8,12,1)_0%,rgba(21,21,21,1)_24%,rgba(21,21,21,1)_100%)] px-4 py-20 sm:px-6 md:px-12 md:py-32 lg:pt-0 lg:pb-32">
             <div className="absolute top-0 right-0 h-full w-1/3 bg-gradient-to-l from-primary/5 to-transparent" />
             <div className="relative z-10 mx-auto max-w-[1440px]">
               <motion.div initial={{ opacity: 0, y: 16 }} whileInView={{ opacity: 1, y: 0 }} viewport={VIEWPORT} className="mb-12 md:mb-20">
