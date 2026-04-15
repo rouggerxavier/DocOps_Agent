@@ -8,6 +8,31 @@ export const api = axios.create({
   timeout: 15000, // 15s — evita tela preta se o backend não responder
 })
 
+api.interceptors.response.use(
+  (response) => {
+    const url = String(response.config?.url ?? '')
+    const responseType = String(response.config?.responseType ?? 'json').toLowerCase()
+    const contentType = String(response.headers?.['content-type'] ?? '').toLowerCase()
+
+    // If an API request expects JSON but receives app HTML fallback, fail fast.
+    const expectsJson = responseType === 'json'
+    if (expectsJson && url.includes('/api/') && contentType.includes('text/html')) {
+      const error = new Error(
+        `API endpoint returned HTML fallback instead of JSON: ${url}.`,
+      ) as Error & {
+        response?: typeof response
+        is_api_html_fallback?: boolean
+      }
+      error.response = response
+      error.is_api_html_fallback = true
+      throw error
+    }
+
+    return response
+  },
+  (error) => Promise.reject(error),
+)
+
 const INGEST_TIMEOUT_MS = 180000
 const FLASHCARD_GENERATION_TIMEOUT_MS = 180000
 
@@ -472,6 +497,50 @@ export interface GapAnalysisResponse {
   docs_analyzed: number
 }
 
+export type ProactiveRecommendationCategory = 'coverage' | 'schedule' | 'quality' | 'consistency'
+
+export type ProactiveRecommendationAction =
+  | 'dismiss'
+  | 'snooze'
+  | 'mute_category'
+  | 'feedback_useful'
+  | 'feedback_not_useful'
+
+export interface ProactiveRecommendationItem {
+  id: string
+  category: ProactiveRecommendationCategory
+  title: string
+  description: string
+  why_this: string
+  action_label: string
+  action_to: string
+  score: number
+  signals: Record<string, any>
+}
+
+export interface ProactiveRecommendationsResponse {
+  generated_at: string
+  recommendation_count: number
+  recommendations: ProactiveRecommendationItem[]
+}
+
+export interface ProactiveRecommendationActionPayload {
+  recommendation_id: string
+  category?: ProactiveRecommendationCategory
+  action: ProactiveRecommendationAction
+  duration_hours?: number
+  feedback_note?: string
+}
+
+export interface ProactiveRecommendationActionResponse {
+  status: string
+  action: ProactiveRecommendationAction
+  event_type: string
+  recommendation_id: string
+  category: ProactiveRecommendationCategory | null
+  effective_until: string | null
+}
+
 export type PremiumAnalyticsEventType =
   | 'premium_touchpoint_viewed'
   | 'upgrade_initiated'
@@ -511,6 +580,19 @@ export interface PremiumFunnelTouchpoint {
   }
 }
 
+export interface PremiumFunnelOverall {
+  viewed_users: number
+  upgrade_initiated_users: number
+  upgrade_completed_users: number
+  activated_users: number
+  conversion: {
+    view_to_upgrade_initiated: number | null
+    initiated_to_completed: number | null
+    completed_to_activation: number | null
+    view_to_activation: number | null
+  }
+}
+
 export interface PremiumFunnelResponse {
   window_days: number
   generated_at: string
@@ -519,7 +601,56 @@ export interface PremiumFunnelResponse {
     users: number
     touchpoints: number
   }
+  overall: PremiumFunnelOverall
   touchpoints: PremiumFunnelTouchpoint[]
+}
+
+export type RecommendationAnalyticsAction =
+  | 'dismiss'
+  | 'snooze'
+  | 'mute_category'
+  | 'feedback_useful'
+  | 'feedback_not_useful'
+
+export interface RecommendationAnalyticsActionBreakdown {
+  dismiss: number
+  snooze: number
+  mute_category: number
+  feedback_useful: number
+  feedback_not_useful: number
+  total: number
+  feedback_useful_rate: number | null
+}
+
+export interface RecommendationCategoryAnalyticsItem {
+  category: string
+  actions: RecommendationAnalyticsActionBreakdown
+  users: number
+  recommendations: number
+}
+
+export interface RecommendationTouchpointAnalyticsItem {
+  touchpoint: string
+  actions: RecommendationAnalyticsActionBreakdown
+  users: number
+  recommendations: number
+}
+
+export interface RecommendationAnalyticsTotals {
+  events: number
+  users: number
+  categories: number
+  touchpoints: number
+  recommendations: number
+}
+
+export interface PremiumRecommendationAnalyticsResponse {
+  window_days: number
+  generated_at: string
+  totals: RecommendationAnalyticsTotals
+  actions: RecommendationAnalyticsActionBreakdown
+  categories: RecommendationCategoryAnalyticsItem[]
+  touchpoints: RecommendationTouchpointAnalyticsItem[]
 }
 
 // ── Reading Status ─────────────────────────────────────────────────────────────
@@ -1105,6 +1236,14 @@ export const apiClient = {
   runGapAnalysis: (docNames: string[] = []): Promise<GapAnalysisResponse> =>
     api.post('/api/pipeline/gap-analysis', { doc_names: docNames }, { timeout: 90000 }).then(r => r.data),
 
+  listProactiveRecommendations: (): Promise<ProactiveRecommendationsResponse> =>
+    api.get('/api/pipeline/recommendations').then(r => r.data),
+
+  recordProactiveRecommendationAction: (
+    payload: ProactiveRecommendationActionPayload,
+  ): Promise<ProactiveRecommendationActionResponse> =>
+    api.post('/api/pipeline/recommendations/actions', payload).then(r => r.data),
+
   // ── Reading Status ──────────────────────────────────────────────────────────
 
   trackPremiumAnalyticsEvent: (payload: PremiumAnalyticsTrackPayload): Promise<PremiumAnalyticsTrackResponse> =>
@@ -1112,6 +1251,25 @@ export const apiClient = {
 
   getPremiumFunnel: (windowDays = 30): Promise<PremiumFunnelResponse> =>
     api.get('/api/analytics/premium/funnel', { params: { window_days: windowDays } }).then(r => r.data),
+
+  getPremiumFunnelCsv: (windowDays = 30): Promise<Blob> =>
+    api
+      .get('/api/analytics/premium/funnel/export.csv', {
+        params: { window_days: windowDays },
+        responseType: 'blob',
+      })
+      .then(r => r.data as Blob),
+
+  getPremiumRecommendationAnalytics: (windowDays = 30): Promise<PremiumRecommendationAnalyticsResponse> =>
+    api.get('/api/analytics/premium/recommendations', { params: { window_days: windowDays } }).then(r => r.data),
+
+  getPremiumRecommendationAnalyticsCsv: (windowDays = 30): Promise<Blob> =>
+    api
+      .get('/api/analytics/premium/recommendations/export.csv', {
+        params: { window_days: windowDays },
+        responseType: 'blob',
+      })
+      .then(r => r.data as Blob),
 
   getReadingStatus: (): Promise<Record<string, ReadingStatus>> =>
     api.get('/api/docs/reading-status').then(r => r.data),

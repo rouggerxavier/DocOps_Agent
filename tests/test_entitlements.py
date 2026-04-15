@@ -13,6 +13,7 @@ from docops.features.entitlements import (
     is_capability_allowed,
     locked_feature_detail,
     require_capability,
+    require_feature_and_capability,
     resolve_user_tier,
 )
 
@@ -21,6 +22,7 @@ _ENTITLEMENT_ENV_KEYS = [
     "FEATURE_FLAGS",
     "FEATURE_FLAGS_ENABLE_ALL",
     "FEATURE_FLAGS_DISABLE_ALL",
+    "FEATURE_PERSONALIZATION_ENABLED",
     "FEATURE_PREMIUM_ENTITLEMENTS_ENABLED",
     "PREMIUM_DEFAULT_TIER",
     "PREMIUM_USER_TIER_OVERRIDES",
@@ -90,3 +92,50 @@ def test_explicit_user_tier_overrides_take_precedence(monkeypatch: pytest.Monkey
 
     assert resolve_user_tier(_user(user_id=1, email="tester@example.com")) == "enterprise"
     assert resolve_user_tier(_user(user_id=7, email="another@example.com")) == "free"
+
+
+def test_require_feature_and_capability_blocks_when_feature_disabled(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("FEATURE_PREMIUM_ENTITLEMENTS_ENABLED", "true")
+    monkeypatch.setenv("PREMIUM_DEFAULT_TIER", "premium")
+
+    with pytest.raises(HTTPException) as exc:
+        require_feature_and_capability(
+            "personalization_enabled",
+            "premium_personalization",
+            _user(),
+            feature_disabled_detail="Personalization is disabled.",
+        )
+
+    assert exc.value.status_code == 503
+    assert exc.value.detail == "Personalization is disabled."
+
+
+def test_require_feature_and_capability_blocks_when_capability_locked(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("FEATURE_PERSONALIZATION_ENABLED", "true")
+    monkeypatch.setenv("FEATURE_PREMIUM_ENTITLEMENTS_ENABLED", "true")
+    monkeypatch.setenv("PREMIUM_DEFAULT_TIER", "free")
+
+    with pytest.raises(HTTPException) as exc:
+        require_feature_and_capability(
+            "personalization_enabled",
+            "premium_personalization",
+            _user(),
+            capability_message="Premium personalization required.",
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail["error"] == "feature_locked"
+    assert exc.value.detail["capability"] == "premium_personalization"
+    assert exc.value.detail["message"] == "Premium personalization required."
+
+
+def test_require_feature_and_capability_allows_when_feature_on_and_capability_allowed(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("FEATURE_PERSONALIZATION_ENABLED", "true")
+    monkeypatch.setenv("FEATURE_PREMIUM_ENTITLEMENTS_ENABLED", "true")
+    monkeypatch.setenv("PREMIUM_DEFAULT_TIER", "premium")
+
+    require_feature_and_capability(
+        "personalization_enabled",
+        "premium_personalization",
+        _user(),
+    )

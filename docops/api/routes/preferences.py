@@ -11,8 +11,7 @@ from docops.config import config
 from docops.db import crud
 from docops.db.database import get_db
 from docops.db.models import User
-from docops.features.entitlements import require_capability
-from docops.features.flags import require_feature_enabled
+from docops.features.entitlements import require_feature_and_capability
 from docops.logging import get_logger
 from docops.observability import emit_event
 
@@ -27,14 +26,12 @@ _PREFERENCE_FIELDS = (
 
 
 def _require_personalization_enabled(current_user: User) -> None:
-    require_feature_enabled(
+    require_feature_and_capability(
         "personalization_enabled",
-        detail="Personalization preferences are disabled by feature flag.",
-    )
-    require_capability(
         "premium_personalization",
         current_user,
-        message="Personalization preferences require a premium entitlement.",
+        feature_disabled_detail="Personalization preferences are disabled by feature flag.",
+        capability_message="Personalization preferences require a premium entitlement.",
     )
 
 

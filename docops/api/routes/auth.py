@@ -14,6 +14,7 @@ from docops.api.schemas import (
     RegisterRequest,
     RegisterResponse,
 )
+from docops.auth.admin import is_admin_user
 from docops.auth.dependencies import get_current_user
 from docops.auth.security import (
     create_access_token,
@@ -86,6 +87,7 @@ def me(current_user: User = Depends(get_current_user)) -> MeResponse:
         id=current_user.id,
         name=current_user.name,
         email=current_user.email,
+        is_admin=is_admin_user(current_user),
         created_at=current_user.created_at,
     )
 
