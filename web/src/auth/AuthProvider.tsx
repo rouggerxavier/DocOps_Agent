@@ -8,6 +8,7 @@ interface AuthUser {
   id: number
   name: string
   email: string
+  is_admin: boolean
   created_at: string
 }
 
@@ -60,7 +61,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setLoading(true)
     api
       .get<AuthUser>('/api/auth/me')
-      .then(r => setUser(r.data))
+      .then((r) => {
+        const payload = r.data as AuthUser & { is_admin?: boolean }
+        setUser({
+          ...payload,
+          is_admin: Boolean(payload.is_admin),
+        })
+      })
       .catch(() => {
         // Token inválido ou expirado — limpa estado
         localStorage.removeItem(TOKEN_KEY)

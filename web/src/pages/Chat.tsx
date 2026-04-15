@@ -5,13 +5,14 @@ import axios from 'axios'
 import {
   Send, Bot, User, FileText, ChevronRight, ChevronDown, Loader2, X,
   Plus, Clock, CalendarCheck, Trash2,
-  Sparkles, Search, Pause,
+  Sparkles, Search, Pause, ThumbsDown, ThumbsUp,
   MoreHorizontal, Paperclip, Menu,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   apiClient,
   ChatStreamError,
@@ -21,6 +22,9 @@ import {
   type SourceItem,
   type DocItem,
   type FlashcardDeck,
+  type ProactiveRecommendationActionPayload,
+  type ProactiveRecommendationItem,
+  type ProactiveRecommendationsResponse,
   type UserPreferences,
 } from '@/api/client'
 import { useCapabilities } from '@/features/CapabilitiesProvider'
@@ -184,6 +188,14 @@ const SCHEDULE_LABELS: Record<UserPreferences['schedule_preference'], string> = 
   flexible: 'Flexivel',
   fixed: 'Fixo',
   intensive: 'Intensivo',
+}
+
+const RECOMMENDATION_ACTION_TOAST: Record<ProactiveRecommendationActionPayload['action'], string | null> = {
+  dismiss: 'Recomendacao dispensada.',
+  snooze: 'Recomendacao adiada por 24h.',
+  mute_category: 'Categoria silenciada por 7 dias.',
+  feedback_useful: 'Feedback recebido. Vamos reforcar sugestoes desse perfil.',
+  feedback_not_useful: 'Feedback recebido. Vamos ajustar as proximas sugestoes.',
 }
 
 function emptyComposerOverrides(): ComposerPreferenceOverrides {
@@ -422,6 +434,39 @@ function shouldOfferChatArtifactCTA(message: Message): boolean {
 
 function formatDifficultyMix(mix: FlashcardDifficultyMix) {
   return `${mix.facil} faceis, ${mix.media} medias e ${mix.dificil} dificeis`
+}
+
+function getApiErrorDetail(error: unknown, fallback: string): string {
+  const maybeError = error as { response?: { data?: { detail?: unknown } }; message?: unknown }
+  const detail = maybeError?.response?.data?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (detail && typeof detail === 'object') {
+    const message = (detail as { message?: unknown }).message
+    if (typeof message === 'string' && message.trim()) return message
+  }
+  const message = maybeError?.message
+  if (typeof message === 'string' && message.trim()) return message
+  return fallback
+}
+
+function buildRecommendationPrompt(
+  recommendation: ProactiveRecommendationItem,
+  activeContext: ChatActiveContext,
+): string {
+  const docHint = activeContext.active_doc_names.slice(0, 3)
+  const docSegment = docHint.length > 0
+    ? ` Use como base principal: ${docHint.join(', ')}.`
+    : ''
+
+  const categoryPromptMap: Record<ProactiveRecommendationItem['category'], string> = {
+    consistency: 'Me ajude a executar esta recomendacao com passos curtos e prioridades claras.',
+    schedule: 'Monte um plano pratico para hoje com foco e blocos de tempo.',
+    coverage: 'Identifique os gaps e proponha as proximas acoes de cobertura.',
+    quality: 'Eleve a qualidade do meu estudo com uma estrategia objetiva de revisao.',
+  }
+
+  const categoryPrompt = categoryPromptMap[recommendation.category] ?? 'Me ajude a executar esta recomendacao.'
+  return `${recommendation.title}. ${recommendation.description} ${categoryPrompt}${docSegment}`.trim()
 }
 
 function parseFlashcardCommandPlan(prompt: string, docs: DocItem[], selectedDocs: DocItem[]): FlashcardCommandPlan | null {
@@ -1242,6 +1287,173 @@ function MessageBubble({
 
 // ── Main component ────────────────────────────────────────────────────────
 
+function ChatProactiveStartersPanel({
+  recommendations,
+  featureEnabled,
+  capabilityUnlocked,
+  loading = false,
+  actionPending = false,
+  entitlementTier = 'free',
+  onRefreshAccess,
+  onUpgradeIntent,
+  onExecute,
+  onUseInChat,
+  onRecordAction,
+  compact = false,
+}: {
+  recommendations: ProactiveRecommendationItem[]
+  featureEnabled: boolean
+  capabilityUnlocked: boolean
+  loading?: boolean
+  actionPending?: boolean
+  entitlementTier?: string
+  onRefreshAccess?: () => Promise<void> | void
+  onUpgradeIntent?: () => void
+  onExecute?: (item: ProactiveRecommendationItem) => void
+  onUseInChat?: (item: ProactiveRecommendationItem) => void
+  onRecordAction?: (payload: ProactiveRecommendationActionPayload) => Promise<void>
+  compact?: boolean
+}) {
+  const visibleCount = compact ? 2 : 3
+
+  if (!featureEnabled) return null
+
+  if (!capabilityUnlocked) {
+    return (
+      <div className="rounded-2xl border border-amber-600/35 bg-amber-950/15 p-3">
+        <p className="text-xs font-medium text-amber-100">
+          Recomendacoes proativas exigem plano premium ({entitlementTier}).
+        </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => { void onRefreshAccess?.() }}
+            className="rounded-md border border-amber-500/45 px-2 py-1 text-[11px] text-amber-100 transition-colors hover:bg-amber-500/10"
+          >
+            Ja fiz upgrade, atualizar acesso
+          </button>
+          <button
+            type="button"
+            onClick={onUpgradeIntent}
+            className="rounded-md border border-amber-500/25 px-2 py-1 text-[11px] text-amber-100/90 transition-colors hover:bg-amber-500/10"
+          >
+            Ver recursos premium
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-low)]/75 p-3 backdrop-blur">
+      <div className="mb-2 flex items-center gap-2">
+        <Sparkles className="h-4 w-4 text-[color:var(--ui-accent)]" />
+        <p className="text-xs font-semibold text-[color:var(--ui-text)]">Sugestoes proativas</p>
+      </div>
+
+      {loading ? (
+        <div className="space-y-2">
+          <Skeleton className="h-16 w-full rounded-xl" />
+          <Skeleton className="h-16 w-full rounded-xl" />
+        </div>
+      ) : recommendations.length === 0 ? (
+        <p className="text-xs text-[color:var(--ui-text-meta)]">
+          Sem sugestoes no momento. Continue usando o produto para gerar novas recomendacoes.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {recommendations.slice(0, visibleCount).map(item => (
+            <div
+              key={item.id}
+              className="rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)] px-3 py-2"
+            >
+              <p className="text-xs font-semibold text-[color:var(--ui-text)]">{item.title}</p>
+              <p className="mt-1 text-[11px] text-[color:var(--ui-text-meta)]">{item.why_this}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onExecute?.(item)}
+                  className="rounded-md border border-[color:var(--ui-accent)]/40 bg-[color:var(--ui-accent-soft)] px-2 py-1 text-[11px] text-[color:var(--ui-accent)] transition-colors hover:bg-[color:var(--ui-accent-soft)]/75"
+                >
+                  {item.action_label}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onUseInChat?.(item)}
+                  className="rounded-md border border-[color:var(--ui-border-soft)] px-2 py-1 text-[11px] text-[color:var(--ui-text)] transition-colors hover:bg-[color:var(--ui-surface-2)]"
+                >
+                  Usar no chat
+                </button>
+                <button
+                  type="button"
+                  disabled={actionPending}
+                  onClick={() => {
+                    void onRecordAction?.({
+                      recommendation_id: item.id,
+                      category: item.category,
+                      action: 'snooze',
+                      duration_hours: 24,
+                    })
+                  }}
+                  className="rounded-md border border-[color:var(--ui-border-soft)] px-2 py-1 text-[11px] text-[color:var(--ui-text-meta)] transition-colors hover:bg-[color:var(--ui-surface-2)] disabled:opacity-60"
+                >
+                  Adiar 24h
+                </button>
+                <button
+                  type="button"
+                  disabled={actionPending}
+                  onClick={() => {
+                    void onRecordAction?.({
+                      recommendation_id: item.id,
+                      category: item.category,
+                      action: 'dismiss',
+                    })
+                  }}
+                  className="rounded-md border border-rose-500/30 px-2 py-1 text-[11px] text-rose-300 transition-colors hover:bg-rose-500/10 disabled:opacity-60"
+                >
+                  Dispensar
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Marcar ${item.title} como util`}
+                  disabled={actionPending}
+                  onClick={() => {
+                    void onRecordAction?.({
+                      recommendation_id: item.id,
+                      category: item.category,
+                      action: 'feedback_useful',
+                    })
+                  }}
+                  className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 px-2 py-1 text-[11px] text-emerald-300 transition-colors hover:bg-emerald-500/10 disabled:opacity-60"
+                >
+                  <ThumbsUp className="h-3 w-3" />
+                  Util
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Marcar ${item.title} como nao util`}
+                  disabled={actionPending}
+                  onClick={() => {
+                    void onRecordAction?.({
+                      recommendation_id: item.id,
+                      category: item.category,
+                      action: 'feedback_not_useful',
+                    })
+                  }}
+                  className="inline-flex items-center gap-1 rounded-md border border-rose-500/30 px-2 py-1 text-[11px] text-rose-300 transition-colors hover:bg-rose-500/10 disabled:opacity-60"
+                >
+                  <ThumbsDown className="h-3 w-3" />
+                  Nao util
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function Chat() {
   const qc = useQueryClient()
   const capabilities = useCapabilities()
@@ -1287,8 +1499,16 @@ export function Chat() {
     && capabilities.hasCapability('premium_chat_to_artifact')
   )
   const isChatToArtifactLocked = isChatToArtifactEnabled && !isChatToArtifactUnlocked
+  const isProactiveCopilotEnabled = capabilities.isEnabled('proactive_copilot_enabled')
+  const isProactiveCopilotUnlocked = (
+    isProactiveCopilotEnabled
+    && capabilities.hasCapability('premium_proactive_copilot')
+  )
+  const isProactiveCopilotLocked = isProactiveCopilotEnabled && !isProactiveCopilotUnlocked
   const [lastUpgradeTouchpoint, setLastUpgradeTouchpoint] = useState('chat.chat_to_artifact_cta')
   const [wasChatToArtifactLocked, setWasChatToArtifactLocked] = useState(isChatToArtifactLocked)
+  const [lastProactiveUpgradeTouchpoint, setLastProactiveUpgradeTouchpoint] = useState('chat.proactive_starters')
+  const [wasProactiveCopilotLocked, setWasProactiveCopilotLocked] = useState(isProactiveCopilotLocked)
   const isPersonalizationEnabled = capabilities.isEnabled('personalization_enabled')
   const isPersonalizationUnlocked = (
     isPersonalizationEnabled
@@ -1302,6 +1522,14 @@ export function Chat() {
     enabled: isPersonalizationUnlocked,
     staleTime: 30_000,
     retry: 1,
+  })
+
+  const proactiveRecommendationsQuery = useQuery<ProactiveRecommendationsResponse>({
+    queryKey: ['chat-proactive-recommendations'],
+    queryFn: apiClient.listProactiveRecommendations,
+    staleTime: 60_000,
+    retry: false,
+    enabled: isProactiveCopilotUnlocked,
   })
 
   const userPreferences = preferencesQuery.data ?? DEFAULT_USER_PREFERENCES
@@ -1907,9 +2135,28 @@ export function Chat() {
     })
   }
 
+  function handleProactiveUpgradeIntent(
+    touchpoint = 'chat.proactive_starters',
+    source: 'link' | 'refresh_access' = 'link',
+  ) {
+    setLastProactiveUpgradeTouchpoint(touchpoint)
+    trackUpgradeInitiated({
+      touchpoint,
+      capability: 'premium_proactive_copilot',
+      metadata: { surface: 'chat', source },
+    })
+  }
+
   async function handleRefreshPremiumAccess(touchpoint = 'chat.chat_to_artifact_cta') {
     handleUpgradeIntent(touchpoint, 'refresh_access')
     await capabilities.refresh()
+    toast.info('Acesso premium atualizado. Se o upgrade ja foi aplicado, recarregamos suas capacidades.')
+  }
+
+  async function handleRefreshProactiveAccess(touchpoint = 'chat.proactive_starters') {
+    handleProactiveUpgradeIntent(touchpoint, 'refresh_access')
+    await capabilities.refresh()
+    await proactiveRecommendationsQuery.refetch()
     toast.info('Acesso premium atualizado. Se o upgrade ja foi aplicado, recarregamos suas capacidades.')
   }
 
@@ -1974,6 +2221,29 @@ export function Chat() {
       const detail = error?.response?.data?.detail ?? error?.message ?? 'Falha ao salvar artefato.'
       toast.error(String(detail))
       setSavingArtifactTurnRef(null)
+    },
+  })
+
+  const proactiveRecommendationActionMutation = useMutation({
+    mutationFn: (payload: ProactiveRecommendationActionPayload) =>
+      apiClient.recordProactiveRecommendationAction(payload),
+    onSuccess: (_result, payload) => {
+      const successMessage = RECOMMENDATION_ACTION_TOAST[payload.action]
+      if (successMessage) {
+        toast.success(successMessage)
+      }
+      void proactiveRecommendationsQuery.refetch()
+    },
+    onError: (error: unknown) => {
+      const lockedDetail = extractLockedFeatureDetail(error)
+      if (lockedDetail?.capability === 'premium_proactive_copilot') {
+        toast.error(
+          `Recomendacoes proativas bloqueadas: ${lockedDetail.capability} exige plano ${lockedDetail.required_tier}.`,
+        )
+        void handleRefreshProactiveAccess()
+        return
+      }
+      toast.error(getApiErrorDetail(error, 'Nao foi possivel registrar a acao da recomendacao.'))
     },
   })
 
@@ -2162,6 +2432,30 @@ export function Chat() {
     })
   }
 
+  function handleUseRecommendationInChat(recommendation: ProactiveRecommendationItem) {
+    const prompt = buildRecommendationPrompt(recommendation, activeContext)
+    setInput(prompt)
+    toast.info('Sugestao aplicada ao campo de mensagem.')
+  }
+
+  function handleExecuteRecommendation(recommendation: ProactiveRecommendationItem) {
+    trackPremiumFeatureActivation({
+      touchpoint: 'chat.proactive_starters.execute',
+      capability: 'premium_proactive_copilot',
+      metadata: {
+        surface: 'chat',
+        recommendation_id: recommendation.id,
+        category: recommendation.category,
+        action_to: recommendation.action_to,
+      },
+    }, false)
+    window.location.href = recommendation.action_to
+  }
+
+  async function handleRecordRecommendationAction(payload: ProactiveRecommendationActionPayload) {
+    await proactiveRecommendationActionMutation.mutateAsync(payload)
+  }
+
   const hasSources = activeSources.length > 0
   const isStreaming = messages.some(m => m.streaming)
   const isPending = mutation.isPending || flashcardBatchMut.isPending
@@ -2195,6 +2489,11 @@ export function Chat() {
     const scope = `${session.title} ${getSessionPreview(session)}`
     return normalizeForMatch(scope).includes(normalizedSessionSearch)
   })
+  const proactiveRecommendations = proactiveRecommendationsQuery.data?.recommendations ?? []
+  const hasProactiveTouchpoint = (
+    isProactiveCopilotEnabled
+    && (isProactiveCopilotLocked || proactiveRecommendations.length > 0)
+  )
   const hasArtifactUnlockPrompt = isChatToArtifactLocked && messages.some((msg, i) => {
     if (msg.role !== 'assistant') return false
     const previousUserPrompt = [...messages.slice(0, i)]
@@ -2217,6 +2516,15 @@ export function Chat() {
   }, [hasArtifactUnlockPrompt])
 
   useEffect(() => {
+    if (!hasProactiveTouchpoint) return
+    trackPremiumTouchpointViewed({
+      touchpoint: 'chat.proactive_starters',
+      capability: 'premium_proactive_copilot',
+      metadata: { surface: 'chat' },
+    })
+  }, [hasProactiveTouchpoint])
+
+  useEffect(() => {
     if (wasChatToArtifactLocked && !isChatToArtifactLocked) {
       trackUpgradeCompleted({
         touchpoint: lastUpgradeTouchpoint,
@@ -2231,6 +2539,41 @@ export function Chat() {
     }
     setWasChatToArtifactLocked(isChatToArtifactLocked)
   }, [isChatToArtifactLocked, lastUpgradeTouchpoint, wasChatToArtifactLocked])
+
+  useEffect(() => {
+    if (wasProactiveCopilotLocked && !isProactiveCopilotLocked) {
+      trackUpgradeCompleted({
+        touchpoint: lastProactiveUpgradeTouchpoint,
+        capability: 'premium_proactive_copilot',
+        metadata: { surface: 'chat' },
+      })
+      trackPremiumFeatureActivation({
+        touchpoint: 'chat.proactive_starters',
+        capability: 'premium_proactive_copilot',
+        metadata: { surface: 'chat', source: 'unlock_transition' },
+      })
+    }
+    setWasProactiveCopilotLocked(isProactiveCopilotLocked)
+  }, [isProactiveCopilotLocked, lastProactiveUpgradeTouchpoint, wasProactiveCopilotLocked])
+
+  useEffect(() => {
+    if (!(isProactiveCopilotUnlocked && !proactiveRecommendationsQuery.isLoading && !proactiveRecommendationsQuery.isError)) return
+    if (proactiveRecommendations.length <= 0) return
+    trackPremiumFeatureActivation({
+      touchpoint: 'chat.proactive_starters',
+      capability: 'premium_proactive_copilot',
+      metadata: {
+        surface: 'chat',
+        source: 'starters_loaded',
+        recommendation_count: proactiveRecommendations.length,
+      },
+    })
+  }, [
+    isProactiveCopilotUnlocked,
+    proactiveRecommendations.length,
+    proactiveRecommendationsQuery.isError,
+    proactiveRecommendationsQuery.isLoading,
+  ])
 
   useEffect(() => {
     if (!(isPersonalizationUnlocked && !preferencesQuery.isLoading && !preferencesQuery.isError)) return
@@ -2481,6 +2824,24 @@ export function Chat() {
         )}
         style={isMobile ? { paddingBottom: `${156 + mobileViewportInset}px` } : undefined}>
           <div className="flex w-full flex-col gap-8">
+            <ChatProactiveStartersPanel
+              recommendations={proactiveRecommendations}
+              featureEnabled={isProactiveCopilotEnabled}
+              capabilityUnlocked={isProactiveCopilotUnlocked}
+              loading={proactiveRecommendationsQuery.isLoading}
+              actionPending={proactiveRecommendationActionMutation.isPending}
+              entitlementTier={capabilities.entitlementTier}
+              onRefreshAccess={() => { void handleRefreshProactiveAccess() }}
+              onUpgradeIntent={() => {
+                handleProactiveUpgradeIntent('chat.proactive_starters', 'link')
+                window.location.href = '/settings'
+              }}
+              onExecute={handleExecuteRecommendation}
+              onUseInChat={handleUseRecommendationInChat}
+              onRecordAction={handleRecordRecommendationAction}
+              compact={isMobile}
+            />
+
             {messages.length === 0 && (
               <>
                 {isMobile ? (

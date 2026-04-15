@@ -35,7 +35,12 @@ from docops.db.crud import (
 )
 from docops.db.database import SessionLocal, get_db
 from docops.db.models import ArtifactRecord, User
-from docops.features.entitlements import is_capability_allowed, is_premium_template, require_capability
+from docops.features.entitlements import (
+    is_capability_allowed,
+    is_premium_template,
+    require_capability,
+    require_feature_and_capability,
+)
 from docops.logging import get_logger
 from docops.observability import emit_event
 from docops.services.artifact_templates import apply_template_layout, list_template_payloads, resolve_template
@@ -439,17 +444,14 @@ async def create_artifact_from_chat(
     db: Session = Depends(get_db),
 ) -> ChatArtifactCreateResponse:
     """Persist a chat answer as an artifact with conversation linkage metadata."""
-    from docops.features.flags import require_feature_enabled
     from docops.tools.doc_tools import tool_write_artifact
 
-    require_feature_enabled(
+    require_feature_and_capability(
         "premium_chat_to_artifact_enabled",
-        detail="Chat-to-artifact flow is disabled by feature flag.",
-    )
-    require_capability(
         "premium_chat_to_artifact",
         current_user,
-        message="Chat-to-artifact is available only for premium users.",
+        feature_disabled_detail="Chat-to-artifact flow is disabled by feature flag.",
+        capability_message="Chat-to-artifact is available only for premium users.",
     )
 
     raw_answer = str(body.answer or "").strip()

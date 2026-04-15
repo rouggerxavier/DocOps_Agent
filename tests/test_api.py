@@ -69,10 +69,10 @@ def _ensure_db_override():
     yield
 
 
-def _make_auth_client():
+def _make_auth_client(admin: bool = True):
     """Retorna um TestClient com usuário fake autenticado via dependency override."""
     fake_user = User(id=1, name="Tester", email="tester@example.com",
-                     password_hash="x", is_active=True)
+                     password_hash="x", is_active=True, is_admin=admin)
 
     def _fake_auth():
         return fake_user
@@ -81,13 +81,14 @@ def _make_auth_client():
     return TestClient(app), fake_user
 
 
-def _make_auth_client_for_user(user_id: int):
+def _make_auth_client_for_user(user_id: int, admin: bool = True):
     fake_user = User(
         id=int(user_id),
         name=f"Tester {int(user_id)}",
         email=f"tester{int(user_id)}@example.com",
         password_hash="x",
         is_active=True,
+        is_admin=admin,
     )
 
     def _fake_auth():
@@ -223,6 +224,7 @@ def test_me_com_token():
     resp = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 200
     assert resp.json()["email"] == "eve@example.com"
+    assert resp.json()["is_admin"] is False
 
 
 # ── Rotas protegidas retornam 403 sem token ───────────────────────────────────
@@ -686,12 +688,24 @@ def test_premium_analytics_funnel_groups_by_touchpoint():
         },
     )
     assert resp_other.status_code == 200
+    resp_other_activation = auth_client_1_again.post(
+        "/api/analytics/premium/events",
+        json={
+            "event_type": "premium_feature_activation",
+            "touchpoint": "preferences.memory",
+            "capability": "premium_personalization",
+        },
+    )
+    assert resp_other_activation.status_code == 200
 
     funnel_response = auth_client_1_again.get("/api/analytics/premium/funnel", params={"window_days": 30})
     assert funnel_response.status_code == 200
     funnel = funnel_response.json()
     assert funnel["totals"]["touchpoints"] >= 2
     assert funnel["totals"]["users"] >= 2
+    assert funnel["overall"]["viewed_users"] == 2
+    assert funnel["overall"]["activated_users"] == 1
+    assert funnel["overall"]["conversion"]["view_to_activation"] == 0.5
 
     by_touchpoint = {item["touchpoint"]: item for item in funnel["touchpoints"]}
     gap = by_touchpoint["dashboard.gap_analysis"]
@@ -701,6 +715,95 @@ def test_premium_analytics_funnel_groups_by_touchpoint():
     assert gap["stages"]["premium_feature_activation"]["users"] == 1
     assert gap["conversion"]["view_to_upgrade_initiated"] == 0.5
     assert gap["conversion"]["view_to_activation"] == 0.5
+    _clear_auth_override()
+
+
+def test_premium_recommendation_analytics_groups_actions_categories_and_touchpoints():
+    auth_client, _ = _make_auth_client()
+    Base.metadata.create_all(bind=_test_engine)
+
+    db = _TestSession()
+    try:
+        db.query(PremiumAnalyticsEventRecord).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    seed_events = [
+        {
+            "user_id": 1,
+            "event_type": "recommendation.dismissed",
+            "touchpoint": "dashboard.proactive_recommendations",
+            "metadata": {"recommendation_id": "overdue-tasks", "category": "consistency"},
+        },
+        {
+            "user_id": 1,
+            "event_type": "recommendation.feedback.recorded",
+            "touchpoint": "dashboard.proactive_recommendations",
+            "metadata": {"recommendation_id": "daily-question", "category": "quality", "useful": True},
+        },
+        {
+            "user_id": 2,
+            "event_type": "recommendation.feedback.recorded",
+            "touchpoint": "chat.active_context",
+            "metadata": {"recommendation_id": "today-agenda", "category": "schedule", "useful": False},
+        },
+        {
+            "user_id": 2,
+            "event_type": "recommendation.snoozed",
+            "touchpoint": "dashboard.proactive_recommendations",
+            "metadata": {"recommendation_id": "coverage-gap-analysis", "category": "coverage"},
+        },
+        {
+            "user_id": 1,
+            "event_type": "premium_touchpoint_viewed",
+            "touchpoint": "dashboard.gap_analysis",
+            "metadata": {"surface": "dashboard"},
+        },
+    ]
+
+    db = _TestSession()
+    try:
+        for event in seed_events:
+            db.add(
+                PremiumAnalyticsEventRecord(
+                    user_id=int(event["user_id"]),
+                    event_type=str(event["event_type"]),
+                    touchpoint=str(event["touchpoint"]),
+                    metadata_json=json.dumps(event["metadata"]),
+                )
+            )
+        db.commit()
+    finally:
+        db.close()
+
+    response = auth_client.get("/api/analytics/premium/recommendations", params={"window_days": 30})
+    assert response.status_code == 200
+    payload = response.json()
+
+    assert payload["totals"]["events"] == 4
+    assert payload["totals"]["users"] == 2
+    assert payload["totals"]["categories"] == 4
+    assert payload["totals"]["touchpoints"] == 2
+    assert payload["totals"]["recommendations"] == 4
+
+    assert payload["actions"]["dismiss"] == 1
+    assert payload["actions"]["snooze"] == 1
+    assert payload["actions"]["mute_category"] == 0
+    assert payload["actions"]["feedback_useful"] == 1
+    assert payload["actions"]["feedback_not_useful"] == 1
+    assert payload["actions"]["total"] == 4
+    assert payload["actions"]["feedback_useful_rate"] == 0.5
+
+    by_category = {item["category"]: item for item in payload["categories"]}
+    assert by_category["consistency"]["actions"]["dismiss"] == 1
+    assert by_category["quality"]["actions"]["feedback_useful"] == 1
+    assert by_category["schedule"]["actions"]["feedback_not_useful"] == 1
+    assert by_category["coverage"]["actions"]["snooze"] == 1
+
+    by_touchpoint = {item["touchpoint"]: item for item in payload["touchpoints"]}
+    assert by_touchpoint["dashboard.proactive_recommendations"]["actions"]["total"] == 3
+    assert by_touchpoint["chat.active_context"]["actions"]["total"] == 1
     _clear_auth_override()
 
 
@@ -714,6 +817,78 @@ def test_premium_analytics_rejects_invalid_event_type():
         },
     )
     assert response.status_code == 422
+    _clear_auth_override()
+
+
+def test_premium_analytics_read_endpoints_require_admin():
+    auth_client, _ = _make_auth_client(admin=False)
+
+    funnel_resp = auth_client.get("/api/analytics/premium/funnel", params={"window_days": 30})
+    recommendation_resp = auth_client.get("/api/analytics/premium/recommendations", params={"window_days": 30})
+    funnel_export_resp = auth_client.get("/api/analytics/premium/funnel/export.csv", params={"window_days": 30})
+    recommendation_export_resp = auth_client.get("/api/analytics/premium/recommendations/export.csv", params={"window_days": 30})
+
+    assert funnel_resp.status_code == 403
+    assert recommendation_resp.status_code == 403
+    assert funnel_export_resp.status_code == 403
+    assert recommendation_export_resp.status_code == 403
+    _clear_auth_override()
+
+
+def test_premium_analytics_export_endpoints_return_csv():
+    auth_client, _ = _make_auth_client(admin=True)
+    Base.metadata.create_all(bind=_test_engine)
+
+    db = _TestSession()
+    try:
+        db.query(PremiumAnalyticsEventRecord).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    seed_events = [
+        {
+            "event_type": "premium_touchpoint_viewed",
+            "touchpoint": "dashboard.gap_analysis",
+            "metadata": {"surface": "dashboard"},
+        },
+        {
+            "event_type": "upgrade_initiated",
+            "touchpoint": "dashboard.gap_analysis",
+            "metadata": {"surface": "dashboard"},
+        },
+    ]
+    for event in seed_events:
+        response = auth_client.post("/api/analytics/premium/events", json=event)
+        assert response.status_code == 200
+
+    db = _TestSession()
+    try:
+        db.add(
+            PremiumAnalyticsEventRecord(
+                user_id=1,
+                event_type="recommendation.feedback.recorded",
+                touchpoint="dashboard.proactive_recommendations",
+                metadata_json=json.dumps({"recommendation_id": "rec-1", "category": "quality", "useful": True}),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    funnel_export = auth_client.get("/api/analytics/premium/funnel/export.csv", params={"window_days": 30})
+    recommendation_export = auth_client.get(
+        "/api/analytics/premium/recommendations/export.csv",
+        params={"window_days": 30},
+    )
+
+    assert funnel_export.status_code == 200
+    assert "text/csv" in str(funnel_export.headers.get("content-type", ""))
+    assert "scope,touchpoint,capability" in funnel_export.text
+
+    assert recommendation_export.status_code == 200
+    assert "text/csv" in str(recommendation_export.headers.get("content-type", ""))
+    assert "scope,key,users,recommendations" in recommendation_export.text
     _clear_auth_override()
 
 
@@ -1999,6 +2174,7 @@ def test_studyplan_500_payload_is_sanitized(monkeypatch):
 
 def test_pipeline_evaluate_answer_500_payload_is_sanitized(monkeypatch):
     auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PROACTIVE_COPILOT_ENABLED", "true")
 
     def _boom(*_a, **_k):
         raise RuntimeError("token_interno")
@@ -2020,6 +2196,7 @@ def test_pipeline_evaluate_answer_500_payload_is_sanitized(monkeypatch):
 
 def test_pipeline_gap_analysis_500_payload_is_sanitized(monkeypatch):
     auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PROACTIVE_COPILOT_ENABLED", "true")
 
     monkeypatch.setattr(
         "docops.api.routes.pipeline.crud.list_documents_for_user",
@@ -2039,10 +2216,371 @@ def test_pipeline_gap_analysis_500_payload_is_sanitized(monkeypatch):
 
 def test_pipeline_gap_analysis_locked_when_entitlements_enabled(monkeypatch):
     auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PROACTIVE_COPILOT_ENABLED", "true")
     monkeypatch.setenv("FEATURE_PREMIUM_ENTITLEMENTS_ENABLED", "true")
     monkeypatch.setenv("PREMIUM_DEFAULT_TIER", "free")
 
     resp = auth_client.post("/api/pipeline/gap-analysis", json={"doc_names": []})
+    assert resp.status_code == 403
+    detail = resp.json().get("detail") or {}
+    assert detail.get("error") == "feature_locked"
+    assert detail.get("capability") == "premium_proactive_copilot"
+    _clear_auth_override()
+
+
+def test_pipeline_recommendations_feed_applies_persisted_controls(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PROACTIVE_COPILOT_ENABLED", "true")
+    Base.metadata.create_all(bind=_test_engine)
+
+    db = _TestSession()
+    try:
+        db.query(PremiumAnalyticsEventRecord).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    monkeypatch.setattr(
+        "docops.api.routes.pipeline._build_proactive_recommendation_candidates",
+        lambda *_args, **_kwargs: [
+            {
+                "id": "overdue-tasks",
+                "category": "consistency",
+                "title": "Resolver pendencias",
+                "description": "Descricao A",
+                "why_this": "Contexto A",
+                "action_label": "Abrir tarefas",
+                "action_to": "/tasks",
+                "score": 0.9,
+                "signals": {"overdue_tasks": 2},
+            },
+            {
+                "id": "today-agenda",
+                "category": "schedule",
+                "title": "Revisar agenda",
+                "description": "Descricao B",
+                "why_this": "Contexto B",
+                "action_label": "Abrir calendario",
+                "action_to": "/schedule",
+                "score": 0.8,
+                "signals": {"reminders_today": 1},
+            },
+            {
+                "id": "daily-question",
+                "category": "quality",
+                "title": "Pergunta do dia",
+                "description": "Descricao C",
+                "why_this": "Contexto C",
+                "action_label": "Responder",
+                "action_to": "/dashboard",
+                "score": 0.7,
+                "signals": {"daily_question_available": 1},
+            },
+        ],
+    )
+
+    dismiss_resp = auth_client.post(
+        "/api/pipeline/recommendations/actions",
+        json={
+            "recommendation_id": "overdue-tasks",
+            "category": "consistency",
+            "action": "dismiss",
+        },
+    )
+    assert dismiss_resp.status_code == 200
+    assert dismiss_resp.json()["event_type"] == "recommendation.dismissed"
+
+    snooze_resp = auth_client.post(
+        "/api/pipeline/recommendations/actions",
+        json={
+            "recommendation_id": "today-agenda",
+            "category": "schedule",
+            "action": "snooze",
+            "duration_hours": 24,
+        },
+    )
+    assert snooze_resp.status_code == 200
+    assert snooze_resp.json()["event_type"] == "recommendation.snoozed"
+    assert snooze_resp.json()["effective_until"] is not None
+
+    mute_resp = auth_client.post(
+        "/api/pipeline/recommendations/actions",
+        json={
+            "recommendation_id": "daily-question",
+            "category": "quality",
+            "action": "mute_category",
+            "duration_hours": 24,
+        },
+    )
+    assert mute_resp.status_code == 200
+    assert mute_resp.json()["event_type"] == "recommendation.category_muted"
+    assert mute_resp.json()["effective_until"] is not None
+
+    feed_resp = auth_client.get("/api/pipeline/recommendations")
+    assert feed_resp.status_code == 200
+    payload = feed_resp.json()
+    assert payload["recommendation_count"] == 0
+    assert payload["recommendations"] == []
+    _clear_auth_override()
+
+
+def test_pipeline_recommendations_controls_are_user_scoped(monkeypatch):
+    auth_client_1, _ = _make_auth_client_for_user(1)
+    monkeypatch.setenv("FEATURE_PROACTIVE_COPILOT_ENABLED", "true")
+    Base.metadata.create_all(bind=_test_engine)
+
+    db = _TestSession()
+    try:
+        db.query(PremiumAnalyticsEventRecord).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    monkeypatch.setattr(
+        "docops.api.routes.pipeline._build_proactive_recommendation_candidates",
+        lambda *_args, **_kwargs: [
+            {
+                "id": "overdue-tasks",
+                "category": "consistency",
+                "title": "Resolver pendencias",
+                "description": "Descricao A",
+                "why_this": "Contexto A",
+                "action_label": "Abrir tarefas",
+                "action_to": "/tasks",
+                "score": 0.9,
+                "signals": {"overdue_tasks": 2},
+            }
+        ],
+    )
+
+    dismiss_resp = auth_client_1.post(
+        "/api/pipeline/recommendations/actions",
+        json={
+            "recommendation_id": "overdue-tasks",
+            "category": "consistency",
+            "action": "dismiss",
+        },
+    )
+    assert dismiss_resp.status_code == 200
+
+    feed_user_1 = auth_client_1.get("/api/pipeline/recommendations")
+    assert feed_user_1.status_code == 200
+    assert feed_user_1.json()["recommendation_count"] == 0
+
+    auth_client_2, _ = _make_auth_client_for_user(2)
+    feed_user_2 = auth_client_2.get("/api/pipeline/recommendations")
+    assert feed_user_2.status_code == 200
+    assert feed_user_2.json()["recommendation_count"] == 1
+    assert feed_user_2.json()["recommendations"][0]["id"] == "overdue-tasks"
+    _clear_auth_override()
+
+
+def test_pipeline_recommendations_feedback_actions_are_recorded(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PROACTIVE_COPILOT_ENABLED", "true")
+    Base.metadata.create_all(bind=_test_engine)
+
+    db = _TestSession()
+    try:
+        db.query(PremiumAnalyticsEventRecord).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    useful_resp = auth_client.post(
+        "/api/pipeline/recommendations/actions",
+        json={
+            "recommendation_id": "daily-question",
+            "category": "quality",
+            "action": "feedback_useful",
+        },
+    )
+    assert useful_resp.status_code == 200
+    useful_payload = useful_resp.json()
+    assert useful_payload["event_type"] == "recommendation.feedback.recorded"
+    assert useful_payload["effective_until"] is None
+
+    not_useful_resp = auth_client.post(
+        "/api/pipeline/recommendations/actions",
+        json={
+            "recommendation_id": "today-agenda",
+            "category": "schedule",
+            "action": "feedback_not_useful",
+        },
+    )
+    assert not_useful_resp.status_code == 200
+    not_useful_payload = not_useful_resp.json()
+    assert not_useful_payload["event_type"] == "recommendation.feedback.recorded"
+    assert not_useful_payload["effective_until"] is None
+
+    db = _TestSession()
+    try:
+        rows = (
+            db.query(PremiumAnalyticsEventRecord)
+            .filter(
+                PremiumAnalyticsEventRecord.user_id == 1,
+                PremiumAnalyticsEventRecord.event_type == "recommendation.feedback.recorded",
+            )
+            .order_by(PremiumAnalyticsEventRecord.id.asc())
+            .all()
+        )
+        assert len(rows) == 2
+        useful_metadata = json.loads(rows[0].metadata_json or "{}")
+        not_useful_metadata = json.loads(rows[1].metadata_json or "{}")
+        assert useful_metadata.get("recommendation_id") == "daily-question"
+        assert useful_metadata.get("useful") is True
+        assert not_useful_metadata.get("recommendation_id") == "today-agenda"
+        assert not_useful_metadata.get("useful") is False
+    finally:
+        db.close()
+    _clear_auth_override()
+
+
+def test_pipeline_recommendations_apply_dedup_window(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PROACTIVE_COPILOT_ENABLED", "true")
+    Base.metadata.create_all(bind=_test_engine)
+
+    db = _TestSession()
+    try:
+        db.query(PremiumAnalyticsEventRecord).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    monkeypatch.setattr(
+        "docops.api.routes.pipeline._build_proactive_recommendation_candidates",
+        lambda *_args, **_kwargs: [
+            {
+                "id": "overdue-tasks",
+                "category": "consistency",
+                "title": "Resolver pendencias",
+                "description": "Descricao A",
+                "why_this": "Contexto A",
+                "action_label": "Abrir tarefas",
+                "action_to": "/tasks",
+                "score": 0.91,
+                "signals": {"overdue_tasks": 2},
+            },
+            {
+                "id": "today-agenda",
+                "category": "schedule",
+                "title": "Revisar agenda",
+                "description": "Descricao B",
+                "why_this": "Contexto B",
+                "action_label": "Abrir calendario",
+                "action_to": "/schedule",
+                "score": 0.79,
+                "signals": {"reminders_today": 1},
+            },
+        ],
+    )
+
+    first_feed = auth_client.get("/api/pipeline/recommendations")
+    assert first_feed.status_code == 200
+    assert first_feed.json()["recommendation_count"] == 2
+
+    second_feed = auth_client.get("/api/pipeline/recommendations")
+    assert second_feed.status_code == 200
+    assert second_feed.json()["recommendation_count"] == 0
+    assert second_feed.json()["recommendations"] == []
+
+    db = _TestSession()
+    try:
+        rows = (
+            db.query(PremiumAnalyticsEventRecord)
+            .filter(
+                PremiumAnalyticsEventRecord.user_id == 1,
+                PremiumAnalyticsEventRecord.event_type == "recommendation.feed.generated",
+            )
+            .all()
+        )
+        assert len(rows) == 1
+    finally:
+        db.close()
+    _clear_auth_override()
+
+
+def test_pipeline_recommendations_reduce_priority_for_recent_negative_feedback(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PROACTIVE_COPILOT_ENABLED", "true")
+    Base.metadata.create_all(bind=_test_engine)
+
+    db = _TestSession()
+    try:
+        db.query(PremiumAnalyticsEventRecord).delete()
+        db.commit()
+    finally:
+        db.close()
+
+    feedback_resp = auth_client.post(
+        "/api/pipeline/recommendations/actions",
+        json={
+            "recommendation_id": "today-agenda",
+            "category": "schedule",
+            "action": "feedback_not_useful",
+        },
+    )
+    assert feedback_resp.status_code == 200
+
+    monkeypatch.setattr(
+        "docops.api.routes.pipeline._build_proactive_recommendation_candidates",
+        lambda *_args, **_kwargs: [
+            {
+                "id": "schedule-candidate",
+                "category": "schedule",
+                "title": "Revisar agenda",
+                "description": "Descricao A",
+                "why_this": "Contexto A",
+                "action_label": "Abrir calendario",
+                "action_to": "/schedule",
+                "score": 0.9,
+                "signals": {"reminders_today": 2},
+            },
+            {
+                "id": "coverage-candidate",
+                "category": "coverage",
+                "title": "Mapear lacunas",
+                "description": "Descricao B",
+                "why_this": "Contexto B",
+                "action_label": "Abrir lacunas",
+                "action_to": "/dashboard#gap-analysis-panel",
+                "score": 0.82,
+                "signals": {"docs_count": 3},
+            },
+        ],
+    )
+
+    feed_resp = auth_client.get("/api/pipeline/recommendations")
+    assert feed_resp.status_code == 200
+    payload = feed_resp.json()
+    assert payload["recommendation_count"] == 2
+
+    assert payload["recommendations"][0]["id"] == "coverage-candidate"
+    schedule_item = next(item for item in payload["recommendations"] if item["id"] == "schedule-candidate")
+    assert schedule_item["signals"]["category_feedback_penalty_applied"] is True
+    assert schedule_item["signals"]["category_not_useful_count_recent"] == 1
+    assert schedule_item["score"] < 0.9
+    _clear_auth_override()
+
+
+def test_pipeline_recommendations_disabled_when_feature_flag_off(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.delenv("FEATURE_PROACTIVE_COPILOT_ENABLED", raising=False)
+
+    resp = auth_client.get("/api/pipeline/recommendations")
+    assert resp.status_code == 503
+    assert "disabled" in str(resp.json().get("detail", "")).lower()
+    _clear_auth_override()
+
+
+def test_pipeline_recommendations_locked_when_entitlements_enabled(monkeypatch):
+    auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PROACTIVE_COPILOT_ENABLED", "true")
+    monkeypatch.setenv("FEATURE_PREMIUM_ENTITLEMENTS_ENABLED", "true")
+    monkeypatch.setenv("PREMIUM_DEFAULT_TIER", "free")
+
+    resp = auth_client.get("/api/pipeline/recommendations")
     assert resp.status_code == 403
     detail = resp.json().get("detail") or {}
     assert detail.get("error") == "feature_locked"
@@ -2402,6 +2940,7 @@ def test_pipeline_digest_to_thread_uses_local_session(monkeypatch):
 
 def test_pipeline_gap_analysis_to_thread_uses_local_session(monkeypatch):
     auth_client, _ = _make_auth_client()
+    monkeypatch.setenv("FEATURE_PROACTIVE_COPILOT_ENABLED", "true")
     captured: dict = {}
     request_db_ref: dict = {}
 
@@ -2586,4 +3125,5 @@ def test_concurrent_chat_and_pipeline_thread_sessions(monkeypatch):
 
     app.dependency_overrides[get_db] = _override_get_db
     _clear_auth_override()
+
 

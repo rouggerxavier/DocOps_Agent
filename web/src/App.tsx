@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Toaster } from 'sonner'
 import { useEffect } from 'react'
 import { AuthProvider, useAuth } from '@/auth/AuthProvider'
+import { AppErrorBoundary } from '@/components/errors/AppErrorBoundary'
 import { Layout } from '@/components/layout/Layout'
 import { CapabilitiesProvider } from '@/features/CapabilitiesProvider'
 import { Artifacts } from '@/pages/Artifacts'
@@ -77,25 +78,27 @@ export default function App() {
       <BrowserRouter>
         <AuthProvider>
           <TitleUpdater />
-          <Routes>
-            <Route path="/" element={<Landing />} />
-            <Route path="/login" element={<RedirectIfAuth><Login /></RedirectIfAuth>} />
-            <Route path="/register" element={<RedirectIfAuth><Register /></RedirectIfAuth>} />
-            <Route element={<RequireAuth><CapabilitiesProvider><Layout /></CapabilitiesProvider></RequireAuth>}>
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/ingest" element={<Ingest />} />
-              <Route path="/chat" element={<Chat />} />
-              <Route path="/docs" element={<Docs />} />
-              <Route path="/artifacts" element={<Artifacts />} />
-              <Route path="/schedule" element={<Schedule />} />
-              <Route path="/notes" element={<Notes />} />
-              <Route path="/tasks" element={<Tasks />} />
-              <Route path="/flashcards" element={<Flashcards />} />
-              <Route path="/studyplan" element={<StudyPlan />} />
-              <Route path="/settings" element={<Preferences />} />
-              <Route path="/kanban" element={<ReadingKanban />} />
-            </Route>
-          </Routes>
+          <AppErrorBoundary>
+            <Routes>
+              <Route path="/" element={<Landing />} />
+              <Route path="/login" element={<RedirectIfAuth><Login /></RedirectIfAuth>} />
+              <Route path="/register" element={<RedirectIfAuth><Register /></RedirectIfAuth>} />
+              <Route element={<RequireAuth><CapabilitiesProvider><Layout /></CapabilitiesProvider></RequireAuth>}>
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/ingest" element={<Ingest />} />
+                <Route path="/chat" element={<Chat />} />
+                <Route path="/docs" element={<Docs />} />
+                <Route path="/artifacts" element={<Artifacts />} />
+                <Route path="/schedule" element={<Schedule />} />
+                <Route path="/notes" element={<Notes />} />
+                <Route path="/tasks" element={<Tasks />} />
+                <Route path="/flashcards" element={<Flashcards />} />
+                <Route path="/studyplan" element={<StudyPlan />} />
+                <Route path="/settings" element={<Preferences />} />
+                <Route path="/kanban" element={<ReadingKanban />} />
+              </Route>
+            </Routes>
+          </AppErrorBoundary>
           <Toaster
             theme="dark"
             position="top-right"

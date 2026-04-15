@@ -2,6 +2,7 @@
 
 ## Snapshot
 Assessment based on the local `main` branch available in this workspace on April 13, 2026.
+Updated with implementation delta on April 15, 2026.
 
 Purpose:
 - Capture what the premium roadmap already preserves in `main`.
@@ -21,8 +22,6 @@ Related docs:
 - personalization and memory
 
 The largest remaining gaps in `main` are:
-- proactive copilot completion
-- frontend surface for gap analysis
 - rollout wiring for some premium feature flags
 - monetization and entitlement enforcement
 - upgrade and locked-state UX
@@ -125,21 +124,20 @@ Present in `main`:
 - daily question backend and dashboard surface
 - gap analysis backend endpoint
 - recommendation events for observability
+- ranked recommendation feed endpoint (`/api/pipeline/recommendations`)
+- one-click recommendation actions endpoint (`/api/pipeline/recommendations/actions`)
+- persisted recommendation controls (dismiss, snooze, mute-category) scoped by user
+- dashboard proactive panel consuming backend recommendation feed
+- proactive copilot gate wired by feature flag + entitlement across recommendation/daily question/gap/evaluation routes
 
 Examples:
 - `docops/api/routes/pipeline.py`
 - `web/src/pages/Dashboard.tsx`
 - `web/src/api/client.ts`
+- `docops/db/crud.py`
 
 Still incomplete in `main`:
-- recommendation cards driven by ranked learning signals
-- "continue where you stopped" surface
-- weak-topic review recommendations
-- recommended deep-summary surface
-- one-click recommendation actions
-- recommendation feedback loop in UI
-- snooze, mute and fatigue-control UX
-- "why this recommendation" microcopy
+- recommendation quality dashboards and continuous tuning outputs
 
 ### Feature Flag Rollout Wiring
 Status: partial
@@ -159,29 +157,30 @@ The flags are present as foundations, but some roadmap-controlled behaviors are 
 ## Exists In Backend But Still Needs Frontend Work
 
 ### Gap Analysis
-Status: backend present, frontend missing or not discoverable enough
+Status: backend + dashboard surface present
 
 Present in backend:
 - `/api/pipeline/gap-analysis`
 - start/completed/failed observability events
 - tests covering the endpoint
 
-Missing in product experience:
-- visible dashboard or study surface for running gap analysis
-- explanation of returned learning gaps
-- next-step actions from the result
-- connection between gap results and proactive recommendations
+Present in product experience:
+- dashboard panel for selecting docs and running the analysis
+- surfaced explanation of returned learning gaps and suggested actions
+- connection between gap analysis and proactive recommendation surface
 
 ### Recommendation Infrastructure
-Status: backend/event groundwork present, product layer incomplete
+Status: backend feed/actions live, product layer partial
 
 Present:
 - recommendation event taxonomy for daily question and gap analysis
+- ranked recommendation feed endpoint
+- recommendation action persistence with dismiss/snooze/mute controls
+- dashboard rendering with "why this recommendation" microcopy
+- dashboard feedback controls for `feedback_useful` and `feedback_not_useful`
 
 Missing:
-- ranked recommendation feed exposed as a primary user surface
-- recommendation action states such as dismiss, snooze and mute
-- recommendation feedback controls
+- recommendation performance dashboards by category and touchpoint
 
 ## Not Yet Implemented In Main
 
@@ -233,11 +232,10 @@ Likely already in good shape or substantially done:
 - most of `WP-E4-*`
 
 ## Recommended Next Implementation Order
-1. Add a real frontend surface for gap analysis and connect it to actionable study recommendations.
-2. Complete proactive copilot UX in dashboard and chat, including why-this, dismiss and snooze controls.
-3. Implement backend entitlement enforcement before any upgrade UX.
-4. Add locked states and upgrade prompts in the frontend after entitlement checks are real.
-5. Close analytics and internal docs gaps only after the user-facing flows above are stable.
+1. Close the loop on recommendation-quality tuning with performance dashboards and category-level metrics.
+2. Implement backend entitlement enforcement before any upgrade UX.
+3. Add locked states and upgrade prompts in the frontend after entitlement checks are real.
+4. Close analytics and internal docs gaps only after the user-facing flows above are stable.
 
 ## Practical Conclusion
 The premium branch should not be treated as the long-term base anymore.

@@ -36,6 +36,7 @@ class MeResponse(BaseModel):
     id: int
     name: str
     email: str
+    is_admin: bool = False
     created_at: datetime
 
 

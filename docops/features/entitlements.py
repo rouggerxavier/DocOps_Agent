@@ -8,7 +8,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from docops.features.flags import is_feature_enabled
+from docops.features.flags import is_feature_enabled, require_feature_enabled
 
 
 _ENTITLEMENTS_FLAG_KEY = "premium_entitlements_enabled"
@@ -224,4 +224,28 @@ def require_capability(
     raise HTTPException(
         status_code=status_code,
         detail=locked_feature_detail(capability_key, user, message=message),
+    )
+
+
+def require_feature_and_capability(
+    feature_key: str,
+    capability_key: str,
+    user: Any,
+    *,
+    feature_status_code: int = 503,
+    capability_status_code: int = 403,
+    feature_disabled_detail: str | None = None,
+    capability_message: str | None = None,
+) -> None:
+    """Standard backend-first premium guard for flagged + entitled features."""
+    require_feature_enabled(
+        feature_key,
+        status_code=feature_status_code,
+        detail=feature_disabled_detail,
+    )
+    require_capability(
+        capability_key,
+        user,
+        status_code=capability_status_code,
+        message=capability_message,
     )
