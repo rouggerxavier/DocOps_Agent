@@ -75,7 +75,7 @@ export function Sidebar({ mobileOpen, isDesktop, onMobileClose }: SidebarProps) 
         ref={sidebarRef}
         id="app-sidebar"
         className={cn(
-          'fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r app-divider bg-[color:var(--ui-bg)]/96 px-4 py-6 backdrop-blur transition-transform duration-200',
+          'fixed inset-y-0 left-0 z-40 flex w-72 flex-col border-r app-divider bg-[color:var(--ui-bg)]/96 px-4 py-6 backdrop-blur transition-transform duration-200',
           mobileOpen || isDesktop ? 'pointer-events-auto' : 'pointer-events-none',
           mobileOpen ? 'translate-x-0' : '-translate-x-full',
           'md:translate-x-0'
@@ -84,7 +84,7 @@ export function Sidebar({ mobileOpen, isDesktop, onMobileClose }: SidebarProps) 
       >
         <div className="mb-6 flex items-start gap-3 px-2">
           <div className="min-w-0">
-            <p className="font-headline text-2xl font-bold tracking-tight text-[color:var(--ui-accent)]">DocOps Agent</p>
+            <p className="font-headline text-[1.65rem] font-bold tracking-tight text-[color:var(--ui-accent)]">DocOps Agent</p>
           </div>
 
           <button
@@ -93,11 +93,11 @@ export function Sidebar({ mobileOpen, isDesktop, onMobileClose }: SidebarProps) 
             className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-lg border border-transparent text-[color:var(--ui-text-meta)] transition-colors hover:border-[color:var(--ui-border)] hover:bg-[color:var(--ui-surface-1)] hover:text-[color:var(--ui-text)] md:hidden"
             onClick={onMobileClose}
           >
-            <X className="h-4 w-4" />
+            <X className="h-5 w-5" />
           </button>
         </div>
 
-        <nav className="flex-1 space-y-1 overflow-y-auto px-1 py-2">
+        <nav className="flex-1 space-y-1.5 overflow-y-auto px-1 py-2">
           {links.map(({ to, label, icon: Icon, end, badge }) => (
             <NavLink
               key={to}
@@ -105,7 +105,7 @@ export function Sidebar({ mobileOpen, isDesktop, onMobileClose }: SidebarProps) 
               end={end}
               className={({ isActive }) =>
                 cn(
-                  'flex items-center gap-3 rounded-lg border border-transparent px-3 py-2.5 text-sm font-medium transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ui-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--ui-bg)]',
+                  'flex items-center gap-3.5 rounded-lg border border-transparent px-3.5 py-3 text-base font-semibold transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--ui-accent)] focus-visible:ring-offset-2 focus-visible:ring-offset-[color:var(--ui-bg)]',
                   isActive
                     ? 'border-r-2 border-r-[color:var(--ui-accent)] bg-[color:var(--ui-surface-2)] font-bold text-[color:var(--ui-accent)]'
                     : 'text-[color:var(--ui-text-dim)] hover:bg-[color:var(--ui-surface-2)] hover:text-[color:var(--ui-text)]'
@@ -113,10 +113,10 @@ export function Sidebar({ mobileOpen, isDesktop, onMobileClose }: SidebarProps) 
               }
               onClick={onMobileClose}
             >
-              <Icon className="h-4 w-4 shrink-0" />
+              <Icon className="h-6 w-6 shrink-0" />
               <span className="flex-1">{label}</span>
               {badge !== null && (
-                <span className="flex h-4 min-w-4 items-center justify-center rounded-full border border-[color:var(--ui-border-strong)] bg-[color:var(--ui-accent)] px-1 text-[10px] font-bold text-white">
+                <span className="flex h-5 min-w-5 items-center justify-center rounded-full border border-[color:var(--ui-border-strong)] bg-[color:var(--ui-accent)] px-1.5 text-xs font-bold text-white">
                   {badge}
                 </span>
               )}
@@ -128,10 +128,10 @@ export function Sidebar({ mobileOpen, isDesktop, onMobileClose }: SidebarProps) 
           <Button
             asChild
             size="sm"
-            className="h-10 w-full justify-center gap-1.5 rounded-lg border border-[color:var(--ui-accent)] bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)]"
+            className="h-11 w-full justify-center gap-2 rounded-lg border border-[color:var(--ui-accent)] bg-[color:var(--ui-accent)] text-sm font-semibold text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)]"
           >
             <NavLink to="/artifacts" onClick={onMobileClose}>
-              <Plus className="h-3.5 w-3.5" />
+              <Plus className="h-5 w-5" />
               Novo artefato
             </NavLink>
           </Button>
@@ -147,9 +147,9 @@ export function Sidebar({ mobileOpen, isDesktop, onMobileClose }: SidebarProps) 
 
           <button
             onClick={logout}
-            className="flex w-full items-center gap-2 rounded-lg border border-transparent px-3 py-2 text-xs font-medium text-[color:var(--ui-text-meta)] transition-colors hover:border-[#944747] hover:bg-[#8f3f3f]/15 hover:text-[#efb0b0]"
+            className="flex w-full items-center gap-2.5 rounded-lg border border-transparent px-3.5 py-2.5 text-sm font-semibold text-[color:var(--ui-text-meta)] transition-colors hover:border-[#944747] hover:bg-[#8f3f3f]/15 hover:text-[#efb0b0]"
           >
-            <LogOut className="h-3.5 w-3.5 shrink-0" />
+            <LogOut className="h-5 w-5 shrink-0" />
             Sair
           </button>
 

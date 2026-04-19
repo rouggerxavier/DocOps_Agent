@@ -1217,7 +1217,6 @@ export function Chat() {
     return loaded.length > 0 ? loaded[0].id : sessions[0]?.id ?? newSession().id
   })
   const [input, setInput] = useState('')
-  const [selectedDoc, setSelectedDoc] = useState('')
   const [selectedDocs, setSelectedDocs] = useState<DocItem[]>([])
   const [strictGrounding, setStrictGrounding] = useState(false)
   const [composerOverrides, setComposerOverrides] = useState<ComposerPreferenceOverrides>(() => emptyComposerOverrides())
@@ -1230,14 +1229,15 @@ export function Chat() {
     typeof window !== 'undefined' ? window.matchMedia('(max-width: 1023px)').matches : false
   ))
   const [mobileViewportInset, setMobileViewportInset] = useState(0)
-  const [showNewChatBubble, setShowNewChatBubble] = useState(true)
   const [mobileSourcesOpen, setMobileSourcesOpen] = useState(false)
   const [sessionSearch, setSessionSearch] = useState('')
-  const [filtersOpen, setFiltersOpen] = useState(false)
+  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
+  const [docPickerOpen, setDocPickerOpen] = useState(false)
   const [pendingFlashcardCommand, setPendingFlashcardCommand] = useState<FlashcardCommandPlan | null>(null)
   const [savingArtifactTurnRef, setSavingArtifactTurnRef] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const streamAbortRef = useRef<AbortController | null>(null)
+  const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
 
   const activeSession = sessions.find(s => s.id === activeSessionId) ?? sessions[0]
   const messages = activeSession?.messages ?? EMPTY_MESSAGES
@@ -1268,6 +1268,8 @@ export function Chat() {
     setSavingArtifactTurnRef(null)
     setComposerOverrides(emptyComposerOverrides())
     setMobileSourcesOpen(false)
+    setAttachmentMenuOpen(false)
+    setDocPickerOpen(false)
   }, [activeSessionId])
 
   useEffect(() => {
@@ -1318,21 +1320,22 @@ export function Chat() {
   }, [isMobile])
 
   useEffect(() => {
-    if (!isMobile) {
-      setShowNewChatBubble(false)
-      return
-    }
-    setShowNewChatBubble(true)
-    const timer = window.setTimeout(() => setShowNewChatBubble(false), 5000)
-    return () => window.clearTimeout(timer)
-  }, [isMobile])
-
-  useEffect(() => {
     if (!isMobile) return
     if (activeSources.length > 0) {
       setMobileSourcesOpen(true)
     }
   }, [activeSources, isMobile])
+
+  useEffect(() => {
+    const textarea = composerTextareaRef.current
+    if (!textarea) return
+
+    const maxHeight = isMobile ? 188 : 236
+    textarea.style.height = '0px'
+    const nextHeight = Math.min(textarea.scrollHeight, maxHeight)
+    textarea.style.height = `${nextHeight}px`
+    textarea.style.overflowY = textarea.scrollHeight > maxHeight ? 'auto' : 'hidden'
+  }, [input, isMobile, selectedDocs.length])
 
   const { data: docs } = useQuery<DocItem[]>({
     queryKey: ['docs'],
@@ -1384,6 +1387,45 @@ export function Chat() {
 
   function updateActiveContext(nextContext: ChatActiveContext) {
     updateSessionActiveContext(activeSessionId, nextContext)
+  }
+
+  function addDocToActiveContext(docToAdd: DocItem) {
+    if (selectedDocs.some(item => item.doc_id === docToAdd.doc_id)) {
+      setAttachmentMenuOpen(false)
+      setDocPickerOpen(false)
+      return
+    }
+
+    const nextDocs = [...selectedDocs, docToAdd]
+    setSelectedDocs(nextDocs)
+    updateActiveContext(normalizeActiveContext({
+      ...activeContext,
+      active_doc_ids: nextDocs.map(doc => doc.doc_id),
+      active_doc_names: nextDocs.map(doc => doc.file_name),
+    }))
+
+    if (pendingFlashcardCommand && pendingFlashcardCommand.docs.length === 0) {
+      const scopeLabel = `documento selecionado "${docToAdd.file_name}"`
+      setPendingFlashcardCommand({
+        ...pendingFlashcardCommand,
+        docs: [docToAdd],
+        scopeLabel,
+        summary: `Vou gerar ${pendingFlashcardCommand.numCards} flashcards para ${scopeLabel}.`,
+      })
+    }
+
+    setAttachmentMenuOpen(false)
+    setDocPickerOpen(false)
+  }
+
+  function removeDocFromActiveContext(docId: string) {
+    const nextDocs = selectedDocs.filter(item => item.doc_id !== docId)
+    setSelectedDocs(nextDocs)
+    updateActiveContext(normalizeActiveContext({
+      ...activeContext,
+      active_doc_ids: nextDocs.map(item => item.doc_id),
+      active_doc_names: nextDocs.map(item => item.file_name),
+    }))
   }
 
   function appendStreamingAssistantPlaceholder(
@@ -1916,8 +1958,9 @@ export function Chat() {
   function confirmFlashcardCommand() {
     if (!pendingFlashcardCommand) return
     if (pendingFlashcardCommand.docs.length === 0) {
-      // Open filters panel so user can select a document right here
-      setFiltersOpen(true)
+      // Open document picker so user can select a document right here
+      setAttachmentMenuOpen(false)
+      setDocPickerOpen(true)
       return
     }
 
@@ -2094,11 +2137,6 @@ export function Chat() {
   )
   const isPersonalizationLoading = isPersonalizationEnabled && preferencesQuery.isLoading
   const personalizationLoadFailed = isPersonalizationEnabled && preferencesQuery.isError
-  const strictGroundingFromPreferences = (
-    isPersonalizationEnabled
-    && resolvedComposerPreferences.strictness_preference === 'strict'
-    && isStrictGroundingEnabled
-  )
   const personalizationBannerText = !isPersonalizationEnabled
     ? ''
     : isPersonalizationLoading
@@ -2118,7 +2156,7 @@ export function Chat() {
 
   return (
     <div className={cn(
-      'relative flex h-[calc(100svh-3.5rem)] overflow-hidden bg-[color:var(--ui-surface)] md:h-[100dvh]',
+      'chat-no-glass relative flex h-[calc(100svh-3.5rem)] overflow-hidden bg-transparent md:h-[100dvh]',
       isMobile
         ? 'rounded-none shadow-none'
         : 'rounded-[1.4rem] shadow-[0_26px_70px_rgba(0,0,0,0.45)]',
@@ -2131,14 +2169,14 @@ export function Chat() {
               type="button"
               aria-label="Fechar conversas"
               onClick={() => setSidebarOpen(false)}
-              className="absolute inset-0 z-30 bg-black/45 backdrop-blur-[1px]"
+              className="absolute inset-0 z-30 bg-black/72 backdrop-blur-[2px]"
             />
           ) : null}
           <aside className={cn(
-            'z-40 flex flex-col bg-[color:var(--ui-surface)]',
+            'z-40 flex flex-col',
             isMobile
-              ? 'absolute inset-y-0 left-0 w-[88vw] max-w-[22rem] border-r border-[color:var(--ui-border-soft)]'
-              : 'w-[19rem] shrink-0',
+              ? 'absolute inset-y-0 left-0 w-[88vw] max-w-[22rem] border-r border-[color:var(--ui-border-soft)] bg-[#0b1119] shadow-[0_24px_54px_rgba(0,0,0,0.6)]'
+              : 'w-[19rem] shrink-0 bg-[color:var(--ui-surface)]',
           )}>
           <div className={cn(
             'border-b border-[color:var(--ui-border-soft)]',
@@ -2156,7 +2194,10 @@ export function Chat() {
                   createNewSession()
                   if (isMobile) setSidebarOpen(false)
                 }}
-                className="inline-flex h-9 w-9 items-center justify-center rounded-xl bg-[color:var(--ui-surface-2)] text-[color:var(--ui-accent)] transition-colors hover:bg-[color:var(--ui-surface-3)]"
+                className={cn(
+                  'inline-flex h-9 w-9 items-center justify-center rounded-xl text-[color:var(--ui-accent)] transition-colors',
+                  isMobile ? 'bg-[#1a2538] hover:bg-[#21304a]' : 'bg-[color:var(--ui-surface-2)] hover:bg-[color:var(--ui-surface-3)]',
+                )}
                 title="Nova conversa"
               >
                 <Plus className="h-4 w-4" />
@@ -2174,7 +2215,10 @@ export function Chat() {
                 value={sessionSearch}
                 onChange={event => setSessionSearch(event.target.value)}
                 placeholder="Buscar conversas..."
-                className="h-10 w-full rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)] pl-10 pr-3 text-sm text-[color:var(--ui-text)] outline-none transition-all placeholder:text-[color:var(--ui-text-meta)] focus:border-[color:var(--ui-accent)] focus:ring-2 focus:ring-[color:var(--ui-accent)]/20"
+                className={cn(
+                  'h-10 w-full rounded-xl border border-[color:var(--ui-border-soft)] pl-10 pr-3 text-sm text-[color:var(--ui-text)] outline-none transition-all placeholder:text-[color:var(--ui-text-meta)] focus:border-[color:var(--ui-accent)] focus:ring-2 focus:ring-[color:var(--ui-accent)]/20',
+                  isMobile ? 'bg-[#101a2a]' : 'bg-[color:var(--ui-surface-container-lowest)]',
+                )}
               />
             </div>
           </div>
@@ -2211,8 +2255,12 @@ export function Chat() {
                   className={cn(
                     'group cursor-pointer rounded-2xl p-4 transition-all duration-200',
                     isActive
-                      ? 'bg-[color:var(--ui-surface-container-low)] ring-1 ring-[color:var(--ui-accent)]/25'
-                      : 'bg-transparent hover:bg-[color:var(--ui-surface-container-low)]/60',
+                      ? (isMobile
+                        ? 'bg-[#172437] ring-1 ring-[color:var(--ui-accent)]/25'
+                        : 'bg-[color:var(--ui-surface-container-low)] ring-1 ring-[color:var(--ui-accent)]/25')
+                      : (isMobile
+                        ? 'bg-transparent hover:bg-[#152236]'
+                        : 'bg-transparent hover:bg-[color:var(--ui-surface-container-low)]/60'),
                   )}
                 >
                   <div className="mb-2 flex items-start justify-between gap-2">
@@ -2220,7 +2268,7 @@ export function Chat() {
                       'rounded-full px-2 py-0.5 text-[10px] font-semibold tracking-wide',
                       isActive
                         ? 'bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]'
-                        : 'bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
+                        : (isMobile ? 'bg-[#1a2538] text-[color:var(--ui-text-meta)]' : 'bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]'),
                     )}
                     >
                       {status}
@@ -2261,7 +2309,10 @@ export function Chat() {
               )
             })}
             {visibleSessions.length === 0 && (
-              <div className="rounded-2xl bg-[color:var(--ui-surface-container-low)] p-4 text-xs text-[color:var(--ui-text-meta)]">
+              <div className={cn(
+                'rounded-2xl p-4 text-xs text-[color:var(--ui-text-meta)]',
+                isMobile ? 'bg-[#152236]' : 'bg-[color:var(--ui-surface-container-low)]',
+              )}>
                 Nenhuma conversa encontrada para este filtro.
               </div>
             )}
@@ -2275,10 +2326,10 @@ export function Chat() {
       )}
 
       {/* ── Área principal ────────────────────────────────────────────────── */}
-      <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-[color:var(--ui-surface-container-lowest)]">
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden bg-transparent">
         {/* Header */}
         <div className={cn(
-          'flex items-center gap-3 border-b border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)]/90 backdrop-blur',
+          'flex items-center gap-3 border-b border-[color:var(--ui-border-soft)] bg-transparent',
           isMobile ? 'h-14 px-3' : 'h-16 px-6',
         )}>
           <button
@@ -2305,6 +2356,21 @@ export function Chat() {
               </p>
             </div>
           </div>
+          {isMobile ? (
+            <button
+              type="button"
+              onClick={() => {
+                createNewSession()
+                setSidebarOpen(false)
+              }}
+              className="inline-flex h-8 items-center justify-center gap-1 rounded-lg bg-[color:var(--ui-accent)] px-2.5 text-[11px] font-semibold text-[color:var(--ui-bg)] shadow-[0_14px_34px_-18px_rgba(59,130,246,0.68)]"
+              title="Criar nova conversa"
+              aria-label="Criar nova conversa"
+            >
+              <Plus className="h-3.5 w-3.5" />
+              Nova
+            </button>
+          ) : null}
           {!isMobile && messages.length > 0 && (
             <Badge
               variant="secondary"
@@ -2479,32 +2545,19 @@ export function Chat() {
 
         {/* Input area */}
         <div className={cn(
-          'border-t border-[color:var(--ui-border-soft)]',
+          'relative border-t border-[color:var(--ui-border-soft)]',
           isMobile
-            ? 'absolute inset-x-0 z-20 bg-[color:var(--ui-surface-container-lowest)]/95 px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2 backdrop-blur'
+            ? 'absolute inset-x-0 z-20 bg-transparent px-3 pb-[calc(0.5rem+env(safe-area-inset-bottom))] pt-2'
             : 'px-4 pb-4 pt-3 sm:px-6 sm:pb-5',
         )}
         style={isMobile ? { bottom: `${Math.max(6, mobileViewportInset)}px` } : undefined}>
           <div className="w-full">
             <div className={cn(
-              'border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-low)]/85 backdrop-blur',
+              'border border-[color:var(--ui-border-soft)] backdrop-blur',
               isMobile
-                ? 'rounded-[1.6rem] p-2 shadow-[0_14px_34px_rgba(0,0,0,0.34)]'
-                : 'rounded-2xl p-2 shadow-[0_18px_40px_rgba(0,0,0,0.28)]',
+                ? 'rounded-[1.6rem] bg-[linear-gradient(135deg,rgba(12,17,24,0.94)_0%,rgba(16,22,31,0.9)_65%,rgba(20,28,39,0.86)_100%)] p-1.5 shadow-[0_16px_34px_rgba(0,0,0,0.38)]'
+                : 'rounded-2xl bg-[color:var(--ui-surface-container-low)]/85 p-2 shadow-[0_18px_40px_rgba(0,0,0,0.28)]',
             )}>
-              <div className={cn('flex items-center', isMobile ? 'mb-1' : 'mb-2')}>
-                <button
-                  type="button"
-                  onClick={() => setFiltersOpen(v => !v)}
-                  className={cn(
-                    'inline-flex h-7 w-7 items-center justify-center rounded-lg text-[color:var(--ui-text-meta)] transition-colors hover:bg-[color:var(--ui-surface-2)] hover:text-[color:var(--ui-text)]',
-                    filtersOpen && 'bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]',
-                  )}
-                  title="Filtrar documentos"
-                >
-                  <Paperclip className="h-3.5 w-3.5" />
-                </button>
-              </div>
 
           {isPersonalizationEnabled && !isMobile && (
             <div className="space-y-2 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)]/80 p-3">
@@ -2599,136 +2652,171 @@ export function Chat() {
             </div>
           )}
 
-          {filtersOpen && (
-            <div className="space-y-2 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)]/80 p-3">
-              <div className="flex gap-2">
-                <select
-                  value={selectedDoc}
-                  onChange={e => setSelectedDoc(e.target.value)}
-                  disabled={flashcardBatchMut.isPending || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)}
-                  className="min-w-0 flex-1 rounded-lg border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)] px-3 py-2 text-sm font-medium text-[color:var(--ui-text)] outline-none transition-colors focus:border-[color:var(--ui-accent)]"
-                  style={{ colorScheme: 'dark' }}
-                >
-                  <option
-                    value=""
-                    style={{
-                      color: '#F3F1EB',
-                      backgroundColor: '#161C24',
-                    }}
-                  >
-                    Filtrar por documento (opcional)
-                  </option>
-                  {(docs ?? [])
-                    .filter(doc => !selectedDocs.some(item => item.doc_id === doc.doc_id))
-                    .map(doc => (
-                      <option
-                        key={doc.doc_id}
-                        value={doc.doc_id}
-                        style={{
-                          color: '#F3F1EB',
-                          backgroundColor: '#161C24',
-                        }}
-                      >
-                        {doc.file_name}
-                      </option>
-                    ))}
-                </select>
-                <Button
+          {attachmentMenuOpen && (
+            <>
+              <button
+                type="button"
+                className="fixed inset-0 z-30 bg-black/55 backdrop-blur-[1px]"
+                onClick={() => setAttachmentMenuOpen(false)}
+                aria-label="Fechar menu de anexo"
+              />
+              <div className="absolute bottom-full left-0 z-40 mb-2 w-[min(16.5rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-white/10 bg-[#2f3136] shadow-[0_22px_48px_rgba(0,0,0,0.58)]">
+                <button
                   type="button"
-                  variant="outline"
-                  size="sm"
-                  disabled={!selectedDoc || flashcardBatchMut.isPending || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)}
                   onClick={() => {
-                    const docToAdd = (docs ?? []).find(doc => doc.doc_id === selectedDoc)
-                    if (!docToAdd || selectedDocs.some(item => item.doc_id === docToAdd.doc_id)) return
-                    const nextDocs = [...selectedDocs, docToAdd]
-                    setSelectedDocs(nextDocs)
-                    updateActiveContext(normalizeActiveContext({
-                      ...activeContext,
-                      active_doc_ids: nextDocs.map(doc => doc.doc_id),
-                      active_doc_names: nextDocs.map(doc => doc.file_name),
-                    }))
-                    setSelectedDoc('')
-                    if (pendingFlashcardCommand && pendingFlashcardCommand.docs.length === 0) {
-                      const scopeLabel = `documento selecionado "${docToAdd.file_name}"`
-                      setPendingFlashcardCommand({
-                        ...pendingFlashcardCommand,
-                        docs: [docToAdd],
-                        scopeLabel,
-                        summary: `Vou gerar ${pendingFlashcardCommand.numCards} flashcards para ${scopeLabel}.`,
-                      })
-                    }
+                    setAttachmentMenuOpen(false)
+                    setDocPickerOpen(true)
                   }}
+                  className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm text-[#f1f3f5] transition-colors hover:bg-[#3a3d43]"
                 >
-                  Adicionar
-                </Button>
+                  <Paperclip className="h-4 w-4 text-[#d5d8de]" />
+                  <span className="flex-1 font-medium">Adicionar documento</span>
+                  <ChevronRight className="h-4 w-4 text-[#aab0bb]" />
+                </button>
               </div>
-              {selectedDocs.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {selectedDocs.map(doc => (
-                    <span
-                      key={doc.doc_id}
-                      className="inline-flex items-center gap-1 rounded-full border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] px-2.5 py-1 text-xs text-[color:var(--ui-text)]"
-                    >
-                      <FileText className="h-3 w-3 text-[color:var(--ui-text-meta)]" />
-                      {doc.file_name}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const nextDocs = selectedDocs.filter(item => item.doc_id !== doc.doc_id)
-                          setSelectedDocs(nextDocs)
-                          updateActiveContext(normalizeActiveContext({
-                            ...activeContext,
-                            active_doc_ids: nextDocs.map(item => item.doc_id),
-                            active_doc_names: nextDocs.map(item => item.file_name),
-                          }))
-                        }}
-                        className="text-[color:var(--ui-text-meta)] transition-colors hover:text-rose-300"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
+            </>
+          )}
+
+          {docPickerOpen && (
+            <>
+              <button
+                type="button"
+                className="fixed inset-0 z-30 bg-black/55 backdrop-blur-[1px]"
+                onClick={() => setDocPickerOpen(false)}
+                aria-label="Fechar seletor de documentos"
+              />
+              <div className="absolute bottom-full left-0 z-40 mb-2 w-[min(21rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-white/10 bg-[#2f3136] shadow-[0_22px_52px_rgba(0,0,0,0.62)]">
+                <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-[#3a3d43] text-[#d5d8de]">
+                    <FileText className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-[#f1f3f5]">Selecionar documento</p>
+                    <p className="text-[11px] text-[#aab0bb]">{(docs ?? []).length} arquivo(s) disponíveis</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setDocPickerOpen(false)}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#aab0bb] transition-colors hover:bg-[#3a3d43] hover:text-[#f1f3f5]"
+                    title="Fechar"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
                 </div>
-              )}
-              <label className="flex cursor-pointer items-center gap-2 text-xs text-[color:var(--ui-text-meta)]">
-                <input
-                  type="checkbox"
-                  checked={strictGrounding}
-                  onChange={e => setStrictGrounding(e.target.checked)}
-                  disabled={
-                    !isStrictGroundingEnabled
-                    || flashcardBatchMut.isPending
-                    || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)
-                  }
-                  className="accent-[color:var(--ui-accent)]"
-                />
-                Modo strict grounding (respostas so com evidencia forte)
-              </label>
-              {isStrictGroundingEnabled && strictGroundingFromPreferences && !strictGrounding && (
-                <p className="text-[11px] text-[color:var(--ui-text-meta)]">
-                  Strict grounding desta mensagem esta ativo por preferencia de rigor.
-                </p>
-              )}
-              {!isStrictGroundingEnabled && (
-                <p className="text-[11px] text-[color:var(--ui-text-meta)]">
-                  Strict grounding esta desativado por configuracao do workspace.
-                </p>
-              )}
+
+                <div className={cn('overflow-y-auto', isMobile ? 'max-h-[34svh]' : 'max-h-72')}>
+                  {!docs || docs.length === 0 ? (
+                    <div className="px-4 py-5 text-sm text-[#aab0bb]">
+                      Nenhum arquivo indexado ainda. Envie documentos em <b>Inserção</b>.
+                    </div>
+                  ) : (
+                    <div className="divide-y divide-white/10">
+                      {docs.map(doc => {
+                        const alreadySelected = selectedDocs.some(item => item.doc_id === doc.doc_id)
+                        return (
+                          <button
+                            key={doc.doc_id}
+                            type="button"
+                            onClick={() => addDocToActiveContext(doc)}
+                            disabled={alreadySelected || isComposerBlocked}
+                            className={cn(
+                              'flex w-full items-center gap-3 px-4 py-3 text-left transition-colors',
+                              alreadySelected ? 'cursor-default bg-[#3a3d43]/75' : 'hover:bg-[#3a3d43]/75',
+                              isComposerBlocked && !alreadySelected && 'opacity-50',
+                            )}
+                          >
+                            <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#3a3d43] text-[#c7ccd5]">
+                              <FileText className="h-4 w-4" />
+                            </span>
+                            <span className="min-w-0 flex-1 truncate text-sm text-[#f1f3f5]">{doc.file_name}</span>
+                            {alreadySelected && (
+                              <span className="rounded-full border border-[#7aa8ff55] bg-[#7aa8ff1f] px-2 py-0.5 text-[10px] font-medium text-[#b9d2ff]">
+                                Adicionado
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-white/10 px-4 py-3">
+                  <label className="flex cursor-pointer items-center gap-2 text-xs text-[#c0c6d0]">
+                    <input
+                      type="checkbox"
+                      checked={strictGrounding}
+                      onChange={e => setStrictGrounding(e.target.checked)}
+                      disabled={isComposerBlocked || !isStrictGroundingEnabled}
+                      className="accent-[color:var(--ui-accent)]"
+                    />
+                    Modo strict grounding (respostas so com evidencia forte)
+                  </label>
+                </div>
+              </div>
+            </>
+          )}
+
+          {selectedDocs.length > 0 && (
+            <div className="mb-2 flex flex-wrap gap-1.5">
+              {selectedDocs.map(doc => (
+                <span
+                  key={doc.doc_id}
+                  className="inline-flex items-center gap-1 rounded-full border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] px-2 py-0.5 text-[11px] text-[color:var(--ui-text-dim)]"
+                >
+                  <FileText className="h-3 w-3 text-[color:var(--ui-text-meta)]" />
+                  <span className="max-w-[11rem] truncate">{doc.file_name}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeDocFromActiveContext(doc.doc_id)}
+                    className="text-[color:var(--ui-text-meta)] transition-colors hover:text-rose-300"
+                    title="Remover arquivo"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </span>
+              ))}
             </div>
           )}
 
-          <div className={cn('flex items-end gap-2', isMobile && 'items-center')}>
+          <div
+            className={cn(
+              'flex gap-2',
+              isMobile
+                ? 'items-end rounded-[1.15rem] border border-[color:var(--ui-border-soft)]/85 bg-[color:var(--ui-surface-container-lowest)]/90 px-1.5 py-1'
+                : 'items-end',
+            )}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setDocPickerOpen(false)
+                setAttachmentMenuOpen(v => !v)
+              }}
+              className={cn(
+                'inline-flex shrink-0 items-center justify-center rounded-full text-[color:var(--ui-text-meta)] transition-colors hover:text-[color:var(--ui-text)]',
+                isMobile
+                  ? 'h-8 w-8 border border-transparent hover:bg-[color:var(--ui-surface-2)]'
+                  : 'h-7 w-7 rounded-lg hover:bg-[color:var(--ui-surface-2)]',
+                (attachmentMenuOpen || docPickerOpen) && 'bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]',
+              )}
+              title="Filtrar documentos"
+            >
+              <Paperclip className="h-3.5 w-3.5" />
+            </button>
             <textarea
-              placeholder="Pergunte sobre seus documentos ou crie um lembrete..."
+              ref={composerTextareaRef}
+              placeholder="Pergunte ao agente..."
               value={input}
               rows={1}
               onChange={event => setInput(event.target.value)}
               onKeyDown={handleKeyDown}
               disabled={isComposerBlocked}
               className={cn(
-                'max-h-36 flex-1 resize-none border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)] text-sm text-[color:var(--ui-text)] outline-none transition-colors placeholder:text-[color:var(--ui-text-meta)] focus:border-[color:var(--ui-accent)] focus:ring-2 focus:ring-[color:var(--ui-accent)]/20',
-                isMobile ? 'min-h-[42px] rounded-2xl px-3 py-2' : 'min-h-[44px] rounded-xl px-3 py-2',
+                'flex-1 resize-none overflow-y-hidden text-sm text-[color:var(--ui-text)] outline-none transition-colors placeholder:text-[color:var(--ui-text-meta)]',
+                isMobile
+                  ? 'min-h-[34px] rounded-xl border-0 bg-transparent px-1.5 py-1.5 text-[13px] leading-5 focus:ring-0'
+                  : 'min-h-[44px] rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)] px-3 py-2 focus:border-[color:var(--ui-accent)] focus:ring-2 focus:ring-[color:var(--ui-accent)]/20',
               )}
             />
             <Button
@@ -2736,8 +2824,9 @@ export function Chat() {
               disabled={!isChatRequestActive && (!input.trim() || isComposerBlocked)}
               size="icon"
               className={cn(
-                'bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)]',
-                isMobile ? 'h-10 w-10 rounded-full' : 'h-11 w-11 rounded-xl',
+                isMobile
+                  ? 'h-9 w-9 rounded-full border border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text)] hover:bg-[color:var(--ui-accent-soft)] hover:text-[color:var(--ui-accent)]'
+                  : 'h-11 w-11 rounded-xl bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)]',
               )}
               title={isChatRequestActive ? 'Pausar geracao' : 'Enviar mensagem'}
             >
@@ -2817,39 +2906,6 @@ export function Chat() {
         </>
       )}
 
-      {isMobile ? (
-        <div
-          className="pointer-events-none absolute right-4 z-30 flex flex-col items-end gap-2"
-          style={{ bottom: `${96 + mobileViewportInset}px` }}
-        >
-          {showNewChatBubble ? (
-            <button
-              type="button"
-              onClick={() => {
-                createNewSession()
-                setShowNewChatBubble(false)
-                setSidebarOpen(false)
-              }}
-              className="pointer-events-auto rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface)] px-3 py-2 text-xs font-medium text-[color:var(--ui-text)] shadow-[0_16px_34px_-20px_rgba(0,0,0,0.7)]"
-            >
-              Novo chat
-            </button>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => {
-              createNewSession()
-              setShowNewChatBubble(false)
-              setSidebarOpen(false)
-            }}
-            className="pointer-events-auto inline-flex h-12 w-12 items-center justify-center rounded-full bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)] shadow-[0_18px_42px_-14px_rgba(59,130,246,0.65)]"
-            title="Criar nova conversa"
-            aria-label="Criar nova conversa"
-          >
-            <Plus className="h-5 w-5" />
-          </button>
-        </div>
-      ) : null}
     </div>
   )
 }

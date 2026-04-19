@@ -20,6 +20,7 @@ import { Schedule } from '@/pages/Schedule'
 import { Preferences } from '@/pages/Preferences'
 import { StudyPlan } from '@/pages/StudyPlan'
 import { Tasks } from '@/pages/Tasks'
+import { MobileMenu } from '@/pages/MobileMenu'
 
 const PAGE_TITLES: Record<string, string> = {
   '/': 'DocOps Agent',
@@ -33,6 +34,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/tasks': 'Tarefas',
   '/flashcards': 'Flashcards',
   '/studyplan': 'Plano de Estudos',
+  '/more': 'Menu',
   '/settings': 'Configurações',
   '/kanban': 'Kanban de Leitura',
   '/login': 'Login',
@@ -92,6 +94,7 @@ export default function App() {
               <Route path="/tasks" element={<Tasks />} />
               <Route path="/flashcards" element={<Flashcards />} />
               <Route path="/studyplan" element={<StudyPlan />} />
+              <Route path="/more" element={<MobileMenu />} />
               <Route path="/settings" element={<Preferences />} />
               <Route path="/kanban" element={<ReadingKanban />} />
             </Route>
