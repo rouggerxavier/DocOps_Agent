@@ -579,7 +579,7 @@ export function MobileCalendario() {
   const monthLabel = `${MONTH_NAMES[weekStart.getMonth()]} ${weekStart.getFullYear()}`
 
   const selectedWeekday = useMemo(() => {
-    const js = selectedDateObj.getDay()
+    const js = new Date(`${selectedKey}T00:00:00`).getDay()
     return js === 0 ? 6 : js - 1
   }, [selectedKey])
 

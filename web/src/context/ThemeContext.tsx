@@ -25,11 +25,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     document.documentElement.setAttribute('data-theme', theme)
   }, [theme])
 
-  // Apply on first mount
-  useEffect(() => {
-    document.documentElement.setAttribute('data-theme', theme)
-  }, [])
-
   const setTheme = (t: AppTheme) => setThemeState(t)
   const toggleTheme = () => setThemeState(t => (t === 'dark' ? 'light' : 'dark'))
 
