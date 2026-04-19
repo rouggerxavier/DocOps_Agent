@@ -284,7 +284,7 @@ export function MobileDashboard() {
     queryFn: () => apiClient.getCalendarOverview(),
     retry: 1,
   })
-  const { data: briefing, isLoading: briefingLoading, refetch: refetchBriefing } = useQuery<BriefingResponse>({
+  const { data: briefing, refetch: refetchBriefing } = useQuery<BriefingResponse>({
     queryKey: ['briefing'],
     queryFn: apiClient.getBriefing,
     staleTime: 60_000,

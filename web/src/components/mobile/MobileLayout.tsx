@@ -31,9 +31,6 @@ const PRIMARY_TABS = [
 const CALENDARIO_PATHS = ['/studyplan', '/schedule', '/tasks']
 
 // ── FAB config per route ─────────────────────────────────────────────────────
-type FabAction = { icon: 'plus' | 'flame'; label: string; onPress: () => void }
-type FabConfig = { primary: FabAction; secondary?: FabAction }
-
 // ── Mobile header ─────────────────────────────────────────────────────────────
 const ROUTE_TITLES: Record<string, string> = {
   '/dashboard':  'Hoje',
@@ -66,11 +63,6 @@ export function MobileLayout({ children }: { children: React.ReactNode }) {
   const isPrimary = PRIMARY_PATHS.has(pathname) || CALENDARIO_PATHS.includes(pathname)
   const isSecondary = !isPrimary
 
-  const activeTab = PRIMARY_TABS.find(t =>
-    t.path === pathname ||
-    (t.path === '/studyplan' && CALENDARIO_PATHS.includes(pathname))
-  )?.path ?? ''
-
   function activeFor(tabPath: string) {
     if (tabPath === '/studyplan') return CALENDARIO_PATHS.includes(pathname) || pathname === '/studyplan'
     return pathname === tabPath
@@ -82,7 +74,6 @@ export function MobileLayout({ children }: { children: React.ReactNode }) {
   const accent = 'var(--ui-accent)'
   const text = 'var(--ui-text)'
   const textDim = 'var(--ui-text-dim)'
-  const textMeta = 'var(--ui-text-meta)'
 
   return (
     <div
@@ -279,7 +270,6 @@ export function MobileLayout({ children }: { children: React.ReactNode }) {
         navigate={navigate}
         fabOpen={fabOpen}
         setFabOpen={setFabOpen}
-        routineOpen={routineOpen}
         setRoutineOpen={setRoutineOpen}
       />
 
@@ -303,7 +293,6 @@ function FabButton({
   navigate: (to: string) => void
   fabOpen: boolean
   setFabOpen: (v: boolean) => void
-  routineOpen: boolean
   setRoutineOpen: (v: boolean) => void
 }) {
   const accent = 'var(--ui-accent)'
@@ -425,7 +414,7 @@ function FabButton({
         </div>
       )}
       <button
-        onClick={() => setFabOpen(v => !v)}
+        onClick={() => setFabOpen(!fabOpen)}
         aria-label="Ações"
         style={{
           position: 'absolute',
@@ -620,4 +609,3 @@ function RoutinePopup({ onClose }: { onClose: () => void }) {
     </>
   )
 }
-
