@@ -58,7 +58,7 @@ export function Layout() {
         {isFullHeight ? (
           <Outlet />
         ) : (
-          <div className="relative z-10 mx-auto w-full max-w-7xl px-4 py-4 md:px-8 md:py-8">
+          <div className="mx-auto w-full max-w-7xl px-4 py-4 md:px-8 md:py-8">
             <Outlet />
           </div>
         )}
