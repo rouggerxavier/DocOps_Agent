@@ -17,7 +17,6 @@ import {
   X,
 } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
-import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/auth/AuthProvider'
 import { apiClient, type CalendarOverview } from '@/api/client'
