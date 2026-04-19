@@ -11,7 +11,6 @@ import {
   ListTodo,
   LogOut,
   MessageSquare,
-  Plus,
   Settings2,
   StickyNote,
   Upload,
@@ -125,17 +124,6 @@ export function Sidebar({ mobileOpen, isDesktop, onMobileClose }: SidebarProps) 
         </nav>
 
         <div className="space-y-2 border-t app-divider px-2 pt-4">
-          <Button
-            asChild
-            size="sm"
-            className="h-11 w-full justify-center gap-2 rounded-lg border border-[color:var(--ui-accent)] bg-[color:var(--ui-accent)] text-sm font-semibold text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)]"
-          >
-            <NavLink to="/artifacts" onClick={onMobileClose}>
-              <Plus className="h-5 w-5" />
-              Novo artefato
-            </NavLink>
-          </Button>
-
           {user && (
             <div className="mb-2 min-w-0 px-1">
               <p className="truncate text-xs font-medium text-[color:var(--ui-text-dim)]">{user.name}</p>

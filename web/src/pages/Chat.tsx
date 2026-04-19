@@ -2784,7 +2784,7 @@ export function Chat() {
               'flex gap-2',
               isMobile
                 ? 'items-end rounded-[1.15rem] border border-[color:var(--ui-border-soft)]/85 bg-[color:var(--ui-surface-container-lowest)]/90 px-1.5 py-1'
-                : 'items-end',
+                : 'items-center',
             )}
           >
             <button
