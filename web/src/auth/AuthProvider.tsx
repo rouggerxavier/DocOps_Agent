@@ -85,7 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     )
     return () => api.interceptors.response.eject(id)
-  }, [])
+  }, [queryClient])
 
   const login = useCallback(async (email: string, password: string) => {
     const resp = await api.post<{ access_token: string; token_type: string }>(

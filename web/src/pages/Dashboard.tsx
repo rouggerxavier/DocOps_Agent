@@ -12,7 +12,6 @@ import {
   Layers,
   MessageSquare,
   NotebookPen,
-  RefreshCw,
   ScrollText,
   Sparkles,
 } from 'lucide-react'
@@ -54,16 +53,18 @@ const SCORE_LABEL: Record<string, string> = {
 function SurfaceCard({
   children,
   className,
+  contentClassName,
 }: {
   children: ReactNode
   className?: string
+  contentClassName?: string
 }) {
   return (
     <Card className={cn(
       'rounded-[1.15rem] border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] shadow-none',
       className,
     )}>
-      <CardContent className="p-4 sm:p-5">{children}</CardContent>
+      <CardContent className={cn('p-4 sm:p-5', contentClassName)}>{children}</CardContent>
     </Card>
   )
 }
@@ -92,19 +93,19 @@ function MetricCard({
   }
 
   return (
-    <SurfaceCard className={cn('h-full bg-[color:var(--ui-surface-2)]', className)}>
-      <div className="mb-4 flex items-start justify-between gap-4 sm:mb-5">
-        <div className={cn('flex h-10 w-10 items-center justify-center rounded-xl sm:h-11 sm:w-11', toneMap[tone])}>
-          <Icon className="h-5 w-5" />
+    <SurfaceCard className={cn('h-full bg-[color:var(--ui-surface-2)]', className)} contentClassName="p-3 sm:p-5">
+      <div className="mb-2 flex items-start justify-between gap-2 sm:mb-5 sm:gap-4">
+        <div className={cn('flex h-8 w-8 items-center justify-center rounded-lg sm:h-11 sm:w-11 sm:rounded-xl', toneMap[tone])}>
+          <Icon className="h-4 w-4 sm:h-5 sm:w-5" />
         </div>
       </div>
-      <p className="text-[10px] uppercase tracking-[0.14em] text-[color:var(--ui-text-meta)] sm:text-[11px] sm:tracking-[0.16em]">{title}</p>
+      <p className="text-[9px] uppercase tracking-[0.12em] text-[color:var(--ui-text-meta)] sm:text-[11px] sm:tracking-[0.16em]">{title}</p>
       {loading ? (
-        <Skeleton className="mt-2 h-7 w-16 rounded-md sm:h-8 sm:w-20" />
+        <Skeleton className="mt-1.5 h-6 w-12 rounded-md sm:mt-2 sm:h-8 sm:w-20" />
       ) : (
-        <p className="mt-2 font-headline text-3xl font-bold leading-none text-[color:var(--ui-text)] sm:text-4xl">{value}</p>
+        <p className="mt-1.5 font-headline text-[2.05rem] font-bold leading-none text-[color:var(--ui-text)] sm:mt-2 sm:text-4xl">{value}</p>
       )}
-      <p className="mt-2 text-[11px] text-[color:var(--ui-text-dim)] sm:mt-3 sm:text-xs">{description}</p>
+      <p className="mt-1 text-[10px] leading-snug text-[color:var(--ui-text-dim)] sm:mt-3 sm:text-xs">{description}</p>
     </SurfaceCard>
   )
 }
@@ -309,7 +310,6 @@ function DailyQuestionPanel({
 export function Dashboard() {
   const { user } = useAuth()
   const [now, setNow] = useState(() => new Date())
-  const [isSyncing, setIsSyncing] = useState(false)
   const [isMobile, setIsMobile] = useState(() =>
     typeof window !== 'undefined' ? window.matchMedia('(max-width: 639px)').matches : false,
   )
@@ -329,7 +329,6 @@ export function Dashboard() {
   const {
     data: calendar,
     isLoading: isCalendarLoading,
-    refetch: refetchCalendar,
   } = useQuery<CalendarOverview>({
     queryKey: ['calendar-overview', 'today'],
     queryFn: () => apiClient.getCalendarOverview(),
@@ -339,7 +338,6 @@ export function Dashboard() {
   const {
     data: briefing,
     isLoading: isBriefingLoading,
-    refetch: refetchBriefing,
   } = useQuery<BriefingResponse>({
     queryKey: ['briefing'],
     queryFn: apiClient.getBriefing,
@@ -381,7 +379,6 @@ export function Dashboard() {
   const todayLabel = now.toLocaleDateString('pt-BR', { weekday: 'long', day: '2-digit', month: 'long' })
   const currentTimeLabel = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   const greeting = briefing?.greeting ?? 'Boa noite'
-  const apiStatusLabel = docsError ? 'API offline' : 'API online'
 
   const overdueCount = briefing?.overdue_tasks.length ?? 0
   const heroSignalText = overdueCount
@@ -396,70 +393,18 @@ export function Dashboard() {
   const schedulePreviewCount = isMobile ? 2 : 4
   const remindersPreviewCount = isMobile ? 2 : 4
 
-  const liveMomentLabel = calendar?.current_schedule_item
-    ? `Agora: ${calendar.current_schedule_item.title} (${calendar.current_schedule_item.start_time} às ${calendar.current_schedule_item.end_time})`
-    : calendar?.next_schedule_item
-      ? `Próxima atividade: ${calendar.next_schedule_item.title} às ${calendar.next_schedule_item.start_time}`
-      : todayReminders[0]
-        ? `Próximo lembrete: ${todayReminders[0].title}`
-        : 'Sem atividade ativa neste momento.'
-
-  async function handleSyncNow() {
-    if (isSyncing) return
-    setIsSyncing(true)
-    try {
-      await Promise.all([refetchBriefing(), refetchCalendar()])
-    } finally {
-      setIsSyncing(false)
-    }
-  }
-
   return (
-    <PageShell className="space-y-5 pb-20 sm:space-y-6 md:pb-0">
-      <section className="relative overflow-hidden rounded-[1.25rem] border border-[color:var(--ui-border-soft)] bg-[linear-gradient(120deg,rgba(15,20,28,0.98)_0%,rgba(19,26,36,0.95)_58%,rgba(27,36,48,0.88)_100%)] p-4 sm:rounded-[1.5rem] sm:p-8">
-        <div className="pointer-events-none absolute -top-20 right-8 h-52 w-52 rounded-full bg-[color:var(--ui-accent-soft)] blur-3xl" />
-        <div className="pointer-events-none absolute bottom-0 left-0 h-24 w-full bg-[linear-gradient(180deg,transparent_0%,rgba(0,0,0,0.18)_100%)]" />
-
-        <div className="relative z-10 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.14em] text-[color:var(--ui-text-meta)] sm:text-[11px] sm:tracking-[0.18em]">{todayLabel} - {currentTimeLabel}</p>
-            <h1 className="mt-2 font-headline text-3xl font-extrabold tracking-tight text-[color:var(--ui-text)] sm:text-4xl">
-              {greeting}, {firstName}.
-            </h1>
-            <p className="mt-2 max-w-xl text-xs text-[color:var(--ui-text-dim)] sm:text-sm">
-              Painel operacional com foco em contexto, ritmo diário e consolidação dos seus artefatos.
-            </p>
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <span className="inline-flex items-center gap-2 rounded-full bg-[color:var(--ui-surface-3)] px-3 py-1 text-xs font-medium text-[color:var(--ui-text-dim)]">
-                <span className={cn('h-1.5 w-1.5 rounded-full', docsError ? 'bg-rose-400' : 'bg-emerald-400')} />
-                {apiStatusLabel}
-              </span>
-              <span className="text-[11px] text-[color:var(--ui-text-meta)] sm:text-xs">{heroSignalText}</span>
-            </div>
-          </div>
-
-          <div className="w-full rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] px-3 py-3 sm:w-auto sm:rounded-2xl sm:px-4">
-            <div className="space-y-2">
-              <p className="text-[10px] uppercase tracking-[0.12em] text-[color:var(--ui-text-meta)] sm:text-[11px] sm:tracking-[0.14em]">Agora no workspace</p>
-              {isBriefingLoading || isCalendarLoading ? (
-                <Skeleton className="h-7 w-56 rounded-md" />
-              ) : (
-                <p className="text-xs font-medium text-[color:var(--ui-text)] sm:text-sm">{liveMomentLabel}</p>
-              )}
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={handleSyncNow}
-                disabled={isSyncing}
-                className="h-8 w-full gap-1 px-2 text-xs sm:w-auto"
-              >
-                <RefreshCw className={cn('h-3.5 w-3.5', isSyncing && 'animate-spin')} />
-                {isSyncing ? 'Atualizando...' : 'Atualizar agora'}
-              </Button>
-            </div>
-          </div>
-        </div>
+    <PageShell className="space-y-4 pb-20 sm:space-y-6 md:pb-0">
+      <section className="px-1 py-1 sm:px-0">
+        <p className="text-[10px] uppercase tracking-[0.14em] text-[color:var(--ui-text-meta)] sm:text-[11px] sm:tracking-[0.18em]">
+          {todayLabel} - {currentTimeLabel}
+        </p>
+        <h1 className="mt-2 font-headline text-3xl font-extrabold tracking-tight text-[color:var(--ui-text)] sm:text-4xl">
+          {greeting}, {firstName}.
+        </h1>
+        <p className="mt-2 max-w-xl text-xs text-[color:var(--ui-text-dim)] sm:text-sm">
+          {heroSignalText}
+        </p>
       </section>
 
       {docsError ? (
@@ -469,89 +414,90 @@ export function Dashboard() {
         </div>
       ) : null}
 
-      <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
-        <MetricCard
-          title="Documentos"
-          value={docs?.length ?? 0}
-          icon={FileText}
-          description="Base indexada para consulta"
-          loading={isDocsLoading}
-          tone="primary"
-        />
-        <MetricCard
-          title="Artefatos"
-          value={artifacts?.length ?? 0}
-          icon={ScrollText}
-          description="Resumos, checklists e saídas"
-          loading={isArtifactsLoading}
-          tone="tertiary"
-        />
-        <MetricCard
-          className="col-span-2 xl:col-span-1"
-          title="Lembretes hoje"
-          value={todayReminders.length}
-          icon={CalendarClock}
-          description="Itens de calendário para executar"
-          loading={isCalendarLoading}
-          tone={todayReminders.length ? 'primary' : 'neutral'}
-        />
-      </div>
-
-      <div className="grid gap-4 sm:gap-6 xl:grid-cols-[minmax(0,1fr)_330px]">
-        <div className="space-y-6">
-          <DailyQuestionPanel data={dailyQuestion} loading={isDailyQuestionLoading} compact={isMobile} />
-
-          <SurfaceCard className="overflow-hidden bg-[color:var(--ui-surface-2)] p-0">
-            <div className="flex items-center justify-between px-4 py-4 sm:px-5">
-              <h2 className="font-headline text-lg font-bold text-[color:var(--ui-text)] sm:text-xl">Documentos recentes</h2>
-              {hasDocuments ? (
-                <Button variant="ghost" size="sm" asChild className="h-8 px-2 text-xs text-[color:var(--ui-accent)]">
-                  <Link to="/docs">
-                    Ver todos
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  </Link>
-                </Button>
-              ) : null}
-            </div>
-
-            {isDocsLoading ? (
-              <div className="space-y-2 px-4 pb-4 sm:px-5 sm:pb-5">
-                {[1, 2, 3].map((item) => (
-                  <Skeleton key={item} className="h-16 w-full rounded-xl" />
-                ))}
-              </div>
-            ) : null}
-
-            {!isDocsLoading && !hasDocuments ? (
-              <div className="px-4 pb-4 sm:px-5 sm:pb-5">
-                <OnboardingSteps />
-              </div>
-            ) : null}
-
-            {hasDocuments ? (
-              <div className="space-y-2 px-4 pb-4 sm:px-5 sm:pb-5">
-                {docs.slice(0, docsPreviewCount).map((doc) => (
-                  <div
-                    key={doc.doc_id}
-                    className="group flex items-center gap-3 rounded-xl bg-[color:var(--ui-surface-1)] px-3 py-3 transition-colors hover:bg-[color:var(--ui-surface-3)] sm:gap-4 sm:px-4"
-                  >
-                    <div className="min-w-0 flex w-full items-center gap-3">
-                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[color:var(--ui-accent-soft)]">
-                        <FileText className="h-4 w-4 text-[color:var(--ui-accent)]" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-semibold text-[color:var(--ui-text)] sm:text-sm">{doc.file_name}</p>
-                        <p className="hidden text-[11px] text-[color:var(--ui-text-meta)] sm:block">Fonte: {doc.source || 'local'}</p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </SurfaceCard>
+      <div className="mx-auto w-full max-w-[30rem] space-y-4 sm:max-w-none sm:space-y-6">
+        <div className="grid grid-cols-3 gap-2 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
+          <MetricCard
+            title="Documentos"
+            value={docs?.length ?? 0}
+            icon={FileText}
+            description="Base indexada para consulta"
+            loading={isDocsLoading}
+            tone="primary"
+          />
+          <MetricCard
+            title="Artefatos"
+            value={artifacts?.length ?? 0}
+            icon={ScrollText}
+            description="Resumos, checklists e saídas"
+            loading={isArtifactsLoading}
+            tone="tertiary"
+          />
+          <MetricCard
+            className="sm:col-span-2 xl:col-span-1"
+            title="Lembretes hoje"
+            value={todayReminders.length}
+            icon={CalendarClock}
+            description="Itens de calendário para executar"
+            loading={isCalendarLoading}
+            tone={todayReminders.length ? 'primary' : 'neutral'}
+          />
         </div>
 
-        <aside className="space-y-4 sm:space-y-6">
+        <div className="grid gap-4 sm:gap-6 xl:grid-cols-[minmax(0,1fr)_330px]">
+          <div className="space-y-4 sm:space-y-6">
+            <DailyQuestionPanel data={dailyQuestion} loading={isDailyQuestionLoading} compact={isMobile} />
+
+            <SurfaceCard className="overflow-hidden bg-[color:var(--ui-surface-2)] p-0" contentClassName="p-0">
+              <div className="flex items-center justify-between px-4 py-4 sm:px-5">
+                <h2 className="font-headline text-lg font-bold text-[color:var(--ui-text)] sm:text-xl">Documentos recentes</h2>
+                {hasDocuments ? (
+                  <Button variant="ghost" size="sm" asChild className="h-8 px-2 text-xs text-[color:var(--ui-accent)]">
+                    <Link to="/docs">
+                      Ver todos
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Link>
+                  </Button>
+                ) : null}
+              </div>
+
+              {isDocsLoading ? (
+                <div className="space-y-2 px-4 pb-4 sm:px-5 sm:pb-5">
+                  {[1, 2, 3].map((item) => (
+                    <Skeleton key={item} className="h-16 w-full rounded-xl" />
+                  ))}
+                </div>
+              ) : null}
+
+              {!isDocsLoading && !hasDocuments ? (
+                <div className="px-4 pb-4 sm:px-5 sm:pb-5">
+                  <OnboardingSteps />
+                </div>
+              ) : null}
+
+              {hasDocuments ? (
+                <div className="space-y-2 px-4 pb-4 sm:px-5 sm:pb-5">
+                  {docs.slice(0, docsPreviewCount).map((doc) => (
+                    <div
+                      key={doc.doc_id}
+                      className="group flex items-center gap-3 rounded-xl bg-[color:var(--ui-surface-1)] px-3 py-3 transition-colors hover:bg-[color:var(--ui-surface-3)] sm:gap-4 sm:px-4"
+                    >
+                      <div className="min-w-0 flex w-full items-center gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[color:var(--ui-accent-soft)]">
+                          <FileText className="h-4 w-4 text-[color:var(--ui-accent)]" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs font-semibold text-[color:var(--ui-text)] sm:text-sm">{doc.file_name}</p>
+                          <p className="hidden text-[11px] text-[color:var(--ui-text-meta)] sm:block">Fonte: {doc.source || 'local'}</p>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </SurfaceCard>
+          </div>
+
+          <aside className="w-full space-y-4 sm:space-y-6">
           <SurfaceCard className="hidden bg-[color:var(--ui-surface-2)] md:block">
             <p className="mb-4 text-xs font-semibold uppercase tracking-[0.16em] text-[color:var(--ui-text-meta)]">
               Ações rápidas
@@ -687,10 +633,11 @@ export function Dashboard() {
               </Link>
             </Button>
           </SurfaceCard>
-        </aside>
+          </aside>
+        </div>
       </div>
 
-      <div className="fixed inset-x-4 bottom-3 z-30 md:hidden">
+      <div className="fixed bottom-3 left-1/2 z-30 w-[calc(100%-2rem)] max-w-[30rem] -translate-x-1/2 sm:max-w-none md:hidden">
         <div className="grid grid-cols-3 gap-2 rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface)]/95 p-2 shadow-[0_14px_34px_-18px_rgba(0,0,0,0.65)] backdrop-blur-xl">
           <Link
             to="/ingest"
