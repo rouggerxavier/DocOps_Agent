@@ -1482,6 +1482,7 @@ export function Chat() {
   const [sessionSearch, setSessionSearch] = useState('')
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
   const [docPickerOpen, setDocPickerOpen] = useState(false)
+  const [treatmentPickerOpen, setTreatmentPickerOpen] = useState(false)
   const [pendingFlashcardCommand, setPendingFlashcardCommand] = useState<FlashcardCommandPlan | null>(null)
   const [savingArtifactTurnRef, setSavingArtifactTurnRef] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -1547,6 +1548,7 @@ export function Chat() {
     setMobileSourcesOpen(false)
     setAttachmentMenuOpen(false)
     setDocPickerOpen(false)
+    setTreatmentPickerOpen(false)
   }, [activeSessionId])
 
   useEffect(() => {
@@ -1670,6 +1672,7 @@ export function Chat() {
     if (selectedDocs.some(item => item.doc_id === docToAdd.doc_id)) {
       setAttachmentMenuOpen(false)
       setDocPickerOpen(false)
+      setTreatmentPickerOpen(false)
       return
     }
 
@@ -1693,6 +1696,7 @@ export function Chat() {
 
     setAttachmentMenuOpen(false)
     setDocPickerOpen(false)
+    setTreatmentPickerOpen(false)
   }
 
   function removeDocFromActiveContext(docId: string) {
@@ -2308,6 +2312,7 @@ export function Chat() {
     if (pendingFlashcardCommand.docs.length === 0) {
       // Open document picker so user can select a document right here
       setAttachmentMenuOpen(false)
+      setTreatmentPickerOpen(false)
       setDocPickerOpen(true)
       return
     }
@@ -2873,11 +2878,6 @@ export function Chat() {
             <div className="min-w-0">
               <p className="font-medium text-[color:var(--ui-text)]">Memoria ativa</p>
               <p>{personalizationBannerText}</p>
-              {composerHasOverrides && (
-                <p className="mt-1 text-[11px] text-[color:var(--ui-accent)]">
-                  Override desta mensagem ativo.
-                </p>
-              )}
             </div>
             </div>
           </div>
@@ -3054,99 +3054,6 @@ export function Chat() {
                 : 'rounded-2xl bg-[color:var(--ui-surface-container-low)]/85 p-2 shadow-[0_18px_40px_rgba(0,0,0,0.28)]',
             )}>
 
-          {isPersonalizationUnlocked && !isMobile && (
-            <div className="space-y-2 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)]/80 p-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-[color:var(--ui-text)]">Override desta mensagem</p>
-                <button
-                  type="button"
-                  onClick={() => setComposerOverrides(emptyComposerOverrides())}
-                  disabled={flashcardBatchMut.isPending}
-                  className="text-[11px] text-[color:var(--ui-text-meta)] transition-colors hover:text-[color:var(--ui-text)] disabled:opacity-50"
-                >
-                  Limpar overrides
-                </button>
-              </div>
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] text-[color:var(--ui-text-meta)]">Profundidade</span>
-                  {DEPTH_OPTIONS.map(option => {
-                    const active = (composerOverrides.default_depth ?? userPreferences.default_depth) === option.value
-                    const overridden = composerOverrides.default_depth === option.value
-                    return (
-                      <button
-                        key={`depth-${option.value}`}
-                        type="button"
-                        disabled={flashcardBatchMut.isPending}
-                        onClick={() => setComposerOverrides(prev => ({
-                          ...prev,
-                          default_depth: prev.default_depth === option.value ? null : option.value,
-                        }))}
-                        className={cn(
-                          'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
-                          active ? 'border-[color:var(--ui-accent)]/45 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
-                          overridden && 'ring-1 ring-[color:var(--ui-accent)]/45',
-                        )}
-                      >
-                        {DEPTH_LABELS[option.value]}
-                      </button>
-                    )
-                  })}
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] text-[color:var(--ui-text-meta)]">Tom</span>
-                  {TONE_OPTIONS.map(option => {
-                    const active = (composerOverrides.tone ?? userPreferences.tone) === option.value
-                    const overridden = composerOverrides.tone === option.value
-                    return (
-                      <button
-                        key={`tone-${option.value}`}
-                        type="button"
-                        disabled={flashcardBatchMut.isPending}
-                        onClick={() => setComposerOverrides(prev => ({
-                          ...prev,
-                          tone: prev.tone === option.value ? null : option.value,
-                        }))}
-                        className={cn(
-                          'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
-                          active ? 'border-[color:var(--ui-accent)]/45 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
-                          overridden && 'ring-1 ring-[color:var(--ui-accent)]/45',
-                        )}
-                      >
-                        {TONE_LABELS[option.value]}
-                      </button>
-                    )
-                  })}
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] text-[color:var(--ui-text-meta)]">Rigor</span>
-                  {STRICTNESS_OPTIONS.map(option => {
-                    const active = (composerOverrides.strictness_preference ?? userPreferences.strictness_preference) === option.value
-                    const overridden = composerOverrides.strictness_preference === option.value
-                    return (
-                      <button
-                        key={`strictness-${option.value}`}
-                        type="button"
-                        disabled={flashcardBatchMut.isPending}
-                        onClick={() => setComposerOverrides(prev => ({
-                          ...prev,
-                          strictness_preference: prev.strictness_preference === option.value ? null : option.value,
-                        }))}
-                        className={cn(
-                          'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
-                          active ? 'border-[color:var(--ui-accent)]/45 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
-                          overridden && 'ring-1 ring-[color:var(--ui-accent)]/45',
-                        )}
-                      >
-                        {STRICTNESS_LABELS[option.value]}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
-
           {attachmentMenuOpen && (
             <>
               <button
@@ -3168,6 +3075,20 @@ export function Chat() {
                   <span className="flex-1 font-medium">Adicionar documento</span>
                   <ChevronRight className="h-4 w-4 text-[#aab0bb]" />
                 </button>
+                {isPersonalizationUnlocked && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAttachmentMenuOpen(false)
+                      setTreatmentPickerOpen(true)
+                    }}
+                    className="flex w-full items-center gap-3 border-t border-white/10 px-4 py-3 text-left text-sm text-[#f1f3f5] transition-colors hover:bg-[#3a3d43]"
+                  >
+                    <Sparkles className="h-4 w-4 text-[#d5d8de]" />
+                    <span className="flex-1 font-medium">Escolher tratamento</span>
+                    <ChevronRight className="h-4 w-4 text-[#aab0bb]" />
+                  </button>
+                )}
               </div>
             </>
           )}
@@ -3252,6 +3173,132 @@ export function Chat() {
             </>
           )}
 
+          {treatmentPickerOpen && isPersonalizationUnlocked && (
+            <>
+              <button
+                type="button"
+                className="fixed inset-0 z-30 bg-black/55 backdrop-blur-[1px]"
+                onClick={() => setTreatmentPickerOpen(false)}
+                aria-label="Fechar seletor de tratamento"
+              />
+              <div className="absolute bottom-full left-0 z-40 mb-2 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-white/10 bg-[#2f3136] shadow-[0_22px_52px_rgba(0,0,0,0.62)]">
+                <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-[#3a3d43] text-[#d5d8de]">
+                    <Sparkles className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-[#f1f3f5]">Escolher tratamento</p>
+                    <p className="text-[11px] text-[#aab0bb]">Override so para a proxima mensagem</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setTreatmentPickerOpen(false)}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#aab0bb] transition-colors hover:bg-[#3a3d43] hover:text-[#f1f3f5]"
+                    title="Fechar"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className={cn('space-y-3 overflow-y-auto px-4 py-4', isMobile ? 'max-h-[40svh]' : 'max-h-80')}>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-[#c0c6d0]">
+                      {composerHasOverrides ? 'Overrides ativos para esta mensagem.' : 'Use os controles abaixo para ajustar a resposta.'}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setComposerOverrides(emptyComposerOverrides())}
+                      disabled={flashcardBatchMut.isPending || !composerHasOverrides}
+                      className="text-[11px] text-[#aab0bb] transition-colors hover:text-[#f1f3f5] disabled:opacity-50"
+                    >
+                      Limpar
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] text-[#aab0bb]">Profundidade</span>
+                      {DEPTH_OPTIONS.map(option => {
+                        const active = (composerOverrides.default_depth ?? userPreferences.default_depth) === option.value
+                        const overridden = composerOverrides.default_depth === option.value
+                        return (
+                          <button
+                            key={`depth-${option.value}`}
+                            type="button"
+                            disabled={flashcardBatchMut.isPending}
+                            onClick={() => setComposerOverrides(prev => ({
+                              ...prev,
+                              default_depth: prev.default_depth === option.value ? null : option.value,
+                            }))}
+                            className={cn(
+                              'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                              active ? 'border-[color:var(--ui-accent)]/45 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
+                              overridden && 'ring-1 ring-[color:var(--ui-accent)]/45',
+                            )}
+                          >
+                            {DEPTH_LABELS[option.value]}
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] text-[#aab0bb]">Tom</span>
+                      {TONE_OPTIONS.map(option => {
+                        const active = (composerOverrides.tone ?? userPreferences.tone) === option.value
+                        const overridden = composerOverrides.tone === option.value
+                        return (
+                          <button
+                            key={`tone-${option.value}`}
+                            type="button"
+                            disabled={flashcardBatchMut.isPending}
+                            onClick={() => setComposerOverrides(prev => ({
+                              ...prev,
+                              tone: prev.tone === option.value ? null : option.value,
+                            }))}
+                            className={cn(
+                              'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                              active ? 'border-[color:var(--ui-accent)]/45 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
+                              overridden && 'ring-1 ring-[color:var(--ui-accent)]/45',
+                            )}
+                          >
+                            {TONE_LABELS[option.value]}
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] text-[#aab0bb]">Rigor</span>
+                      {STRICTNESS_OPTIONS.map(option => {
+                        const active = (composerOverrides.strictness_preference ?? userPreferences.strictness_preference) === option.value
+                        const overridden = composerOverrides.strictness_preference === option.value
+                        return (
+                          <button
+                            key={`strictness-${option.value}`}
+                            type="button"
+                            disabled={flashcardBatchMut.isPending}
+                            onClick={() => setComposerOverrides(prev => ({
+                              ...prev,
+                              strictness_preference: prev.strictness_preference === option.value ? null : option.value,
+                            }))}
+                            className={cn(
+                              'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                              active ? 'border-[color:var(--ui-accent)]/45 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
+                              overridden && 'ring-1 ring-[color:var(--ui-accent)]/45',
+                            )}
+                          >
+                            {STRICTNESS_LABELS[option.value]}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
           {selectedDocs.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-1.5">
               {selectedDocs.map(doc => (
@@ -3286,6 +3333,7 @@ export function Chat() {
               type="button"
               onClick={() => {
                 setDocPickerOpen(false)
+                setTreatmentPickerOpen(false)
                 setAttachmentMenuOpen(v => !v)
               }}
               className={cn(
@@ -3293,9 +3341,9 @@ export function Chat() {
                 isMobile
                   ? 'h-8 w-8 border border-transparent hover:bg-[color:var(--ui-surface-2)]'
                   : 'h-7 w-7 rounded-lg hover:bg-[color:var(--ui-surface-2)]',
-                (attachmentMenuOpen || docPickerOpen) && 'bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]',
+                (attachmentMenuOpen || docPickerOpen || treatmentPickerOpen || composerHasOverrides) && 'bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]',
               )}
-              title="Filtrar documentos"
+              title="Documentos e tratamento"
             >
               <Paperclip className="h-3.5 w-3.5" />
             </button>
