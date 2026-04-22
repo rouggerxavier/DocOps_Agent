@@ -10,6 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from docops.api.routes import (
+    analytics,
     artifact,
     briefing,
     capabilities,
@@ -137,6 +138,7 @@ def create_app() -> FastAPI:
     app.include_router(flashcards.router, prefix=prefix, tags=["flashcards"], dependencies=_auth)
     app.include_router(studyplan.router, prefix=prefix, tags=["studyplan"], dependencies=_auth)
     app.include_router(pipeline.router, prefix=prefix, tags=["pipeline"], dependencies=_auth)
+    app.include_router(analytics.router, prefix=prefix, tags=["analytics"], dependencies=_auth)
 
     # Serve React frontend (web/dist/)
     _frontend_dist = Path(__file__).resolve().parent.parent.parent / "web" / "dist"

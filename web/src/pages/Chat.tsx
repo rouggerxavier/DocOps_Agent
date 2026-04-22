@@ -5,24 +5,30 @@ import axios from 'axios'
 import {
   Send, Bot, User, FileText, ChevronRight, ChevronDown, Loader2, X,
   Plus, Clock, CalendarCheck, Trash2,
-  Sparkles, Search, Pause,
+  Sparkles, Search, Pause, ThumbsDown, ThumbsUp,
   MoreHorizontal, Paperclip, Menu,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import ReactMarkdown from 'react-markdown'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Skeleton } from '@/components/ui/skeleton'
 import {
   apiClient,
   ChatStreamError,
+  extractLockedFeatureDetail,
   type ChatResponse,
   type ChatQualitySignal,
   type SourceItem,
   type DocItem,
   type FlashcardDeck,
+  type ProactiveRecommendationActionPayload,
+  type ProactiveRecommendationItem,
+  type ProactiveRecommendationsResponse,
   type UserPreferences,
 } from '@/api/client'
 import { useCapabilities } from '@/features/CapabilitiesProvider'
+import { trackPremiumFeatureActivation, trackPremiumTouchpointViewed, trackUpgradeCompleted, trackUpgradeInitiated } from '@/features/premiumAnalytics'
 import { cn } from '@/lib/utils'
 
 interface Message {
@@ -182,6 +188,14 @@ const SCHEDULE_LABELS: Record<UserPreferences['schedule_preference'], string> = 
   flexible: 'Flexivel',
   fixed: 'Fixo',
   intensive: 'Intensivo',
+}
+
+const RECOMMENDATION_ACTION_TOAST: Record<ProactiveRecommendationActionPayload['action'], string | null> = {
+  dismiss: 'Recomendacao dispensada.',
+  snooze: 'Recomendacao adiada por 24h.',
+  mute_category: 'Categoria silenciada por 7 dias.',
+  feedback_useful: 'Feedback recebido. Vamos reforcar sugestoes desse perfil.',
+  feedback_not_useful: 'Feedback recebido. Vamos ajustar as proximas sugestoes.',
 }
 
 function emptyComposerOverrides(): ComposerPreferenceOverrides {
@@ -420,6 +434,39 @@ function shouldOfferChatArtifactCTA(message: Message): boolean {
 
 function formatDifficultyMix(mix: FlashcardDifficultyMix) {
   return `${mix.facil} faceis, ${mix.media} medias e ${mix.dificil} dificeis`
+}
+
+function getApiErrorDetail(error: unknown, fallback: string): string {
+  const maybeError = error as { response?: { data?: { detail?: unknown } }; message?: unknown }
+  const detail = maybeError?.response?.data?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail
+  if (detail && typeof detail === 'object') {
+    const message = (detail as { message?: unknown }).message
+    if (typeof message === 'string' && message.trim()) return message
+  }
+  const message = maybeError?.message
+  if (typeof message === 'string' && message.trim()) return message
+  return fallback
+}
+
+function buildRecommendationPrompt(
+  recommendation: ProactiveRecommendationItem,
+  activeContext: ChatActiveContext,
+): string {
+  const docHint = activeContext.active_doc_names.slice(0, 3)
+  const docSegment = docHint.length > 0
+    ? ` Use como base principal: ${docHint.join(', ')}.`
+    : ''
+
+  const categoryPromptMap: Record<ProactiveRecommendationItem['category'], string> = {
+    consistency: 'Me ajude a executar esta recomendacao com passos curtos e prioridades claras.',
+    schedule: 'Monte um plano pratico para hoje com foco e blocos de tempo.',
+    coverage: 'Identifique os gaps e proponha as proximas acoes de cobertura.',
+    quality: 'Eleve a qualidade do meu estudo com uma estrategia objetiva de revisao.',
+  }
+
+  const categoryPrompt = categoryPromptMap[recommendation.category] ?? 'Me ajude a executar esta recomendacao.'
+  return `${recommendation.title}. ${recommendation.description} ${categoryPrompt}${docSegment}`.trim()
 }
 
 function parseFlashcardCommandPlan(prompt: string, docs: DocItem[], selectedDocs: DocItem[]): FlashcardCommandPlan | null {
@@ -1061,14 +1108,27 @@ function StreamStatusCard({
 }
 
 function MessageBubble({
-  message, onSourceClick, onCitationClick, canSaveAsArtifact, savingAsArtifact, onSaveAsArtifact,
+  message,
+  onSourceClick,
+  onCitationClick,
+  canSaveAsArtifact,
+  showArtifactUnlockCta,
+  artifactEntitlementTier,
+  savingAsArtifact,
+  onSaveAsArtifact,
+  onRefreshArtifactAccess,
+  onUpgradeIntent,
 }: {
   message: Message
   onSourceClick?: (sources: SourceItem[]) => void
   onCitationClick?: (source: SourceItem, allSources: SourceItem[]) => void
   canSaveAsArtifact?: boolean
+  showArtifactUnlockCta?: boolean
+  artifactEntitlementTier?: string
   savingAsArtifact?: boolean
   onSaveAsArtifact?: () => void
+  onRefreshArtifactAccess?: () => void
+  onUpgradeIntent?: () => void
 }) {
   const isUser = message.role === 'user'
 
@@ -1169,6 +1229,28 @@ function MessageBubble({
           </div>
         )}
 
+        {!isUser && showArtifactUnlockCta && (
+          <div className="rounded-xl border border-amber-600/35 bg-amber-950/15 px-3 py-2">
+            <p className="text-[11px] text-amber-100/90">
+              Salvar como artefato exige plano premium ({artifactEntitlementTier ?? 'free'}).
+            </p>
+            <button
+              type="button"
+              onClick={onRefreshArtifactAccess}
+              className="mt-1.5 rounded-md border border-amber-500/45 px-2 py-1 text-[11px] text-amber-100 transition-colors hover:bg-amber-500/10"
+            >
+              Ja fiz upgrade, atualizar acesso
+            </button>
+            <button
+              type="button"
+              onClick={onUpgradeIntent}
+              className="ml-2 mt-1.5 rounded-md border border-amber-500/25 px-2 py-1 text-[11px] text-amber-100/90 transition-colors hover:bg-amber-500/10"
+            >
+              Ver recursos premium
+            </button>
+          </div>
+        )}
+
         {!isUser && message.sources && message.sources.length > 0 && (
           <div className="space-y-2">
             <button
@@ -1205,6 +1287,173 @@ function MessageBubble({
 
 // ── Main component ────────────────────────────────────────────────────────
 
+function ChatProactiveStartersPanel({
+  recommendations,
+  featureEnabled,
+  capabilityUnlocked,
+  loading = false,
+  actionPending = false,
+  entitlementTier = 'free',
+  onRefreshAccess,
+  onUpgradeIntent,
+  onExecute,
+  onUseInChat,
+  onRecordAction,
+  compact = false,
+}: {
+  recommendations: ProactiveRecommendationItem[]
+  featureEnabled: boolean
+  capabilityUnlocked: boolean
+  loading?: boolean
+  actionPending?: boolean
+  entitlementTier?: string
+  onRefreshAccess?: () => Promise<void> | void
+  onUpgradeIntent?: () => void
+  onExecute?: (item: ProactiveRecommendationItem) => void
+  onUseInChat?: (item: ProactiveRecommendationItem) => void
+  onRecordAction?: (payload: ProactiveRecommendationActionPayload) => Promise<void>
+  compact?: boolean
+}) {
+  const visibleCount = compact ? 2 : 3
+
+  if (!featureEnabled) return null
+
+  if (!capabilityUnlocked) {
+    return (
+      <div className="rounded-2xl border border-amber-600/35 bg-amber-950/15 p-3">
+        <p className="text-xs font-medium text-amber-100">
+          Recomendacoes proativas exigem plano premium ({entitlementTier}).
+        </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => { void onRefreshAccess?.() }}
+            className="rounded-md border border-amber-500/45 px-2 py-1 text-[11px] text-amber-100 transition-colors hover:bg-amber-500/10"
+          >
+            Ja fiz upgrade, atualizar acesso
+          </button>
+          <button
+            type="button"
+            onClick={onUpgradeIntent}
+            className="rounded-md border border-amber-500/25 px-2 py-1 text-[11px] text-amber-100/90 transition-colors hover:bg-amber-500/10"
+          >
+            Ver recursos premium
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-low)]/75 p-3 backdrop-blur">
+      <div className="mb-2 flex items-center gap-2">
+        <Sparkles className="h-4 w-4 text-[color:var(--ui-accent)]" />
+        <p className="text-xs font-semibold text-[color:var(--ui-text)]">Sugestoes proativas</p>
+      </div>
+
+      {loading ? (
+        <div className="space-y-2">
+          <Skeleton className="h-16 w-full rounded-xl" />
+          <Skeleton className="h-16 w-full rounded-xl" />
+        </div>
+      ) : recommendations.length === 0 ? (
+        <p className="text-xs text-[color:var(--ui-text-meta)]">
+          Sem sugestoes no momento. Continue usando o produto para gerar novas recomendacoes.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {recommendations.slice(0, visibleCount).map(item => (
+            <div
+              key={item.id}
+              className="rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)] px-3 py-2"
+            >
+              <p className="text-xs font-semibold text-[color:var(--ui-text)]">{item.title}</p>
+              <p className="mt-1 text-[11px] text-[color:var(--ui-text-meta)]">{item.why_this}</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => onExecute?.(item)}
+                  className="rounded-md border border-[color:var(--ui-accent)]/40 bg-[color:var(--ui-accent-soft)] px-2 py-1 text-[11px] text-[color:var(--ui-accent)] transition-colors hover:bg-[color:var(--ui-accent-soft)]/75"
+                >
+                  {item.action_label}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onUseInChat?.(item)}
+                  className="rounded-md border border-[color:var(--ui-border-soft)] px-2 py-1 text-[11px] text-[color:var(--ui-text)] transition-colors hover:bg-[color:var(--ui-surface-2)]"
+                >
+                  Usar no chat
+                </button>
+                <button
+                  type="button"
+                  disabled={actionPending}
+                  onClick={() => {
+                    void onRecordAction?.({
+                      recommendation_id: item.id,
+                      category: item.category,
+                      action: 'snooze',
+                      duration_hours: 24,
+                    })
+                  }}
+                  className="rounded-md border border-[color:var(--ui-border-soft)] px-2 py-1 text-[11px] text-[color:var(--ui-text-meta)] transition-colors hover:bg-[color:var(--ui-surface-2)] disabled:opacity-60"
+                >
+                  Adiar 24h
+                </button>
+                <button
+                  type="button"
+                  disabled={actionPending}
+                  onClick={() => {
+                    void onRecordAction?.({
+                      recommendation_id: item.id,
+                      category: item.category,
+                      action: 'dismiss',
+                    })
+                  }}
+                  className="rounded-md border border-rose-500/30 px-2 py-1 text-[11px] text-rose-300 transition-colors hover:bg-rose-500/10 disabled:opacity-60"
+                >
+                  Dispensar
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Marcar ${item.title} como util`}
+                  disabled={actionPending}
+                  onClick={() => {
+                    void onRecordAction?.({
+                      recommendation_id: item.id,
+                      category: item.category,
+                      action: 'feedback_useful',
+                    })
+                  }}
+                  className="inline-flex items-center gap-1 rounded-md border border-emerald-500/30 px-2 py-1 text-[11px] text-emerald-300 transition-colors hover:bg-emerald-500/10 disabled:opacity-60"
+                >
+                  <ThumbsUp className="h-3 w-3" />
+                  Util
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Marcar ${item.title} como nao util`}
+                  disabled={actionPending}
+                  onClick={() => {
+                    void onRecordAction?.({
+                      recommendation_id: item.id,
+                      category: item.category,
+                      action: 'feedback_not_useful',
+                    })
+                  }}
+                  className="inline-flex items-center gap-1 rounded-md border border-rose-500/30 px-2 py-1 text-[11px] text-rose-300 transition-colors hover:bg-rose-500/10 disabled:opacity-60"
+                >
+                  <ThumbsDown className="h-3 w-3" />
+                  Nao util
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function Chat() {
   const qc = useQueryClient()
   const capabilities = useCapabilities()
@@ -1233,6 +1482,7 @@ export function Chat() {
   const [sessionSearch, setSessionSearch] = useState('')
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false)
   const [docPickerOpen, setDocPickerOpen] = useState(false)
+  const [treatmentPickerOpen, setTreatmentPickerOpen] = useState(false)
   const [pendingFlashcardCommand, setPendingFlashcardCommand] = useState<FlashcardCommandPlan | null>(null)
   const [savingArtifactTurnRef, setSavingArtifactTurnRef] = useState<string | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -1245,14 +1495,42 @@ export function Chat() {
   const isStreamingEnabled = capabilities.isEnabled('chat_streaming_enabled')
   const isStrictGroundingEnabled = capabilities.isEnabled('strict_grounding_enabled')
   const isChatToArtifactEnabled = capabilities.isEnabled('premium_chat_to_artifact_enabled')
+  const isChatToArtifactUnlocked = (
+    isChatToArtifactEnabled
+    && capabilities.hasCapability('premium_chat_to_artifact')
+  )
+  const isChatToArtifactLocked = isChatToArtifactEnabled && !isChatToArtifactUnlocked
+  const isProactiveCopilotEnabled = capabilities.isEnabled('proactive_copilot_enabled')
+  const isProactiveCopilotUnlocked = (
+    isProactiveCopilotEnabled
+    && capabilities.hasCapability('premium_proactive_copilot')
+  )
+  const isProactiveCopilotLocked = isProactiveCopilotEnabled && !isProactiveCopilotUnlocked
+  const [lastUpgradeTouchpoint, setLastUpgradeTouchpoint] = useState('chat.chat_to_artifact_cta')
+  const [wasChatToArtifactLocked, setWasChatToArtifactLocked] = useState(isChatToArtifactLocked)
+  const [lastProactiveUpgradeTouchpoint, setLastProactiveUpgradeTouchpoint] = useState('chat.proactive_starters')
+  const [wasProactiveCopilotLocked, setWasProactiveCopilotLocked] = useState(isProactiveCopilotLocked)
   const isPersonalizationEnabled = capabilities.isEnabled('personalization_enabled')
+  const isPersonalizationUnlocked = (
+    isPersonalizationEnabled
+    && capabilities.hasCapability('premium_personalization')
+  )
+  const isPersonalizationLocked = isPersonalizationEnabled && !isPersonalizationUnlocked
 
   const preferencesQuery = useQuery<UserPreferences>({
     queryKey: ['user-preferences'],
     queryFn: apiClient.getPreferences,
-    enabled: isPersonalizationEnabled,
+    enabled: isPersonalizationUnlocked,
     staleTime: 30_000,
     retry: 1,
+  })
+
+  const proactiveRecommendationsQuery = useQuery<ProactiveRecommendationsResponse>({
+    queryKey: ['chat-proactive-recommendations'],
+    queryFn: apiClient.listProactiveRecommendations,
+    staleTime: 60_000,
+    retry: false,
+    enabled: isProactiveCopilotUnlocked,
   })
 
   const userPreferences = preferencesQuery.data ?? DEFAULT_USER_PREFERENCES
@@ -1270,6 +1548,7 @@ export function Chat() {
     setMobileSourcesOpen(false)
     setAttachmentMenuOpen(false)
     setDocPickerOpen(false)
+    setTreatmentPickerOpen(false)
   }, [activeSessionId])
 
   useEffect(() => {
@@ -1393,6 +1672,7 @@ export function Chat() {
     if (selectedDocs.some(item => item.doc_id === docToAdd.doc_id)) {
       setAttachmentMenuOpen(false)
       setDocPickerOpen(false)
+      setTreatmentPickerOpen(false)
       return
     }
 
@@ -1416,6 +1696,7 @@ export function Chat() {
 
     setAttachmentMenuOpen(false)
     setDocPickerOpen(false)
+    setTreatmentPickerOpen(false)
   }
 
   function removeDocFromActiveContext(docId: string) {
@@ -1891,6 +2172,40 @@ export function Chat() {
     },
   })
 
+  function handleUpgradeIntent(touchpoint: string, source: 'link' | 'refresh_access' = 'link') {
+    setLastUpgradeTouchpoint(touchpoint)
+    trackUpgradeInitiated({
+      touchpoint,
+      capability: 'premium_chat_to_artifact',
+      metadata: { surface: 'chat', source },
+    })
+  }
+
+  function handleProactiveUpgradeIntent(
+    touchpoint = 'chat.proactive_starters',
+    source: 'link' | 'refresh_access' = 'link',
+  ) {
+    setLastProactiveUpgradeTouchpoint(touchpoint)
+    trackUpgradeInitiated({
+      touchpoint,
+      capability: 'premium_proactive_copilot',
+      metadata: { surface: 'chat', source },
+    })
+  }
+
+  async function handleRefreshPremiumAccess(touchpoint = 'chat.chat_to_artifact_cta') {
+    handleUpgradeIntent(touchpoint, 'refresh_access')
+    await capabilities.refresh()
+    toast.info('Acesso premium atualizado. Se o upgrade ja foi aplicado, recarregamos suas capacidades.')
+  }
+
+  async function handleRefreshProactiveAccess(touchpoint = 'chat.proactive_starters') {
+    handleProactiveUpgradeIntent(touchpoint, 'refresh_access')
+    await capabilities.refresh()
+    await proactiveRecommendationsQuery.refetch()
+    toast.info('Acesso premium atualizado. Se o upgrade ja foi aplicado, recarregamos suas capacidades.')
+  }
+
   const saveChatArtifactMut = useMutation({
     mutationFn: async (payload: {
       turnRef: string
@@ -1931,13 +2246,50 @@ export function Chat() {
     onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ['artifacts'] })
       qc.invalidateQueries({ queryKey: ['artifact-filter-options'] })
+      trackPremiumFeatureActivation({
+        touchpoint: 'chat.chat_to_artifact_save',
+        capability: 'premium_chat_to_artifact',
+        metadata: { surface: 'chat', artifact_filename: result.filename },
+      }, false)
       toast.success(`Artefato salvo: ${result.filename}`)
       setSavingArtifactTurnRef(null)
     },
     onError: (error: any) => {
+      const lockedDetail = extractLockedFeatureDetail(error)
+      if (lockedDetail) {
+        toast.error(
+          `Salvar como artefato bloqueado: ${lockedDetail.capability} exige plano ${lockedDetail.required_tier}.`
+        )
+        setSavingArtifactTurnRef(null)
+        void handleRefreshPremiumAccess()
+        return
+      }
       const detail = error?.response?.data?.detail ?? error?.message ?? 'Falha ao salvar artefato.'
       toast.error(String(detail))
       setSavingArtifactTurnRef(null)
+    },
+  })
+
+  const proactiveRecommendationActionMutation = useMutation({
+    mutationFn: (payload: ProactiveRecommendationActionPayload) =>
+      apiClient.recordProactiveRecommendationAction(payload),
+    onSuccess: (_result, payload) => {
+      const successMessage = RECOMMENDATION_ACTION_TOAST[payload.action]
+      if (successMessage) {
+        toast.success(successMessage)
+      }
+      void proactiveRecommendationsQuery.refetch()
+    },
+    onError: (error: unknown) => {
+      const lockedDetail = extractLockedFeatureDetail(error)
+      if (lockedDetail?.capability === 'premium_proactive_copilot') {
+        toast.error(
+          `Recomendacoes proativas bloqueadas: ${lockedDetail.capability} exige plano ${lockedDetail.required_tier}.`,
+        )
+        void handleRefreshProactiveAccess()
+        return
+      }
+      toast.error(getApiErrorDetail(error, 'Nao foi possivel registrar a acao da recomendacao.'))
     },
   })
 
@@ -1960,6 +2312,7 @@ export function Chat() {
     if (pendingFlashcardCommand.docs.length === 0) {
       // Open document picker so user can select a document right here
       setAttachmentMenuOpen(false)
+      setTreatmentPickerOpen(false)
       setDocPickerOpen(true)
       return
     }
@@ -2043,7 +2396,7 @@ export function Chat() {
       .slice(-6)
       .map(m => ({ role: m.role, content: m.content }))
     const strictGroundingFromPreferences = (
-      isPersonalizationEnabled
+      isPersonalizationUnlocked
       && resolvedComposerPreferences.strictness_preference === 'strict'
       && isStrictGroundingEnabled
     )
@@ -2051,7 +2404,7 @@ export function Chat() {
       isStrictGroundingEnabled
       && (strictGrounding || strictGroundingFromPreferences)
     )
-    const messageForBackend = isPersonalizationEnabled
+    const messageForBackend = isPersonalizationUnlocked
       ? `${text}${buildPreferenceInstructionBlock(resolvedComposerPreferences)}`
       : text
 
@@ -2127,6 +2480,30 @@ export function Chat() {
     })
   }
 
+  function handleUseRecommendationInChat(recommendation: ProactiveRecommendationItem) {
+    const prompt = buildRecommendationPrompt(recommendation, activeContext)
+    setInput(prompt)
+    toast.info('Sugestao aplicada ao campo de mensagem.')
+  }
+
+  function handleExecuteRecommendation(recommendation: ProactiveRecommendationItem) {
+    trackPremiumFeatureActivation({
+      touchpoint: 'chat.proactive_starters.execute',
+      capability: 'premium_proactive_copilot',
+      metadata: {
+        surface: 'chat',
+        recommendation_id: recommendation.id,
+        category: recommendation.category,
+        action_to: recommendation.action_to,
+      },
+    }, false)
+    window.location.href = recommendation.action_to
+  }
+
+  async function handleRecordRecommendationAction(payload: ProactiveRecommendationActionPayload) {
+    await proactiveRecommendationActionMutation.mutateAsync(payload)
+  }
+
   const hasSources = activeSources.length > 0
   const isStreaming = messages.some(m => m.streaming)
   const isPending = mutation.isPending || flashcardBatchMut.isPending
@@ -2135,10 +2512,12 @@ export function Chat() {
     flashcardBatchMut.isPending
     || (!!pendingFlashcardCommand && pendingFlashcardCommand.docs.length > 0)
   )
-  const isPersonalizationLoading = isPersonalizationEnabled && preferencesQuery.isLoading
-  const personalizationLoadFailed = isPersonalizationEnabled && preferencesQuery.isError
+  const isPersonalizationLoading = isPersonalizationUnlocked && preferencesQuery.isLoading
+  const personalizationLoadFailed = isPersonalizationUnlocked && preferencesQuery.isError
   const personalizationBannerText = !isPersonalizationEnabled
     ? ''
+    : isPersonalizationLocked
+      ? `Memoria premium bloqueada no plano atual (${capabilities.entitlementTier}).`
     : isPersonalizationLoading
       ? 'Carregando suas preferencias...'
       : personalizationLoadFailed
@@ -2153,6 +2532,100 @@ export function Chat() {
     const scope = `${session.title} ${getSessionPreview(session)}`
     return normalizeForMatch(scope).includes(normalizedSessionSearch)
   })
+  const proactiveRecommendations = proactiveRecommendationsQuery.data?.recommendations ?? []
+  const hasProactiveTouchpoint = (
+    isProactiveCopilotEnabled
+    && (isProactiveCopilotLocked || proactiveRecommendations.length > 0)
+  )
+  const hasArtifactUnlockPrompt = isChatToArtifactLocked && messages.some((msg, i) => {
+    if (msg.role !== 'assistant') return false
+    const previousUserPrompt = [...messages.slice(0, i)]
+      .reverse()
+      .find(item => item.role === 'user')
+      ?.content ?? msg.prompt_hint ?? ''
+    return shouldOfferChatArtifactCTA({
+      ...msg,
+      prompt_hint: previousUserPrompt,
+    })
+  })
+
+  useEffect(() => {
+    if (!hasArtifactUnlockPrompt) return
+    trackPremiumTouchpointViewed({
+      touchpoint: 'chat.chat_to_artifact_cta',
+      capability: 'premium_chat_to_artifact',
+      metadata: { surface: 'chat' },
+    })
+  }, [hasArtifactUnlockPrompt])
+
+  useEffect(() => {
+    if (!hasProactiveTouchpoint) return
+    trackPremiumTouchpointViewed({
+      touchpoint: 'chat.proactive_starters',
+      capability: 'premium_proactive_copilot',
+      metadata: { surface: 'chat' },
+    })
+  }, [hasProactiveTouchpoint])
+
+  useEffect(() => {
+    if (wasChatToArtifactLocked && !isChatToArtifactLocked) {
+      trackUpgradeCompleted({
+        touchpoint: lastUpgradeTouchpoint,
+        capability: 'premium_chat_to_artifact',
+        metadata: { surface: 'chat' },
+      })
+      trackPremiumFeatureActivation({
+        touchpoint: 'chat.chat_to_artifact_cta',
+        capability: 'premium_chat_to_artifact',
+        metadata: { surface: 'chat', source: 'unlock_transition' },
+      })
+    }
+    setWasChatToArtifactLocked(isChatToArtifactLocked)
+  }, [isChatToArtifactLocked, lastUpgradeTouchpoint, wasChatToArtifactLocked])
+
+  useEffect(() => {
+    if (wasProactiveCopilotLocked && !isProactiveCopilotLocked) {
+      trackUpgradeCompleted({
+        touchpoint: lastProactiveUpgradeTouchpoint,
+        capability: 'premium_proactive_copilot',
+        metadata: { surface: 'chat' },
+      })
+      trackPremiumFeatureActivation({
+        touchpoint: 'chat.proactive_starters',
+        capability: 'premium_proactive_copilot',
+        metadata: { surface: 'chat', source: 'unlock_transition' },
+      })
+    }
+    setWasProactiveCopilotLocked(isProactiveCopilotLocked)
+  }, [isProactiveCopilotLocked, lastProactiveUpgradeTouchpoint, wasProactiveCopilotLocked])
+
+  useEffect(() => {
+    if (!(isProactiveCopilotUnlocked && !proactiveRecommendationsQuery.isLoading && !proactiveRecommendationsQuery.isError)) return
+    if (proactiveRecommendations.length <= 0) return
+    trackPremiumFeatureActivation({
+      touchpoint: 'chat.proactive_starters',
+      capability: 'premium_proactive_copilot',
+      metadata: {
+        surface: 'chat',
+        source: 'starters_loaded',
+        recommendation_count: proactiveRecommendations.length,
+      },
+    })
+  }, [
+    isProactiveCopilotUnlocked,
+    proactiveRecommendations.length,
+    proactiveRecommendationsQuery.isError,
+    proactiveRecommendationsQuery.isLoading,
+  ])
+
+  useEffect(() => {
+    if (!(isPersonalizationUnlocked && !preferencesQuery.isLoading && !preferencesQuery.isError)) return
+    trackPremiumFeatureActivation({
+      touchpoint: 'chat.personalization_memory',
+      capability: 'premium_personalization',
+      metadata: { surface: 'chat', source: 'memory_banner' },
+    })
+  }, [isPersonalizationUnlocked, preferencesQuery.isError, preferencesQuery.isLoading])
 
   return (
     <div className={cn(
@@ -2405,11 +2878,6 @@ export function Chat() {
             <div className="min-w-0">
               <p className="font-medium text-[color:var(--ui-text)]">Memoria ativa</p>
               <p>{personalizationBannerText}</p>
-              {composerHasOverrides && (
-                <p className="mt-1 text-[11px] text-[color:var(--ui-accent)]">
-                  Override desta mensagem ativo.
-                </p>
-              )}
             </div>
             </div>
           </div>
@@ -2422,6 +2890,24 @@ export function Chat() {
         )}
         style={isMobile ? { paddingBottom: `${156 + mobileViewportInset}px` } : undefined}>
           <div className="flex w-full flex-col gap-8">
+            <ChatProactiveStartersPanel
+              recommendations={proactiveRecommendations}
+              featureEnabled={isProactiveCopilotEnabled}
+              capabilityUnlocked={isProactiveCopilotUnlocked}
+              loading={proactiveRecommendationsQuery.isLoading}
+              actionPending={proactiveRecommendationActionMutation.isPending}
+              entitlementTier={capabilities.entitlementTier}
+              onRefreshAccess={() => { void handleRefreshProactiveAccess() }}
+              onUpgradeIntent={() => {
+                handleProactiveUpgradeIntent('chat.proactive_starters', 'link')
+                window.location.href = '/settings'
+              }}
+              onExecute={handleExecuteRecommendation}
+              onUseInChat={handleUseRecommendationInChat}
+              onRecordAction={handleRecordRecommendationAction}
+              compact={isMobile}
+            />
+
             {messages.length === 0 && (
               <>
                 {isMobile ? (
@@ -2450,16 +2936,20 @@ export function Chat() {
               .find(item => item.role === 'user')
               ?.content ?? msg.prompt_hint ?? ''
             const turnRef = `${activeSessionId}:${i}`
-            const canSaveAsArtifact = isChatToArtifactEnabled && shouldOfferChatArtifactCTA({
+            const shouldOfferArtifactCta = shouldOfferChatArtifactCTA({
               ...msg,
               prompt_hint: previousUserPrompt,
             })
+            const canSaveAsArtifact = isChatToArtifactUnlocked && shouldOfferArtifactCta
+            const showArtifactUnlockCta = isChatToArtifactLocked && shouldOfferArtifactCta
 
             return (
               <MessageBubble
                 key={i}
                 message={{ ...msg, prompt_hint: previousUserPrompt }}
                 canSaveAsArtifact={canSaveAsArtifact}
+                showArtifactUnlockCta={showArtifactUnlockCta}
+                artifactEntitlementTier={capabilities.entitlementTier}
                 savingAsArtifact={savingArtifactTurnRef === turnRef}
                 onSaveAsArtifact={() => {
                   if (!canSaveAsArtifact || saveChatArtifactMut.isPending) return
@@ -2470,6 +2960,11 @@ export function Chat() {
                     userPrompt: previousUserPrompt,
                     sessionId: activeSessionId,
                   })
+                }}
+                onRefreshArtifactAccess={() => { void handleRefreshPremiumAccess() }}
+                onUpgradeIntent={() => {
+                  handleUpgradeIntent('chat.chat_to_artifact_cta', 'link')
+                  window.location.href = '/settings'
                 }}
                 onSourceClick={sources => {
                   setActiveSources(sources)
@@ -2559,99 +3054,6 @@ export function Chat() {
                 : 'rounded-2xl bg-[color:var(--ui-surface-container-low)]/85 p-2 shadow-[0_18px_40px_rgba(0,0,0,0.28)]',
             )}>
 
-          {isPersonalizationEnabled && !isMobile && (
-            <div className="space-y-2 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-container-lowest)]/80 p-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-medium text-[color:var(--ui-text)]">Override desta mensagem</p>
-                <button
-                  type="button"
-                  onClick={() => setComposerOverrides(emptyComposerOverrides())}
-                  disabled={flashcardBatchMut.isPending}
-                  className="text-[11px] text-[color:var(--ui-text-meta)] transition-colors hover:text-[color:var(--ui-text)] disabled:opacity-50"
-                >
-                  Limpar overrides
-                </button>
-              </div>
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] text-[color:var(--ui-text-meta)]">Profundidade</span>
-                  {DEPTH_OPTIONS.map(option => {
-                    const active = (composerOverrides.default_depth ?? userPreferences.default_depth) === option.value
-                    const overridden = composerOverrides.default_depth === option.value
-                    return (
-                      <button
-                        key={`depth-${option.value}`}
-                        type="button"
-                        disabled={flashcardBatchMut.isPending}
-                        onClick={() => setComposerOverrides(prev => ({
-                          ...prev,
-                          default_depth: prev.default_depth === option.value ? null : option.value,
-                        }))}
-                        className={cn(
-                          'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
-                          active ? 'border-[color:var(--ui-accent)]/45 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
-                          overridden && 'ring-1 ring-[color:var(--ui-accent)]/45',
-                        )}
-                      >
-                        {DEPTH_LABELS[option.value]}
-                      </button>
-                    )
-                  })}
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] text-[color:var(--ui-text-meta)]">Tom</span>
-                  {TONE_OPTIONS.map(option => {
-                    const active = (composerOverrides.tone ?? userPreferences.tone) === option.value
-                    const overridden = composerOverrides.tone === option.value
-                    return (
-                      <button
-                        key={`tone-${option.value}`}
-                        type="button"
-                        disabled={flashcardBatchMut.isPending}
-                        onClick={() => setComposerOverrides(prev => ({
-                          ...prev,
-                          tone: prev.tone === option.value ? null : option.value,
-                        }))}
-                        className={cn(
-                          'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
-                          active ? 'border-[color:var(--ui-accent)]/45 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
-                          overridden && 'ring-1 ring-[color:var(--ui-accent)]/45',
-                        )}
-                      >
-                        {TONE_LABELS[option.value]}
-                      </button>
-                    )
-                  })}
-                </div>
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-[11px] text-[color:var(--ui-text-meta)]">Rigor</span>
-                  {STRICTNESS_OPTIONS.map(option => {
-                    const active = (composerOverrides.strictness_preference ?? userPreferences.strictness_preference) === option.value
-                    const overridden = composerOverrides.strictness_preference === option.value
-                    return (
-                      <button
-                        key={`strictness-${option.value}`}
-                        type="button"
-                        disabled={flashcardBatchMut.isPending}
-                        onClick={() => setComposerOverrides(prev => ({
-                          ...prev,
-                          strictness_preference: prev.strictness_preference === option.value ? null : option.value,
-                        }))}
-                        className={cn(
-                          'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
-                          active ? 'border-[color:var(--ui-accent)]/45 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
-                          overridden && 'ring-1 ring-[color:var(--ui-accent)]/45',
-                        )}
-                      >
-                        {STRICTNESS_LABELS[option.value]}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            </div>
-          )}
-
           {attachmentMenuOpen && (
             <>
               <button
@@ -2673,6 +3075,20 @@ export function Chat() {
                   <span className="flex-1 font-medium">Adicionar documento</span>
                   <ChevronRight className="h-4 w-4 text-[#aab0bb]" />
                 </button>
+                {isPersonalizationUnlocked && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAttachmentMenuOpen(false)
+                      setTreatmentPickerOpen(true)
+                    }}
+                    className="flex w-full items-center gap-3 border-t border-white/10 px-4 py-3 text-left text-sm text-[#f1f3f5] transition-colors hover:bg-[#3a3d43]"
+                  >
+                    <Sparkles className="h-4 w-4 text-[#d5d8de]" />
+                    <span className="flex-1 font-medium">Escolher tratamento</span>
+                    <ChevronRight className="h-4 w-4 text-[#aab0bb]" />
+                  </button>
+                )}
               </div>
             </>
           )}
@@ -2757,6 +3173,132 @@ export function Chat() {
             </>
           )}
 
+          {treatmentPickerOpen && isPersonalizationUnlocked && (
+            <>
+              <button
+                type="button"
+                className="fixed inset-0 z-30 bg-black/55 backdrop-blur-[1px]"
+                onClick={() => setTreatmentPickerOpen(false)}
+                aria-label="Fechar seletor de tratamento"
+              />
+              <div className="absolute bottom-full left-0 z-40 mb-2 w-[min(24rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-white/10 bg-[#2f3136] shadow-[0_22px_52px_rgba(0,0,0,0.62)]">
+                <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
+                  <span className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-[#3a3d43] text-[#d5d8de]">
+                    <Sparkles className="h-4 w-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-semibold text-[#f1f3f5]">Escolher tratamento</p>
+                    <p className="text-[11px] text-[#aab0bb]">Override so para a proxima mensagem</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setTreatmentPickerOpen(false)}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#aab0bb] transition-colors hover:bg-[#3a3d43] hover:text-[#f1f3f5]"
+                    title="Fechar"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className={cn('space-y-3 overflow-y-auto px-4 py-4', isMobile ? 'max-h-[40svh]' : 'max-h-80')}>
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs text-[#c0c6d0]">
+                      {composerHasOverrides ? 'Overrides ativos para esta mensagem.' : 'Use os controles abaixo para ajustar a resposta.'}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setComposerOverrides(emptyComposerOverrides())}
+                      disabled={flashcardBatchMut.isPending || !composerHasOverrides}
+                      className="text-[11px] text-[#aab0bb] transition-colors hover:text-[#f1f3f5] disabled:opacity-50"
+                    >
+                      Limpar
+                    </button>
+                  </div>
+
+                  <div className="space-y-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] text-[#aab0bb]">Profundidade</span>
+                      {DEPTH_OPTIONS.map(option => {
+                        const active = (composerOverrides.default_depth ?? userPreferences.default_depth) === option.value
+                        const overridden = composerOverrides.default_depth === option.value
+                        return (
+                          <button
+                            key={`depth-${option.value}`}
+                            type="button"
+                            disabled={flashcardBatchMut.isPending}
+                            onClick={() => setComposerOverrides(prev => ({
+                              ...prev,
+                              default_depth: prev.default_depth === option.value ? null : option.value,
+                            }))}
+                            className={cn(
+                              'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                              active ? 'border-[color:var(--ui-accent)]/45 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
+                              overridden && 'ring-1 ring-[color:var(--ui-accent)]/45',
+                            )}
+                          >
+                            {DEPTH_LABELS[option.value]}
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] text-[#aab0bb]">Tom</span>
+                      {TONE_OPTIONS.map(option => {
+                        const active = (composerOverrides.tone ?? userPreferences.tone) === option.value
+                        const overridden = composerOverrides.tone === option.value
+                        return (
+                          <button
+                            key={`tone-${option.value}`}
+                            type="button"
+                            disabled={flashcardBatchMut.isPending}
+                            onClick={() => setComposerOverrides(prev => ({
+                              ...prev,
+                              tone: prev.tone === option.value ? null : option.value,
+                            }))}
+                            className={cn(
+                              'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                              active ? 'border-[color:var(--ui-accent)]/45 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
+                              overridden && 'ring-1 ring-[color:var(--ui-accent)]/45',
+                            )}
+                          >
+                            {TONE_LABELS[option.value]}
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] text-[#aab0bb]">Rigor</span>
+                      {STRICTNESS_OPTIONS.map(option => {
+                        const active = (composerOverrides.strictness_preference ?? userPreferences.strictness_preference) === option.value
+                        const overridden = composerOverrides.strictness_preference === option.value
+                        return (
+                          <button
+                            key={`strictness-${option.value}`}
+                            type="button"
+                            disabled={flashcardBatchMut.isPending}
+                            onClick={() => setComposerOverrides(prev => ({
+                              ...prev,
+                              strictness_preference: prev.strictness_preference === option.value ? null : option.value,
+                            }))}
+                            className={cn(
+                              'rounded-full border px-2.5 py-1 text-[11px] transition-colors',
+                              active ? 'border-[color:var(--ui-accent)]/45 bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]' : 'border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] text-[color:var(--ui-text-meta)]',
+                              overridden && 'ring-1 ring-[color:var(--ui-accent)]/45',
+                            )}
+                          >
+                            {STRICTNESS_LABELS[option.value]}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+
           {selectedDocs.length > 0 && (
             <div className="mb-2 flex flex-wrap gap-1.5">
               {selectedDocs.map(doc => (
@@ -2791,6 +3333,7 @@ export function Chat() {
               type="button"
               onClick={() => {
                 setDocPickerOpen(false)
+                setTreatmentPickerOpen(false)
                 setAttachmentMenuOpen(v => !v)
               }}
               className={cn(
@@ -2798,9 +3341,9 @@ export function Chat() {
                 isMobile
                   ? 'h-8 w-8 border border-transparent hover:bg-[color:var(--ui-surface-2)]'
                   : 'h-7 w-7 rounded-lg hover:bg-[color:var(--ui-surface-2)]',
-                (attachmentMenuOpen || docPickerOpen) && 'bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]',
+                (attachmentMenuOpen || docPickerOpen || treatmentPickerOpen || composerHasOverrides) && 'bg-[color:var(--ui-accent-soft)] text-[color:var(--ui-accent)]',
               )}
-              title="Filtrar documentos"
+              title="Documentos e tratamento"
             >
               <Paperclip className="h-3.5 w-3.5" />
             </button>

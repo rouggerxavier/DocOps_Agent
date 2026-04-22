@@ -9,7 +9,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -19,12 +20,49 @@ from docops.auth.dependencies import get_current_user
 from docops.db import crud
 from docops.db.database import get_db, session_scope
 from docops.db.models import User
+from docops.features.entitlements import require_feature_and_capability
 from docops.logging import get_logger
 from docops.observability import emit_event
 from docops.services.ownership import require_user_document
 
 logger = get_logger("docops.api.pipeline")
 router = APIRouter()
+
+_RECOMMENDATION_CATEGORY_VALUES = {"coverage", "schedule", "quality", "consistency"}
+_RECOMMENDATION_ACTION_VALUES = {
+    "dismiss",
+    "snooze",
+    "mute_category",
+    "feedback_useful",
+    "feedback_not_useful",
+}
+_RECOMMENDATION_HISTORY_LOOKBACK_DAYS = 180
+_RECOMMENDATION_DEDUP_WINDOW_HOURS = 8
+_RECOMMENDATION_NOT_USEFUL_WINDOW_HOURS = 72
+
+
+def _require_proactive_copilot_access(current_user: User) -> None:
+    require_feature_and_capability(
+        "proactive_copilot_enabled",
+        "premium_proactive_copilot",
+        current_user,
+        feature_disabled_detail="Proactive copilot is disabled by feature flag.",
+        capability_message="Proactive copilot is available only for premium users.",
+    )
+
+
+def _safe_int(value: object, default: int = 0) -> int:
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: object, default: float = 0.0) -> float:
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return default
 
 
 # ── Prompt de extração de tarefas ────────────────────────────────────────────
@@ -276,6 +314,616 @@ class StudyPlanListItem(BaseModel):
     created_at: str
     plan_text: str
 
+
+RecommendationCategory = Literal["coverage", "schedule", "quality", "consistency"]
+RecommendationAction = Literal[
+    "dismiss",
+    "snooze",
+    "mute_category",
+    "feedback_useful",
+    "feedback_not_useful",
+]
+
+
+class ProactiveRecommendationItem(BaseModel):
+    id: str
+    category: RecommendationCategory
+    title: str
+    description: str
+    why_this: str
+    action_label: str
+    action_to: str
+    score: float = Field(default=0.0, ge=0.0, le=1.0)
+    signals: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProactiveRecommendationsResponse(BaseModel):
+    generated_at: str
+    recommendation_count: int
+    recommendations: list[ProactiveRecommendationItem]
+
+
+class ProactiveRecommendationActionRequest(BaseModel):
+    recommendation_id: str = Field(min_length=2, max_length=128)
+    category: RecommendationCategory | None = None
+    action: RecommendationAction
+    duration_hours: int | None = Field(default=None, ge=1, le=24 * 30)
+    feedback_note: str | None = Field(default=None, max_length=512)
+
+
+class ProactiveRecommendationActionResponse(BaseModel):
+    status: str = "recorded"
+    action: RecommendationAction
+    event_type: str
+    recommendation_id: str
+    category: RecommendationCategory | None = None
+    effective_until: str | None = None
+
+
+def _parse_event_metadata(raw: str | None) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+        return parsed if isinstance(parsed, dict) else {}
+    except Exception:
+        return {}
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _to_utc_datetime(value: Any) -> datetime:
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
+    return datetime.now(timezone.utc)
+
+
+def _load_recommendation_controls(
+    db: Session,
+    *,
+    user_id: int,
+    now_utc: datetime,
+) -> dict[str, Any]:
+    dedup_window_start = now_utc - timedelta(hours=_RECOMMENDATION_DEDUP_WINDOW_HOURS)
+    history = crud.list_premium_analytics_events_for_user_since(
+        db,
+        user_id=user_id,
+        since=now_utc - timedelta(days=_RECOMMENDATION_HISTORY_LOOKBACK_DAYS),
+    )
+    dismissed_ids: set[str] = set()
+    snoozed_until: dict[str, datetime] = {}
+    muted_category_until: dict[str, datetime] = {}
+    recently_presented_ids: set[str] = set()
+    category_not_useful_until: dict[str, datetime] = {}
+    category_not_useful_count: dict[str, int] = {}
+
+    for row in history:
+        event_type = str(row.event_type or "").strip().lower()
+        if not event_type.startswith("recommendation."):
+            continue
+        metadata = _parse_event_metadata(row.metadata_json)
+        recommendation_id = str(metadata.get("recommendation_id") or "").strip().lower()
+        category = str(metadata.get("category") or "").strip().lower()
+        effective_until = _parse_iso_datetime(metadata.get("effective_until"))
+        event_time = _to_utc_datetime(getattr(row, "created_at", None))
+
+        if event_type == "recommendation.dismissed":
+            if recommendation_id:
+                dismissed_ids.add(recommendation_id)
+            continue
+        if event_type == "recommendation.snoozed":
+            if recommendation_id and effective_until:
+                previous = snoozed_until.get(recommendation_id)
+                if previous is None or effective_until > previous:
+                    snoozed_until[recommendation_id] = effective_until
+            continue
+        if event_type == "recommendation.category_muted":
+            if category and effective_until:
+                previous = muted_category_until.get(category)
+                if previous is None or effective_until > previous:
+                    muted_category_until[category] = effective_until
+            continue
+        if event_type in {"recommendation.presented", "recommendation.feed.generated"}:
+            if event_time >= dedup_window_start:
+                ids_raw = metadata.get("recommendation_ids")
+                if isinstance(ids_raw, list):
+                    for item in ids_raw:
+                        recommendation_id_item = str(item or "").strip().lower()
+                        if recommendation_id_item:
+                            recently_presented_ids.add(recommendation_id_item)
+                if recommendation_id:
+                    recently_presented_ids.add(recommendation_id)
+            continue
+        if event_type == "recommendation.feedback.recorded":
+            metadata_action = str(metadata.get("action") or "").strip().lower()
+            useful = metadata.get("useful")
+            is_not_useful = metadata_action == "feedback_not_useful" or useful is False
+            if not is_not_useful or not category:
+                continue
+            category_not_useful_count[category] = int(category_not_useful_count.get(category, 0)) + 1
+            penalty_until = event_time + timedelta(hours=_RECOMMENDATION_NOT_USEFUL_WINDOW_HOURS)
+            previous = category_not_useful_until.get(category)
+            if previous is None or penalty_until > previous:
+                category_not_useful_until[category] = penalty_until
+
+    return {
+        "dismissed_ids": dismissed_ids,
+        "snoozed_until": snoozed_until,
+        "muted_category_until": muted_category_until,
+        "recently_presented_ids": recently_presented_ids,
+        "category_not_useful_until": category_not_useful_until,
+        "category_not_useful_count": category_not_useful_count,
+    }
+
+
+def _build_proactive_recommendation_candidates(
+    db: Session,
+    *,
+    user_id: int,
+    now_utc: datetime,
+) -> list[dict[str, Any]]:
+    from docops.db.models import (
+        ArtifactRecord,
+        DailyQuestionRecord,
+        FlashcardDeck,
+        ReadingStatusRecord,
+        ReminderRecord,
+        ScheduleRecord,
+        TaskRecord,
+    )
+
+    docs = crud.list_documents_for_user(db, user_id)
+    doc_count = len(docs)
+    artifact_count = int(db.query(ArtifactRecord).filter(ArtifactRecord.user_id == user_id).count() or 0)
+    flashcard_deck_count = int(db.query(FlashcardDeck).filter(FlashcardDeck.user_id == user_id).count() or 0)
+
+    overdue_count = int(
+        db.query(TaskRecord)
+        .filter(
+            TaskRecord.user_id == user_id,
+            TaskRecord.status != "done",
+            TaskRecord.due_date.is_not(None),
+            TaskRecord.due_date < now_utc,
+        )
+        .count()
+        or 0
+    )
+
+    reading_in_progress = int(
+        db.query(ReadingStatusRecord)
+        .filter(
+            ReadingStatusRecord.user_id == user_id,
+            ReadingStatusRecord.status == "reading",
+        )
+        .count()
+        or 0
+    )
+
+    day_start = datetime(
+        year=now_utc.year,
+        month=now_utc.month,
+        day=now_utc.day,
+        tzinfo=timezone.utc,
+    )
+    day_end = day_start + timedelta(days=1)
+    reminders_today = int(
+        db.query(ReminderRecord)
+        .filter(
+            ReminderRecord.user_id == user_id,
+            ReminderRecord.starts_at >= day_start,
+            ReminderRecord.starts_at < day_end,
+        )
+        .count()
+        or 0
+    )
+    schedule_today = int(
+        db.query(ScheduleRecord)
+        .filter(
+            ScheduleRecord.user_id == user_id,
+            ScheduleRecord.active.is_(True),
+            ScheduleRecord.day_of_week == now_utc.weekday(),
+        )
+        .count()
+        or 0
+    )
+
+    today_key = day_start.date().isoformat()
+    has_daily_question = bool(
+        db.query(DailyQuestionRecord)
+        .filter(
+            DailyQuestionRecord.user_id == user_id,
+            DailyQuestionRecord.date_generated == today_key,
+        )
+        .first()
+    )
+
+    deep_dossier_count = int(
+        db.query(ArtifactRecord)
+        .filter(
+            ArtifactRecord.user_id == user_id,
+            ArtifactRecord.template_id == "deep_dossier",
+        )
+        .count()
+        or 0
+    )
+
+    candidates: list[dict[str, Any]] = []
+
+    if overdue_count > 0:
+        candidates.append(
+            {
+                "id": "overdue-tasks",
+                "category": "consistency",
+                "title": (
+                    "Resolva 1 pendencia atrasada"
+                    if overdue_count == 1
+                    else f"Resolva {overdue_count} pendencias atrasadas"
+                ),
+                "description": "Limpar atrasos primeiro reduz friccao e melhora o ritmo da semana.",
+                "why_this": (
+                    "Foi detectada uma tarefa vencida."
+                    if overdue_count == 1
+                    else f"Foram detectadas {overdue_count} tarefas vencidas."
+                ),
+                "action_label": "Abrir tarefas",
+                "action_to": "/tasks",
+                "score": min(0.98, 0.9 + min(overdue_count, 8) * 0.01),
+                "signals": {
+                    "overdue_tasks": overdue_count,
+                    "docs_count": doc_count,
+                },
+            }
+        )
+
+    if reading_in_progress > 0:
+        candidates.append(
+            {
+                "id": "continue-where-stopped",
+                "category": "consistency",
+                "title": "Continue de onde voce parou",
+                "description": "Retomar o material em progresso evita perda de contexto de estudo.",
+                "why_this": (
+                    "Existe 1 documento com leitura em andamento."
+                    if reading_in_progress == 1
+                    else f"Existem {reading_in_progress} documentos com leitura em andamento."
+                ),
+                "action_label": "Abrir documentos",
+                "action_to": "/docs",
+                "score": min(0.92, 0.82 + min(reading_in_progress, 5) * 0.02),
+                "signals": {
+                    "reading_in_progress": reading_in_progress,
+                },
+            }
+        )
+
+    if reminders_today > 0 or schedule_today > 0:
+        candidates.append(
+            {
+                "id": "today-agenda",
+                "category": "schedule",
+                "title": "Revise sua agenda de hoje",
+                "description": "Conferir compromissos do dia ajuda a proteger seu tempo de foco.",
+                "why_this": (
+                    f"Ha {reminders_today} lembrete(s) e {schedule_today} bloco(s) de agenda hoje."
+                ),
+                "action_label": "Ir para calendario",
+                "action_to": "/schedule",
+                "score": 0.74,
+                "signals": {
+                    "reminders_today": reminders_today,
+                    "schedule_today": schedule_today,
+                },
+            }
+        )
+
+    if doc_count > 0 and artifact_count == 0:
+        candidates.append(
+            {
+                "id": "first-artifact",
+                "category": "coverage",
+                "title": "Gere seu primeiro artefato consolidado",
+                "description": "Transformar estudos em artefato acelera revisao e reaproveitamento.",
+                "why_this": "Voce ja tem documentos indexados, mas ainda nao salvou artefatos.",
+                "action_label": "Abrir artefatos",
+                "action_to": "/artifacts",
+                "score": 0.8,
+                "signals": {
+                    "docs_count": doc_count,
+                    "artifacts_count": artifact_count,
+                },
+            }
+        )
+
+    if doc_count > 0 and flashcard_deck_count == 0:
+        candidates.append(
+            {
+                "id": "weak-topics-review",
+                "category": "coverage",
+                "title": "Consolide topicos criticos em flashcards",
+                "description": "Converter pontos-chave em cards melhora retencao e revisao ativa.",
+                "why_this": "Seu workspace tem documentos, mas ainda sem decks de flashcards.",
+                "action_label": "Criar flashcards",
+                "action_to": "/flashcards",
+                "score": 0.73,
+                "signals": {
+                    "docs_count": doc_count,
+                    "flashcard_decks": flashcard_deck_count,
+                },
+            }
+        )
+
+    if doc_count > 0:
+        candidates.append(
+            {
+                "id": "coverage-gap-analysis",
+                "category": "coverage",
+                "title": "Rode o mapa de lacunas",
+                "description": "Identifique rapidamente onde faltam tarefas e flashcards.",
+                "why_this": "Com documentos indexados, ja e possivel extrair lacunas de cobertura.",
+                "action_label": "Abrir mapa de lacunas",
+                "action_to": "/dashboard#gap-analysis-panel",
+                "score": 0.69,
+                "signals": {
+                    "docs_count": doc_count,
+                },
+            }
+        )
+
+    if has_daily_question:
+        candidates.append(
+            {
+                "id": "daily-question",
+                "category": "quality",
+                "title": "Responda a pergunta do dia",
+                "description": "Uma resposta curta agora reforca aprendizado ativo sem interromper o fluxo.",
+                "why_this": "Uma pergunta contextual foi gerada hoje para seus materiais.",
+                "action_label": "Responder no dashboard",
+                "action_to": "/dashboard",
+                "score": 0.78,
+                "signals": {
+                    "daily_question_available": 1,
+                },
+            }
+        )
+
+    if doc_count > 0 and deep_dossier_count == 0:
+        candidates.append(
+            {
+                "id": "recommended-deep-summary",
+                "category": "quality",
+                "title": "Crie um resumo profundo recomendado",
+                "description": "Use um dossie detalhado para consolidar temas mais densos.",
+                "why_this": "Ainda nao ha artefatos em template deep_dossier no seu historico.",
+                "action_label": "Gerar resumo profundo",
+                "action_to": "/artifacts",
+                "score": 0.66,
+                "signals": {
+                    "docs_count": doc_count,
+                    "deep_dossier_count": deep_dossier_count,
+                },
+            }
+        )
+
+    candidates.sort(
+        key=lambda item: (
+            _safe_float(item.get("score"), default=0.0),
+            _safe_int((item.get("signals") or {}).get("overdue_tasks")),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
+    return candidates[:8]
+
+
+def _apply_recommendation_controls(
+    candidates: list[dict[str, Any]],
+    controls: dict[str, Any],
+    *,
+    now_utc: datetime,
+) -> list[dict[str, Any]]:
+    dismissed_ids: set[str] = set(controls.get("dismissed_ids") or set())
+    snoozed_until: dict[str, datetime] = dict(controls.get("snoozed_until") or {})
+    muted_category_until: dict[str, datetime] = dict(controls.get("muted_category_until") or {})
+    recently_presented_ids: set[str] = set(controls.get("recently_presented_ids") or set())
+    category_not_useful_until: dict[str, datetime] = dict(controls.get("category_not_useful_until") or {})
+    category_not_useful_count: dict[str, int] = dict(controls.get("category_not_useful_count") or {})
+
+    visible: list[dict[str, Any]] = []
+    for item in candidates:
+        recommendation_id = str(item.get("id") or "").strip().lower()
+        category = str(item.get("category") or "").strip().lower()
+        if not recommendation_id:
+            continue
+        if recommendation_id in dismissed_ids:
+            continue
+        if (snoozed_until.get(recommendation_id) or datetime.min.replace(tzinfo=timezone.utc)) > now_utc:
+            continue
+        if (muted_category_until.get(category) or datetime.min.replace(tzinfo=timezone.utc)) > now_utc:
+            continue
+        if recommendation_id in recently_presented_ids:
+            continue
+
+        normalized_item = dict(item)
+        normalized_signals = dict(normalized_item.get("signals") or {})
+        base_score = min(1.0, max(0.0, _safe_float(normalized_item.get("score"), default=0.0)))
+        score_penalty = 0.0
+        penalty_until = category_not_useful_until.get(category)
+        if penalty_until and penalty_until > now_utc:
+            not_useful_count = max(1, _safe_int(category_not_useful_count.get(category), default=1))
+            score_penalty = min(0.35, 0.18 * float(not_useful_count))
+            normalized_signals["category_not_useful_count_recent"] = not_useful_count
+            normalized_signals["category_feedback_penalty_applied"] = True
+            why_this = str(normalized_item.get("why_this") or "").strip()
+            fatigue_note = "Feedback recente desta categoria reduziu a prioridade da sugestao."
+            if fatigue_note.lower() not in why_this.lower():
+                normalized_item["why_this"] = f"{why_this} {fatigue_note}".strip()
+
+        adjusted_score = min(1.0, max(0.0, base_score - score_penalty))
+        normalized_item["score"] = round(adjusted_score, 4)
+        normalized_signals["score_penalty"] = round(score_penalty, 4)
+        normalized_item["signals"] = normalized_signals
+        visible.append(normalized_item)
+
+    visible.sort(
+        key=lambda item: (
+            _safe_float(item.get("score"), default=0.0),
+            _safe_int((item.get("signals") or {}).get("overdue_tasks")),
+            str(item.get("id") or ""),
+        ),
+        reverse=True,
+    )
+    return visible
+
+
+@router.get("/pipeline/recommendations", response_model=ProactiveRecommendationsResponse)
+async def list_proactive_recommendations(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProactiveRecommendationsResponse:
+    """Return ranked proactive recommendations with persistent control-state filtering."""
+    _require_proactive_copilot_access(current_user)
+    now_utc = datetime.now(timezone.utc)
+    candidates = _build_proactive_recommendation_candidates(
+        db,
+        user_id=current_user.id,
+        now_utc=now_utc,
+    )
+    controls = _load_recommendation_controls(
+        db,
+        user_id=current_user.id,
+        now_utc=now_utc,
+    )
+    visible = _apply_recommendation_controls(
+        candidates,
+        controls,
+        now_utc=now_utc,
+    )
+
+    recommendation_ids = [str(item.get("id") or "").strip().lower() for item in visible if item.get("id")]
+    if recommendation_ids:
+        crud.create_premium_analytics_event(
+            db,
+            user_id=current_user.id,
+            event_type="recommendation.feed.generated",
+            touchpoint="pipeline.recommendations_feed",
+            capability="premium_proactive_copilot",
+            metadata={
+                "recommendation_ids": recommendation_ids,
+                "categories": [str(item.get("category") or "").strip().lower() for item in visible],
+                "count": len(recommendation_ids),
+            },
+        )
+
+    emit_event(
+        logger,
+        "recommendation.feed.generated",
+        category="recommendation",
+        user_id=current_user.id,
+        candidates=len(candidates),
+        visible=len(visible),
+    )
+
+    return ProactiveRecommendationsResponse(
+        generated_at=now_utc.isoformat(),
+        recommendation_count=len(visible),
+        recommendations=[ProactiveRecommendationItem(**item) for item in visible],
+    )
+
+
+@router.post("/pipeline/recommendations/actions", response_model=ProactiveRecommendationActionResponse)
+async def record_proactive_recommendation_action(
+    payload: ProactiveRecommendationActionRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ProactiveRecommendationActionResponse:
+    """Persist recommendation actions such as dismiss/snooze/mute/feedback."""
+    _require_proactive_copilot_access(current_user)
+    recommendation_id = str(payload.recommendation_id or "").strip().lower()
+    if not recommendation_id:
+        raise HTTPException(status_code=422, detail="recommendation_id is required.")
+
+    action = str(payload.action or "").strip().lower()
+    if action not in _RECOMMENDATION_ACTION_VALUES:
+        raise HTTPException(status_code=422, detail=f"Unsupported recommendation action: {action}")
+
+    category = str(payload.category or "").strip().lower() or None
+    if category and category not in _RECOMMENDATION_CATEGORY_VALUES:
+        raise HTTPException(status_code=422, detail=f"Unsupported recommendation category: {category}")
+    if action == "mute_category" and not category:
+        raise HTTPException(status_code=422, detail="category is required when action='mute_category'.")
+
+    now_utc = datetime.now(timezone.utc)
+    effective_until: str | None = None
+    duration_hours = payload.duration_hours
+    if action in {"snooze", "mute_category"}:
+        default_hours = 24 if action == "snooze" else 24 * 7
+        resolved_hours = int(duration_hours or default_hours)
+        effective_until = (now_utc + timedelta(hours=resolved_hours)).isoformat()
+        duration_hours = resolved_hours
+
+    event_type_by_action: dict[str, str] = {
+        "dismiss": "recommendation.dismissed",
+        "snooze": "recommendation.snoozed",
+        "mute_category": "recommendation.category_muted",
+        "feedback_useful": "recommendation.feedback.recorded",
+        "feedback_not_useful": "recommendation.feedback.recorded",
+    }
+    event_type = event_type_by_action[action]
+    metadata = {
+        "recommendation_id": recommendation_id,
+        "category": category,
+        "action": action,
+        "duration_hours": duration_hours,
+        "effective_until": effective_until,
+        "feedback_note": payload.feedback_note,
+        "useful": True if action == "feedback_useful" else (False if action == "feedback_not_useful" else None),
+        "source": "dashboard",
+    }
+
+    crud.create_premium_analytics_event(
+        db,
+        user_id=current_user.id,
+        event_type=event_type,
+        touchpoint="dashboard.proactive_recommendations",
+        capability="premium_proactive_copilot",
+        metadata=metadata,
+    )
+
+    emit_event(
+        logger,
+        "recommendation.action.recorded",
+        category="recommendation",
+        user_id=current_user.id,
+        recommendation_id=recommendation_id,
+        recommendation_action=action,
+        recommendation_category=category,
+        effective_until=effective_until,
+    )
+
+    return ProactiveRecommendationActionResponse(
+        action=payload.action,
+        event_type=event_type,
+        recommendation_id=recommendation_id,
+        category=payload.category,
+        effective_until=effective_until,
+    )
+
+
 def _run_study_plan_with_thread_session(
     doc_name: str,
     doc_id: str,
@@ -511,6 +1159,7 @@ async def get_daily_question(
     db: Session = Depends(get_db),
 ):
     """Retorna (ou gera) a pergunta do dia a partir dos documentos do usuário."""
+    _require_proactive_copilot_access(current_user)
     import random
     from datetime import date
 
@@ -758,6 +1407,7 @@ async def run_gap_analysis(
     db: Session = Depends(get_db),
 ):
     """Analisa lacunas de aprendizado: tópicos nos docs não cobertos por flashcards/tarefas."""
+    _require_proactive_copilot_access(current_user)
     docs = crud.list_documents_for_user(db, current_user.id)
     if not docs:
         raise HTTPException(status_code=404, detail="Nenhum documento encontrado.")
@@ -866,7 +1516,8 @@ async def evaluate_answer(
     payload: EvaluateAnswerRequest,
     current_user: User = Depends(get_current_user),
 ):
-    """Avalia a resposta do usuário a uma pergunta do dia."""
+    """Evaluate a user answer for the daily-question flow."""
+    _require_proactive_copilot_access(current_user)
     try:
         feedback, score = await asyncio.to_thread(
             _run_evaluate_answer,

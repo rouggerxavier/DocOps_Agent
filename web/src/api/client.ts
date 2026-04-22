@@ -8,6 +8,31 @@ export const api = axios.create({
   timeout: 15000, // 15s — evita tela preta se o backend não responder
 })
 
+api.interceptors.response.use(
+  (response) => {
+    const url = String(response.config?.url ?? '')
+    const responseType = String(response.config?.responseType ?? 'json').toLowerCase()
+    const contentType = String(response.headers?.['content-type'] ?? '').toLowerCase()
+
+    // If an API request expects JSON but receives app HTML fallback, fail fast.
+    const expectsJson = responseType === 'json'
+    if (expectsJson && url.includes('/api/') && contentType.includes('text/html')) {
+      const error = new Error(
+        `API endpoint returned HTML fallback instead of JSON: ${url}.`,
+      ) as Error & {
+        response?: typeof response
+        is_api_html_fallback?: boolean
+      }
+      error.response = response
+      error.is_api_html_fallback = true
+      throw error
+    }
+
+    return response
+  },
+  (error) => Promise.reject(error),
+)
+
 const INGEST_TIMEOUT_MS = 180000
 const FLASHCARD_GENERATION_TIMEOUT_MS = 180000
 
@@ -75,6 +100,26 @@ export interface CapabilitiesResponse {
   map: Record<string, boolean>
   disable_all: boolean
   enable_all: boolean
+  entitlements_enabled: boolean
+  entitlement_tier: string
+  entitlement_map: Record<string, boolean>
+  entitlement_capabilities: EntitlementCapability[]
+}
+
+export interface EntitlementCapability {
+  key: string
+  enabled: boolean
+  required_tier: string
+  description: string
+}
+
+export interface LockedFeatureDetail {
+  error: string
+  code: string
+  message: string
+  capability: string
+  required_tier: string
+  current_tier: string
 }
 
 export interface UserPreferences {
@@ -221,6 +266,7 @@ export interface ArtifactTemplate {
   summary_modes: string[]
   default_for_summary_modes: string[]
   default_for_artifact_types: string[]
+  locked?: boolean
 }
 
 export interface ArtifactFilterOptions {
@@ -451,9 +497,194 @@ export interface GapAnalysisResponse {
   docs_analyzed: number
 }
 
+export type ProactiveRecommendationCategory = 'coverage' | 'schedule' | 'quality' | 'consistency'
+
+export type ProactiveRecommendationAction =
+  | 'dismiss'
+  | 'snooze'
+  | 'mute_category'
+  | 'feedback_useful'
+  | 'feedback_not_useful'
+
+export interface ProactiveRecommendationItem {
+  id: string
+  category: ProactiveRecommendationCategory
+  title: string
+  description: string
+  why_this: string
+  action_label: string
+  action_to: string
+  score: number
+  signals: Record<string, any>
+}
+
+export interface ProactiveRecommendationsResponse {
+  generated_at: string
+  recommendation_count: number
+  recommendations: ProactiveRecommendationItem[]
+}
+
+export interface ProactiveRecommendationActionPayload {
+  recommendation_id: string
+  category?: ProactiveRecommendationCategory
+  action: ProactiveRecommendationAction
+  duration_hours?: number
+  feedback_note?: string
+}
+
+export interface ProactiveRecommendationActionResponse {
+  status: string
+  action: ProactiveRecommendationAction
+  event_type: string
+  recommendation_id: string
+  category: ProactiveRecommendationCategory | null
+  effective_until: string | null
+}
+
+export type PremiumAnalyticsEventType =
+  | 'premium_touchpoint_viewed'
+  | 'upgrade_initiated'
+  | 'upgrade_completed'
+  | 'premium_feature_activation'
+
+export interface PremiumAnalyticsTrackPayload {
+  event_type: PremiumAnalyticsEventType
+  touchpoint: string
+  capability?: string
+  metadata?: Record<string, any>
+}
+
+export interface PremiumAnalyticsTrackResponse {
+  status: string
+  id: number
+  event_type: PremiumAnalyticsEventType
+  touchpoint: string
+  capability?: string | null
+  created_at: string
+}
+
+export interface PremiumFunnelStageStats {
+  events: number
+  users: number
+}
+
+export interface PremiumFunnelTouchpoint {
+  touchpoint: string
+  capability?: string | null
+  stages: Record<PremiumAnalyticsEventType, PremiumFunnelStageStats>
+  conversion: {
+    view_to_upgrade_initiated: number | null
+    initiated_to_completed: number | null
+    completed_to_activation: number | null
+    view_to_activation: number | null
+  }
+}
+
+export interface PremiumFunnelOverall {
+  viewed_users: number
+  upgrade_initiated_users: number
+  upgrade_completed_users: number
+  activated_users: number
+  conversion: {
+    view_to_upgrade_initiated: number | null
+    initiated_to_completed: number | null
+    completed_to_activation: number | null
+    view_to_activation: number | null
+  }
+}
+
+export interface PremiumFunnelResponse {
+  window_days: number
+  generated_at: string
+  totals: {
+    events: number
+    users: number
+    touchpoints: number
+  }
+  overall: PremiumFunnelOverall
+  touchpoints: PremiumFunnelTouchpoint[]
+}
+
+export type RecommendationAnalyticsAction =
+  | 'dismiss'
+  | 'snooze'
+  | 'mute_category'
+  | 'feedback_useful'
+  | 'feedback_not_useful'
+
+export interface RecommendationAnalyticsActionBreakdown {
+  dismiss: number
+  snooze: number
+  mute_category: number
+  feedback_useful: number
+  feedback_not_useful: number
+  total: number
+  feedback_useful_rate: number | null
+}
+
+export interface RecommendationCategoryAnalyticsItem {
+  category: string
+  actions: RecommendationAnalyticsActionBreakdown
+  users: number
+  recommendations: number
+}
+
+export interface RecommendationTouchpointAnalyticsItem {
+  touchpoint: string
+  actions: RecommendationAnalyticsActionBreakdown
+  users: number
+  recommendations: number
+}
+
+export interface RecommendationAnalyticsTotals {
+  events: number
+  users: number
+  categories: number
+  touchpoints: number
+  recommendations: number
+}
+
+export interface PremiumRecommendationAnalyticsResponse {
+  window_days: number
+  generated_at: string
+  totals: RecommendationAnalyticsTotals
+  actions: RecommendationAnalyticsActionBreakdown
+  categories: RecommendationCategoryAnalyticsItem[]
+  touchpoints: RecommendationTouchpointAnalyticsItem[]
+}
+
 // ── Reading Status ─────────────────────────────────────────────────────────────
 
 export type ReadingStatus = 'to_read' | 'reading' | 'done'
+
+function looksLikeLockedDetail(value: unknown): value is LockedFeatureDetail {
+  if (!value || typeof value !== 'object') return false
+  const candidate = value as Record<string, unknown>
+  return (
+    candidate.error === 'feature_locked'
+    && typeof candidate.capability === 'string'
+    && typeof candidate.required_tier === 'string'
+    && typeof candidate.current_tier === 'string'
+  )
+}
+
+export function extractLockedFeatureDetail(error: unknown): LockedFeatureDetail | null {
+  const maybeError = error as {
+    response?: {
+      status?: number
+      data?: {
+        detail?: unknown
+      }
+    }
+  }
+  if (Number(maybeError?.response?.status) !== 403) return null
+  const detail = maybeError?.response?.data?.detail
+  return looksLikeLockedDetail(detail) ? detail : null
+}
+
+export function isLockedFeatureError(error: unknown): boolean {
+  return extractLockedFeatureDetail(error) !== null
+}
 
 // ── API functions ─────────────────────────────────────────────────────────────
 
@@ -1005,7 +1236,40 @@ export const apiClient = {
   runGapAnalysis: (docNames: string[] = []): Promise<GapAnalysisResponse> =>
     api.post('/api/pipeline/gap-analysis', { doc_names: docNames }, { timeout: 90000 }).then(r => r.data),
 
+  listProactiveRecommendations: (): Promise<ProactiveRecommendationsResponse> =>
+    api.get('/api/pipeline/recommendations').then(r => r.data),
+
+  recordProactiveRecommendationAction: (
+    payload: ProactiveRecommendationActionPayload,
+  ): Promise<ProactiveRecommendationActionResponse> =>
+    api.post('/api/pipeline/recommendations/actions', payload).then(r => r.data),
+
   // ── Reading Status ──────────────────────────────────────────────────────────
+
+  trackPremiumAnalyticsEvent: (payload: PremiumAnalyticsTrackPayload): Promise<PremiumAnalyticsTrackResponse> =>
+    api.post('/api/analytics/premium/events', payload).then(r => r.data),
+
+  getPremiumFunnel: (windowDays = 30): Promise<PremiumFunnelResponse> =>
+    api.get('/api/analytics/premium/funnel', { params: { window_days: windowDays } }).then(r => r.data),
+
+  getPremiumFunnelCsv: (windowDays = 30): Promise<Blob> =>
+    api
+      .get('/api/analytics/premium/funnel/export.csv', {
+        params: { window_days: windowDays },
+        responseType: 'blob',
+      })
+      .then(r => r.data as Blob),
+
+  getPremiumRecommendationAnalytics: (windowDays = 30): Promise<PremiumRecommendationAnalyticsResponse> =>
+    api.get('/api/analytics/premium/recommendations', { params: { window_days: windowDays } }).then(r => r.data),
+
+  getPremiumRecommendationAnalyticsCsv: (windowDays = 30): Promise<Blob> =>
+    api
+      .get('/api/analytics/premium/recommendations/export.csv', {
+        params: { window_days: windowDays },
+        responseType: 'blob',
+      })
+      .then(r => r.data as Blob),
 
   getReadingStatus: (): Promise<Record<string, ReadingStatus>> =>
     api.get('/api/docs/reading-status').then(r => r.data),

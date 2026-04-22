@@ -36,6 +36,7 @@ class MeResponse(BaseModel):
     id: int
     name: str
     email: str
+    is_admin: bool = False
     created_at: datetime
 
 
@@ -158,11 +159,31 @@ class CapabilityFlag(BaseModel):
     owner: str
 
 
+class EntitlementCapability(BaseModel):
+    key: str
+    enabled: bool
+    required_tier: str
+    description: str
+
+
+class LockedFeatureDetail(BaseModel):
+    error: str
+    code: str
+    message: str
+    capability: str
+    required_tier: str
+    current_tier: str
+
+
 class CapabilitiesResponse(BaseModel):
     flags: List[CapabilityFlag] = Field(default_factory=list)
     map: dict[str, bool] = Field(default_factory=dict)
     disable_all: bool = False
     enable_all: bool = False
+    entitlements_enabled: bool = False
+    entitlement_tier: str = "free"
+    entitlement_map: dict[str, bool] = Field(default_factory=dict)
+    entitlement_capabilities: List[EntitlementCapability] = Field(default_factory=list)
 
 
 # -- /api/preferences ---------------------------------------------------------
@@ -298,6 +319,7 @@ class ArtifactTemplateItem(BaseModel):
     summary_modes: List[str] = Field(default_factory=list)
     default_for_summary_modes: List[str] = Field(default_factory=list)
     default_for_artifact_types: List[str] = Field(default_factory=list)
+    locked: bool = False
 
 
 # ── /api/artifacts ────────────────────────────────────────────────────────────

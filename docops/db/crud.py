@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
 import re
 import unicodedata
 
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from docops.auth.admin import is_admin_email
 from docops.db.models import (
     ArtifactRecord,
     DocumentRecord,
+    PremiumAnalyticsEventRecord,
     ReminderRecord,
     ScheduleRecord,
     User,
@@ -29,8 +32,20 @@ def get_user_by_id(db: Session, user_id: int) -> User | None:
     return db.get(User, user_id)
 
 
-def create_user(db: Session, name: str, email: str, password_hash: str) -> User:
-    user = User(name=name, email=email, password_hash=password_hash)
+def create_user(
+    db: Session,
+    name: str,
+    email: str,
+    password_hash: str,
+    is_admin: bool | None = None,
+) -> User:
+    resolved_admin = bool(is_admin) if is_admin is not None else is_admin_email(email)
+    user = User(
+        name=name,
+        email=email,
+        password_hash=password_hash,
+        is_admin=resolved_admin,
+    )
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -42,6 +57,10 @@ def get_or_create_google_user(db: Session, email: str, name: str) -> User:
     user = get_user_by_email(db, email)
     if not user:
         user = create_user(db, name=name, email=email, password_hash="__google_oauth__")
+    elif not bool(user.is_admin) and is_admin_email(email):
+        user.is_admin = True
+        db.commit()
+        db.refresh(user)
     return user
 
 
@@ -1145,3 +1164,86 @@ def upsert_reading_status(db: Session, user_id: int, doc_id: str, status: str) -
     db.commit()
     db.refresh(record)
     return record
+
+
+# -- PremiumAnalyticsEventRecord ----------------------------------------------
+
+def _normalize_touchpoint(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    return normalized[:128]
+
+
+def _normalize_capability(value: str | None) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if not normalized:
+        return None
+    return normalized[:64]
+
+
+def create_premium_analytics_event(
+    db: Session,
+    *,
+    user_id: int,
+    event_type: str,
+    touchpoint: str,
+    capability: str | None = None,
+    correlation_id: str | None = None,
+    metadata: dict[str, object] | None = None,
+) -> PremiumAnalyticsEventRecord:
+    normalized_touchpoint = _normalize_touchpoint(touchpoint)
+    if not normalized_touchpoint:
+        raise ValueError("touchpoint must not be empty")
+
+    metadata_payload = metadata if isinstance(metadata, dict) else {}
+    metadata_json = json.dumps(metadata_payload, ensure_ascii=False, sort_keys=True) if metadata_payload else None
+
+    record = PremiumAnalyticsEventRecord(
+        user_id=user_id,
+        event_type=str(event_type or "").strip().lower()[:64],
+        touchpoint=normalized_touchpoint,
+        capability=_normalize_capability(capability),
+        correlation_id=(str(correlation_id or "").strip()[:128] or None),
+        metadata_json=metadata_json,
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def list_premium_analytics_events_since(
+    db: Session,
+    *,
+    since: datetime,
+) -> list[PremiumAnalyticsEventRecord]:
+    since_utc = since
+    if since_utc.tzinfo is None:
+        since_utc = since_utc.replace(tzinfo=timezone.utc)
+
+    return (
+        db.query(PremiumAnalyticsEventRecord)
+        .filter(PremiumAnalyticsEventRecord.created_at >= since_utc)
+        .order_by(PremiumAnalyticsEventRecord.created_at.asc(), PremiumAnalyticsEventRecord.id.asc())
+        .all()
+    )
+
+
+def list_premium_analytics_events_for_user_since(
+    db: Session,
+    *,
+    user_id: int,
+    since: datetime,
+) -> list[PremiumAnalyticsEventRecord]:
+    since_utc = since
+    if since_utc.tzinfo is None:
+        since_utc = since_utc.replace(tzinfo=timezone.utc)
+
+    return (
+        db.query(PremiumAnalyticsEventRecord)
+        .filter(
+            PremiumAnalyticsEventRecord.user_id == int(user_id),
+            PremiumAnalyticsEventRecord.created_at >= since_utc,
+        )
+        .order_by(PremiumAnalyticsEventRecord.created_at.asc(), PremiumAnalyticsEventRecord.id.asc())
+        .all()
+    )
