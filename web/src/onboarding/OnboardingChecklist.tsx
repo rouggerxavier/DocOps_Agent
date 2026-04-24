@@ -1,10 +1,17 @@
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { Check, ChevronRight, ChevronDown, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useOnboarding } from './OnboardingContext'
+import { useCapabilities, type EntitlementCapabilityKey } from '@/features/CapabilitiesProvider'
+import { trackUpgradeInitiated } from '@/features/premiumAnalytics'
 import type { OnboardingSectionView } from '@/api/client'
+
+const PREMIUM_STEP_CAPABILITIES: Partial<Record<string, EntitlementCapabilityKey>> = {
+  'chat.memory': 'premium_personalization',
+  'artifacts.premium_templates': 'premium_artifact_templates',
+}
 
 function ProgressBar({ value, max }: { value: number; max: number }) {
   const pct = max > 0 ? Math.round((value / max) * 100) : 0
@@ -22,16 +29,24 @@ function SectionBlock({
   section,
   onStepClick,
   onSkipSection,
+  onUpgradeIntent,
   isPending,
 }: {
   section: OnboardingSectionView
   onStepClick: (stepId: string) => void
   onSkipSection: (sectionId: string) => void
+  onUpgradeIntent: (stepId: string, sectionId: string) => void
   isPending: boolean
 }) {
+  const capabilities = useCapabilities()
   const [collapsed, setCollapsed] = useState(false)
   const completedCount = section.steps.filter((s) => s.completed_at !== null).length
   const allDone = completedCount === section.steps.length
+
+  function isStepLocked(stepId: string): boolean {
+    const capKey = PREMIUM_STEP_CAPABILITIES[stepId]
+    return Boolean(capKey && capabilities.entitlementsEnabled && !capabilities.hasCapability(capKey))
+  }
 
   return (
     <div className="rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)]">
@@ -54,39 +69,64 @@ function SectionBlock({
         <div className="border-t border-[color:var(--ui-border-soft)] px-4 pb-3 pt-2 space-y-2">
           {section.steps.map((step) => {
             const done = step.completed_at !== null
+            const locked = !done && step.premium && isStepLocked(step.id)
             return (
-              <div key={step.id} className="flex items-center gap-3">
+              <div
+                key={step.id}
+                className={cn(
+                  'flex items-center gap-3 rounded-lg px-1 py-0.5',
+                  locked && 'rounded-lg border border-amber-500/20 bg-amber-900/8 px-2 py-1',
+                )}
+              >
                 <div
                   className={cn(
                     'flex h-5 w-5 shrink-0 items-center justify-center rounded-full',
                     done
                       ? 'bg-[color:var(--ui-accent)] text-[color:var(--ui-bg)]'
-                      : 'border border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-2)]',
+                      : locked
+                        ? 'border border-amber-500/40 bg-amber-900/20'
+                        : 'border border-[color:var(--ui-border-strong)] bg-[color:var(--ui-surface-2)]',
                   )}
                 >
                   {done && <Check className="h-3 w-3" strokeWidth={3} />}
+                  {locked && <Sparkles className="h-2.5 w-2.5 text-amber-300" />}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <p className={cn('text-xs font-medium', done ? 'text-[color:var(--ui-text-dim)] line-through' : 'text-[color:var(--ui-text)]')}>
-                    {step.title}
-                  </p>
-                  {step.premium && !done && (
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-300">Premium</span>
-                  )}
+                  <div className="flex items-center gap-1.5">
+                    <p className={cn('text-xs font-medium', done ? 'text-[color:var(--ui-text-dim)] line-through' : 'text-[color:var(--ui-text)]')}>
+                      {step.title}
+                    </p>
+                    {locked && (
+                      <span className="shrink-0 rounded-full bg-amber-500/20 px-1 py-px text-[8px] font-bold uppercase tracking-wider text-amber-300">
+                        Pro
+                      </span>
+                    )}
+                  </div>
                 </div>
                 {!done && (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    asChild
-                    className="h-7 shrink-0 px-2 text-[11px] text-[color:var(--ui-accent)]"
-                    onClick={() => onStepClick(step.id)}
-                  >
-                    <Link to={section.route}>
-                      Ir
-                      <ChevronRight className="h-3 w-3" />
-                    </Link>
-                  </Button>
+                  locked ? (
+                    <button
+                      type="button"
+                      onClick={() => onUpgradeIntent(step.id, section.id)}
+                      className="flex h-7 shrink-0 items-center gap-1 rounded-lg border border-amber-500/35 bg-amber-500/12 px-2 text-[11px] text-amber-200 transition-colors hover:bg-amber-500/20"
+                    >
+                      <Sparkles className="h-2.5 w-2.5" />
+                      Pro
+                    </button>
+                  ) : (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      asChild
+                      className="h-7 shrink-0 px-2 text-[11px] text-[color:var(--ui-accent)]"
+                      onClick={() => onStepClick(step.id)}
+                    >
+                      <Link to={section.route}>
+                        Ir
+                        <ChevronRight className="h-3 w-3" />
+                      </Link>
+                    </Button>
+                  )
                 )}
               </div>
             )
@@ -112,6 +152,7 @@ function SectionBlock({
 
 export function OnboardingChecklist({ className }: { className?: string }) {
   const { state, postEvent, isPending } = useOnboarding()
+  const navigate = useNavigate()
   const [hidden, setHidden] = useState(false)
 
   if (!state || state.tour.completed || state.tour.skipped || hidden) return null
@@ -128,6 +169,17 @@ export function OnboardingChecklist({ className }: { className?: string }) {
 
   function handleSkipAll() {
     void postEvent({ event_type: 'tour_skipped' })
+  }
+
+  function handleUpgradeIntent(stepId: string, sectionId: string) {
+    void postEvent({
+      event_type: 'upgrade_intent_from_onboarding',
+      step_id: stepId,
+      section_id: sectionId,
+      metadata: { premium_cta: stepId },
+    })
+    trackUpgradeInitiated({ touchpoint: 'onboarding.checklist_premium_step', metadata: { step_id: stepId } })
+    void navigate('/settings')
   }
 
   const nonSkippedSections = state.sections.filter((s) => !s.skipped)
@@ -172,6 +224,7 @@ export function OnboardingChecklist({ className }: { className?: string }) {
             section={section}
             onStepClick={handleStepClick}
             onSkipSection={handleSkipSection}
+            onUpgradeIntent={handleUpgradeIntent}
             isPending={isPending}
           />
         ))}
