@@ -53,6 +53,8 @@ docs/*
 !docs/runbooks/*.md
 !docs/roadmaps/
 !docs/roadmaps/*.md
+!docs/onboarding/
+!docs/onboarding/*.md
 
 # Logs
 *.log
