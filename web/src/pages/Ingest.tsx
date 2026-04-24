@@ -9,6 +9,7 @@ import { apiClient, type IngestResponse } from '@/api/client'
 import { cn } from '@/lib/utils'
 import * as XLSX from 'xlsx'
 import { SectionIntro } from '@/onboarding/SectionIntro'
+import { useStepAutoComplete } from '@/onboarding/useStepAutoComplete'
 
 type TabularPreview = {
   fileName: string
@@ -101,12 +102,15 @@ export function Ingest() {
   const [photoPreview, setPhotoPreview] = useState<string | null>(null)
 
   const [result, setResult] = useState<IngestResponse | null>(null)
+  const [ingestDone, setIngestDone] = useState(false)
+  useStepAutoComplete('ingest.first_upload', ingestDone)
 
   const uploadMutation = useMutation({
     mutationFn: () => apiClient.ingestUpload(selectedFiles),
     onSuccess: data => {
       setResult(data)
       setSelectedFiles([])
+      setIngestDone(true)
       queryClient.invalidateQueries({ queryKey: ['docs'] })
       toast.success('Documentos indexados com sucesso!')
     },
@@ -118,6 +122,7 @@ export function Ingest() {
     onSuccess: data => {
       setResult(data)
       setServerPath('')
+      setIngestDone(true)
       queryClient.invalidateQueries({ queryKey: ['docs'] })
       toast.success('Documentos indexados com sucesso!')
     },
@@ -130,6 +135,7 @@ export function Ingest() {
       setResult(data)
       setClipText('')
       setClipTitle('')
+      setIngestDone(true)
       queryClient.invalidateQueries({ queryKey: ['docs'] })
       toast.success('Documento indexado com sucesso!')
     },
@@ -143,6 +149,7 @@ export function Ingest() {
       setPhotoFile(null)
       setPhotoTitle('')
       setPhotoPreview(null)
+      setIngestDone(true)
       queryClient.invalidateQueries({ queryKey: ['docs'] })
       toast.success('Documento indexado com sucesso!')
     },

@@ -31,6 +31,7 @@ import { useCapabilities } from '@/features/CapabilitiesProvider'
 import { trackPremiumFeatureActivation, trackPremiumTouchpointViewed, trackUpgradeCompleted, trackUpgradeInitiated } from '@/features/premiumAnalytics'
 import { cn } from '@/lib/utils'
 import { SectionIntro } from '@/onboarding/SectionIntro'
+import { useStepAutoComplete } from '@/onboarding/useStepAutoComplete'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -1486,6 +1487,10 @@ export function Chat() {
   const [treatmentPickerOpen, setTreatmentPickerOpen] = useState(false)
   const [pendingFlashcardCommand, setPendingFlashcardCommand] = useState<FlashcardCommandPlan | null>(null)
   const [savingArtifactTurnRef, setSavingArtifactTurnRef] = useState<string | null>(null)
+  const [chatDone, setChatDone] = useState(false)
+  const [artifactSavedFromChat, setArtifactSavedFromChat] = useState(false)
+  useStepAutoComplete('chat.first_question', chatDone)
+  useStepAutoComplete('artifacts.first_save', artifactSavedFromChat)
   const bottomRef = useRef<HTMLDivElement>(null)
   const streamAbortRef = useRef<AbortController | null>(null)
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -2151,6 +2156,7 @@ export function Chat() {
     onSuccess: (data, variables) => {
       finalizeStreamingAssistantMessage(variables.sessionId, data, variables.displayMessage)
       updateSessionActiveContext(variables.sessionId, normalizeActiveContext(data.active_context))
+      setChatDone(true)
 
       if (data.sources.length > 0) {
         setActiveSources(data.sources)
@@ -2252,6 +2258,7 @@ export function Chat() {
         capability: 'premium_chat_to_artifact',
         metadata: { surface: 'chat', artifact_filename: result.filename },
       }, false)
+      setArtifactSavedFromChat(true)
       toast.success(`Artefato salvo: ${result.filename}`)
       setSavingArtifactTurnRef(null)
     },

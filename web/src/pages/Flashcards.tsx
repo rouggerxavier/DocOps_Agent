@@ -12,6 +12,7 @@ import { Input } from '@/components/ui/input'
 import { apiClient, type FlashcardDeck, type FlashcardDeckListItem, type DocItem } from '@/api/client'
 import { cn } from '@/lib/utils'
 import { SectionIntro } from '@/onboarding/SectionIntro'
+import { useStepAutoComplete } from '@/onboarding/useStepAutoComplete'
 
 // ── Difficulty helpers ──────────────────────────────────────────────────────
 
@@ -921,6 +922,8 @@ export function Flashcards() {
   const [showGenerate, setShowGenerate] = useState(false)
   const [studyDeckId, setStudyDeckId] = useState<number | null>(null)
   const [generateError, setGenerateError] = useState<string | null>(null)
+  const [flashcardGenerated, setFlashcardGenerated] = useState(false)
+  useStepAutoComplete('study.flashcards', flashcardGenerated)
 
   function getGenerateFlashcardsErrorMessage(error: unknown): string {
     if (axios.isAxiosError(error) && error.code === 'ECONNABORTED') {
@@ -981,6 +984,7 @@ export function Flashcards() {
     },
     onSuccess: (deck) => {
       setGenerateError(null)
+      setFlashcardGenerated(true)
       qc.setQueryData<FlashcardDeckListItem[]>(['flashcard-decks'], (current = []) => {
         const nextItem: FlashcardDeckListItem = {
           id: deck.id,
