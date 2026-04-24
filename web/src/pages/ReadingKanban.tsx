@@ -17,6 +17,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { PageShell } from '@/components/ui/page-shell'
 import { apiClient, type DocItem, type GapAnalysisResponse, type ReadingStatus } from '@/api/client'
 import { cn } from '@/lib/utils'
+import { SectionIntro } from '@/onboarding/SectionIntro'
 
 type ColumnConfig = {
   key: ReadingStatus
@@ -325,6 +326,7 @@ export function ReadingKanban() {
   return (
     <>
       <PageShell className="space-y-6">
+        <SectionIntro sectionId="study" />
         <header className="flex flex-wrap items-center justify-between gap-3 border-b pb-4 app-divider sm:pb-5">
           <div>
             <h1 className="font-headline text-2xl font-extrabold tracking-tight text-[color:var(--ui-text)] sm:text-3xl">Kanban de Leitura</h1>

@@ -23,6 +23,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { PageShell } from '@/components/ui/page-shell'
 import { apiClient, type DocItem, type StudyPlanDocResponse, type StudyPlanItem } from '@/api/client'
 import { cn } from '@/lib/utils'
+import { SectionIntro } from '@/onboarding/SectionIntro'
 
 function formatDate(date: string) {
   const d = new Date(`${date}T00:00:00`)
@@ -447,6 +448,7 @@ export function StudyPlan() {
 
   return (
     <PageShell className="space-y-6">
+      <SectionIntro sectionId="study" />
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="app-kicker">Sovereign Architect</p>

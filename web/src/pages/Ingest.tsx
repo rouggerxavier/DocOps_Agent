@@ -8,6 +8,7 @@ import { PageHeader, PageShell } from '@/components/ui/page-shell'
 import { apiClient, type IngestResponse } from '@/api/client'
 import { cn } from '@/lib/utils'
 import * as XLSX from 'xlsx'
+import { SectionIntro } from '@/onboarding/SectionIntro'
 
 type TabularPreview = {
   fileName: string
@@ -194,6 +195,7 @@ export function Ingest() {
 
   return (
     <PageShell className="space-y-8">
+      <SectionIntro sectionId="ingest" />
       <PageHeader
         title="Inserção de Documentos"
         subtitle="Alimente o cérebro do DocOps Agent com novos conhecimentos. Os documentos são processados e indexados para consulta imediata."

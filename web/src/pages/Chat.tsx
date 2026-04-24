@@ -30,6 +30,7 @@ import {
 import { useCapabilities } from '@/features/CapabilitiesProvider'
 import { trackPremiumFeatureActivation, trackPremiumTouchpointViewed, trackUpgradeCompleted, trackUpgradeInitiated } from '@/features/premiumAnalytics'
 import { cn } from '@/lib/utils'
+import { SectionIntro } from '@/onboarding/SectionIntro'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -2628,6 +2629,8 @@ export function Chat() {
   }, [isPersonalizationUnlocked, preferencesQuery.isError, preferencesQuery.isLoading])
 
   return (
+    <>
+    <SectionIntro sectionId="chat" className="mx-2 mt-2" />
     <div className={cn(
       'chat-no-glass relative flex h-[calc(100svh-3.5rem)] overflow-hidden bg-transparent md:h-[100dvh]',
       isMobile
@@ -3450,6 +3453,7 @@ export function Chat() {
       )}
 
     </div>
+    </>
   )
 }
 

@@ -39,6 +39,7 @@ import {
 import { useAuth } from '@/auth/AuthProvider'
 import { useCapabilities } from '@/features/CapabilitiesProvider'
 import { OnboardingChecklist } from '@/onboarding/OnboardingChecklist'
+import { SectionIntro } from '@/onboarding/SectionIntro'
 import { trackPremiumFeatureActivation, trackPremiumTouchpointViewed, trackUpgradeCompleted, trackUpgradeInitiated } from '@/features/premiumAnalytics'
 import { cn } from '@/lib/utils'
 import { PageShell } from '@/components/ui/page-shell'
@@ -1008,6 +1009,7 @@ export function Dashboard() {
   }
   return (
     <PageShell className="space-y-4 pb-20 sm:space-y-6 md:pb-0">
+      <SectionIntro sectionId="dashboard" />
       <section className="px-1 py-1 sm:px-0">
         <p className="text-[10px] uppercase tracking-[0.14em] text-[color:var(--ui-text-meta)] sm:text-[11px] sm:tracking-[0.18em]">
           {todayLabel} - {currentTimeLabel}

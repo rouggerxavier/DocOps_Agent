@@ -20,6 +20,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { PageHeader, PageShell } from '@/components/ui/page-shell'
+import { SectionIntro } from '@/onboarding/SectionIntro'
 
 const DEFAULT_PREFERENCES: UserPreferences = {
   schema_version: 1,
@@ -409,6 +410,7 @@ export function Preferences() {
 
   return (
     <PageShell className="space-y-6">
+      <SectionIntro sectionId="settings" />
       <PageHeader
         title="Configurações de Preferência"
         subtitle="Controle o estilo padrão das respostas e o comportamento de estudo."

@@ -12,6 +12,7 @@ import { apiClient, type ArtifactFilterOptions, type ArtifactItem, type Artifact
 import { useCapabilities } from '@/features/CapabilitiesProvider'
 import { trackPremiumFeatureActivation, trackPremiumTouchpointViewed, trackUpgradeCompleted, trackUpgradeInitiated } from '@/features/premiumAnalytics'
 import { formatBytes, formatDate } from '@/lib/utils'
+import { SectionIntro } from '@/onboarding/SectionIntro'
 
 const MARKDOWN_FILE_RE = /\.(md|markdown|txt)$/i
 const ARTIFACT_SORT_OPTIONS = [
@@ -1387,6 +1388,7 @@ export function Artifacts() {
       <div className="fixed bottom-0 left-0 -z-10 w-[400px] h-[400px] bg-amber-400/5 blur-[100px] rounded-full -translate-x-1/2 translate-y-1/2 pointer-events-none" />
 
       <div className="px-4 py-6 space-y-8 sm:px-6 sm:py-8 sm:space-y-12">
+        <SectionIntro sectionId="artifacts" />
 
         {/* ── Hero ── */}
         <header>

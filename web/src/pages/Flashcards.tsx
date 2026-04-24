@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { apiClient, type FlashcardDeck, type FlashcardDeckListItem, type DocItem } from '@/api/client'
 import { cn } from '@/lib/utils'
+import { SectionIntro } from '@/onboarding/SectionIntro'
 
 // ── Difficulty helpers ──────────────────────────────────────────────────────
 
@@ -1046,6 +1047,7 @@ export function Flashcards() {
         }} />
 
       <div className="px-4 py-6 max-w-7xl mx-auto sm:px-8 sm:py-10">
+        <SectionIntro sectionId="study" className="mb-6" />
 
         {/* ── Hero section ── */}
         <section className="flex flex-col gap-5 mb-8 sm:flex-row sm:items-end sm:justify-between sm:gap-8 sm:mb-16">

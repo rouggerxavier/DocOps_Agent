@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button'
 import { PageHeader, PageShell } from '@/components/ui/page-shell'
 import { apiClient, type TaskActivityLog, type TaskChecklistItem, type TaskItem } from '@/api/client'
 import { cn } from '@/lib/utils'
+import { SectionIntro } from '@/onboarding/SectionIntro'
 
 type FilterTab = 'all' | 'doing' | 'pending' | 'done'
 
@@ -571,6 +572,7 @@ export function Tasks() {
   return (
     <>
       <PageShell className="space-y-6">
+        <SectionIntro sectionId="productivity" />
         <PageHeader
           title="Tarefas"
           subtitle="Gerencie suas entregas e prazos com foco editorial."
