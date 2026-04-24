@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link } from 'react-router-dom'
-import { BarChart3, Download, RotateCcw, SlidersHorizontal, Sparkles, TrendingUp } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { BarChart3, BookOpen, Download, RotateCcw, SlidersHorizontal, Sparkles, TrendingUp } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
@@ -21,6 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { PageHeader, PageShell } from '@/components/ui/page-shell'
 import { SectionIntro } from '@/onboarding/SectionIntro'
+import { useOnboarding } from '@/onboarding/OnboardingContext'
 
 const DEFAULT_PREFERENCES: UserPreferences = {
   schema_version: 1,
@@ -316,6 +317,36 @@ export function Preferences() {
   const analyticsUnavailable = !analyticsHasData && Boolean(funnelError) && Boolean(recommendationError)
 
   const isBusy = updateMutation.isPending || resetAllMutation.isPending
+
+  // ── Tutorial controls (Fase 8) ──────────────────────────────────────────────
+  const navigate = useNavigate()
+  const { postEvent: postOnboardingEvent, isPending: isOnboardingPending } = useOnboarding()
+  const onboardingEnabled = capabilities.isEnabled('onboarding_enabled')
+  const [confirmTutorialReset, setConfirmTutorialReset] = useState(false)
+
+  const onboardingHardResetMutation = useMutation({
+    mutationFn: apiClient.resetOnboarding,
+    onSuccess: (data) => {
+      queryClient.setQueryData(['onboarding-state'], data)
+      setConfirmTutorialReset(false)
+      toast.success('Progresso do tutorial resetado. Redirecionando...')
+      void navigate('/dashboard')
+    },
+    onError: () => {
+      setConfirmTutorialReset(false)
+      toast.error('Falha ao resetar progresso do tutorial.')
+    },
+  })
+
+  async function handleReverTutorial() {
+    try {
+      await postOnboardingEvent({ event_type: 'tour_reset' })
+      toast.success('Tutorial reiniciado!')
+      void navigate('/dashboard')
+    } catch {
+      toast.error('Falha ao reiniciar o tutorial.')
+    }
+  }
 
   const handleExportFunnelCsv = async () => {
     try {
@@ -716,6 +747,66 @@ export function Preferences() {
             </CardContent>
           </Card>
         </>
+      )}
+
+      {onboardingEnabled && (
+        <Card className="border-zinc-800 bg-zinc-900">
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-sm">
+              <BookOpen className="h-4 w-4 text-[color:var(--ui-accent)]" />
+              Tutorial
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-xs text-zinc-400">
+              Reveja o tour guiado ou recomece do zero. "Rever" limpa o histórico de exibição sem apagar o progresso de passos já concluídos; "Resetar" apaga tudo.
+            </p>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={isOnboardingPending || onboardingHardResetMutation.isPending}
+                onClick={() => void handleReverTutorial()}
+                className="h-8 gap-1.5 border-zinc-700 bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
+              >
+                <RotateCcw className="h-3.5 w-3.5" />
+                Rever tutorial
+              </Button>
+
+              {!confirmTutorialReset ? (
+                <button
+                  type="button"
+                  disabled={isOnboardingPending || onboardingHardResetMutation.isPending}
+                  onClick={() => setConfirmTutorialReset(true)}
+                  className="text-xs text-zinc-500 transition-colors hover:text-rose-400"
+                >
+                  Resetar progresso completo
+                </button>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={onboardingHardResetMutation.isPending}
+                    onClick={() => onboardingHardResetMutation.mutate()}
+                    className="h-7 border border-rose-500/50 bg-rose-500/15 px-3 text-[11px] text-rose-300 hover:bg-rose-500/25"
+                  >
+                    {onboardingHardResetMutation.isPending ? 'Resetando...' : 'Confirmar reset'}
+                  </Button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmTutorialReset(false)}
+                    className="text-xs text-zinc-500 hover:text-zinc-300"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       )}
     </PageShell>
   )
