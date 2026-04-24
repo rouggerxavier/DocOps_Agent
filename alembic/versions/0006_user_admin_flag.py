@@ -42,7 +42,7 @@ def upgrade() -> None:
     if "is_admin" not in columns:
         op.add_column(
             "users",
-            sa.Column("is_admin", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+            sa.Column("is_admin", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         )
 
     indexes = _get_index_names("users")
