@@ -7,6 +7,7 @@ import {
   type OnboardingStateResponse,
 } from '@/api/client'
 import { useCapabilities } from '@/features/CapabilitiesProvider'
+import { WelcomeModal } from './WelcomeModal'
 
 const QUERY_KEY = ['onboarding-state']
 
@@ -49,7 +50,12 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     [state, loading, postEvent, mutation.isPending],
   )
 
-  return <OnboardingContext.Provider value={value}>{children}</OnboardingContext.Provider>
+  return (
+    <OnboardingContext.Provider value={value}>
+      {children}
+      <WelcomeModal />
+    </OnboardingContext.Provider>
+  )
 }
 
 export function useOnboarding(): OnboardingContextValue {
