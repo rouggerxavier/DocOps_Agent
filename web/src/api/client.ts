@@ -686,6 +686,67 @@ export function isLockedFeatureError(error: unknown): boolean {
   return extractLockedFeatureDetail(error) !== null
 }
 
+// ── Onboarding types ──────────────────────────────────────────────────────────
+
+export interface OnboardingNextHint {
+  section: string
+  step: string
+}
+
+export interface OnboardingStepView {
+  id: string
+  title: string
+  description: string
+  premium: boolean
+  completion_mode: 'manual' | 'auto'
+  completed_at: string | null
+  next_hint: OnboardingNextHint | null
+}
+
+export interface OnboardingSectionView {
+  id: string
+  title: string
+  icon: string
+  route: string
+  skipped: boolean
+  skipped_at: string | null
+  steps: OnboardingStepView[]
+}
+
+export interface OnboardingProgress {
+  completed: number
+  total: number
+  required_total: number
+}
+
+export interface OnboardingTourState {
+  welcome_seen: boolean
+  started: boolean
+  completed: boolean
+  skipped: boolean
+  progress: OnboardingProgress
+}
+
+export interface OnboardingStateResponse {
+  schema_version: number
+  schema_upgrade_available: boolean
+  tour: OnboardingTourState
+  sections: OnboardingSectionView[]
+  last_step_seen: string | null
+}
+
+export interface OnboardingEventRequest {
+  event_type: string
+  step_id?: string
+  section_id?: string
+  metadata?: Record<string, unknown>
+}
+
+export interface OnboardingEventResponse {
+  recorded: boolean
+  state: OnboardingStateResponse
+}
+
 // ── API functions ─────────────────────────────────────────────────────────────
 
 export const apiClient = {
@@ -1276,4 +1337,13 @@ export const apiClient = {
 
   updateReadingStatus: (docId: string, status: ReadingStatus): Promise<{ doc_id: string; status: ReadingStatus }> =>
     api.patch(`/api/docs/${encodeURIComponent(docId)}/reading-status`, { status }).then(r => r.data),
+
+  getOnboardingState: (): Promise<OnboardingStateResponse> =>
+    api.get('/api/onboarding/state').then(r => r.data),
+
+  postOnboardingEvent: (payload: OnboardingEventRequest): Promise<OnboardingEventResponse> =>
+    api.post('/api/onboarding/events', payload).then(r => r.data),
+
+  resetOnboarding: (): Promise<OnboardingStateResponse> =>
+    api.post('/api/onboarding/reset').then(r => r.data),
 }

@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from '@/auth/AuthProvider'
 import { AppErrorBoundary } from '@/components/errors/AppErrorBoundary'
 import { Layout } from '@/components/layout/Layout'
 import { CapabilitiesProvider } from '@/features/CapabilitiesProvider'
+import { OnboardingProvider } from '@/onboarding/OnboardingContext'
 import { Artifacts } from '@/pages/Artifacts'
 import { Chat } from '@/pages/Chat'
 import { Dashboard } from '@/pages/Dashboard'
@@ -85,7 +86,7 @@ export default function App() {
               <Route path="/" element={<Landing />} />
               <Route path="/login" element={<RedirectIfAuth><Login /></RedirectIfAuth>} />
               <Route path="/register" element={<RedirectIfAuth><Register /></RedirectIfAuth>} />
-              <Route element={<RequireAuth><CapabilitiesProvider><Layout /></CapabilitiesProvider></RequireAuth>}>
+              <Route element={<RequireAuth><CapabilitiesProvider><OnboardingProvider><Layout /></OnboardingProvider></CapabilitiesProvider></RequireAuth>}>
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/ingest" element={<Ingest />} />
                 <Route path="/chat" element={<Chat />} />

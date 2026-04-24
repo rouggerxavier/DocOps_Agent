@@ -38,6 +38,7 @@ import {
 } from '@/api/client'
 import { useAuth } from '@/auth/AuthProvider'
 import { useCapabilities } from '@/features/CapabilitiesProvider'
+import { OnboardingChecklist } from '@/onboarding/OnboardingChecklist'
 import { trackPremiumFeatureActivation, trackPremiumTouchpointViewed, trackUpgradeCompleted, trackUpgradeInitiated } from '@/features/premiumAnalytics'
 import { cn } from '@/lib/utils'
 import { PageShell } from '@/components/ui/page-shell'
@@ -187,41 +188,6 @@ function QuickActionTile({
   )
 }
 
-function OnboardingSteps() {
-  const steps = [
-    { n: 1, label: 'Inserir documento', sub: 'PDF, markdown ou TXT', to: '/ingest', cta: 'Inserir' },
-    { n: 2, label: 'Conversar no chat', sub: 'Perguntas com grounding', to: '/chat', cta: 'Abrir chat' },
-    { n: 3, label: 'Salvar artefatos', sub: 'Resumo, checklist e notas', to: '/artifacts', cta: 'Ver artefatos' },
-  ]
-
-  return (
-    <SurfaceCard className="bg-[color:var(--ui-surface-2)]">
-      <div className="mb-6 flex items-center gap-2">
-        <Sparkles className="h-4 w-4 text-[color:var(--ui-accent)]" />
-        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[color:var(--ui-text-meta)]">Primeiros passos</p>
-      </div>
-      <div className="space-y-4">
-        {steps.map((step) => (
-          <div key={step.n} className="flex items-center gap-3">
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[color:var(--ui-surface-3)] text-xs font-semibold text-[color:var(--ui-text-dim)]">
-              {step.n}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium text-[color:var(--ui-text)]">{step.label}</p>
-              <p className="text-xs text-[color:var(--ui-text-meta)]">{step.sub}</p>
-            </div>
-            <Button variant="ghost" size="sm" asChild className="h-8 px-2 text-xs text-[color:var(--ui-accent)]">
-              <Link to={step.to}>
-                {step.cta}
-                <ChevronRight className="h-3 w-3" />
-              </Link>
-            </Button>
-          </div>
-        ))}
-      </div>
-    </SurfaceCard>
-  )
-}
 
 function DailyQuestionPanel({
   data,
@@ -1150,7 +1116,7 @@ export function Dashboard() {
 
               {!isDocsLoading && !hasDocuments ? (
                 <div className="px-4 pb-4 sm:px-5 sm:pb-5">
-                  <OnboardingSteps />
+                  <OnboardingChecklist />
                 </div>
               ) : null}
 
