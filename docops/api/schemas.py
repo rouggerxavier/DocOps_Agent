@@ -511,3 +511,15 @@ class OnboardingEventRequest(BaseModel):
 class OnboardingEventResponse(BaseModel):
     recorded: bool
     state: OnboardingStateResponse
+
+
+class OnboardingFunnelStep(BaseModel):
+    event_type: str
+    count: int
+    unique_users: int
+
+
+class OnboardingFunnelResponse(BaseModel):
+    window_days: int
+    steps: List[OnboardingFunnelStep]
+    upgrade_intents: int

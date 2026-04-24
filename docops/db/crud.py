@@ -1451,3 +1451,26 @@ def reset_onboarding_state(db: Session, *, user_id: int) -> UserOnboardingStateR
     db.commit()
     db.refresh(record)
     return record
+
+
+def get_onboarding_funnel(
+    db: Session, *, window_days: int = 30
+) -> list[tuple[str, int, int]]:
+    """Return per-event-type counts for the given time window (admin analytics)."""
+    from datetime import timedelta
+
+    from sqlalchemy import func
+
+    cutoff = datetime.utcnow() - timedelta(days=window_days)
+    rows = (
+        db.query(
+            UserOnboardingEventRecord.event_type,
+            func.count().label("count"),
+            func.count(func.distinct(UserOnboardingEventRecord.user_id)).label("unique_users"),
+        )
+        .filter(UserOnboardingEventRecord.occurred_at >= cutoff)
+        .group_by(UserOnboardingEventRecord.event_type)
+        .order_by(func.count().desc())
+        .all()
+    )
+    return rows  # type: ignore[return-value]

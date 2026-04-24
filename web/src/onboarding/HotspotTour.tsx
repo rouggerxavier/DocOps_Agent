@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ChevronLeft, ChevronRight, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -101,10 +101,25 @@ function calcTooltipPos(rect: DOMRect, tooltipH: number): TooltipPos {
   return { top, left, arrowSide: placeBelow ? 'top' : 'bottom' }
 }
 
+// ── Mobile detection ─────────────────────────────────────────────────────────
+
+const mobileQuery =
+  typeof window !== 'undefined' ? window.matchMedia('(max-width: 639px)') : null
+
+function subscribeMobile(cb: () => void) {
+  mobileQuery?.addEventListener('change', cb)
+  return () => mobileQuery?.removeEventListener('change', cb)
+}
+
+function getMobileSnapshot() {
+  return mobileQuery?.matches ?? false
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function HotspotTour() {
   const { activeTour, closeTour } = useOnboarding()
+  const isMobile = useSyncExternalStore(subscribeMobile, getMobileSnapshot, () => false)
   const [stepIdx, setStepIdx] = useState(0)
   const [spotRect, setSpotRect] = useState<DOMRect | null>(null)
   const [tooltipH, setTooltipH] = useState(160)
@@ -155,7 +170,7 @@ export function HotspotTour() {
     return () => document.removeEventListener('keydown', onKey)
   }, [activeTour, closeTour])
 
-  if (!activeTour || steps.length === 0) return null
+  if (isMobile || !activeTour || steps.length === 0) return null
 
   function navigate(delta: number) {
     setDirection(delta)

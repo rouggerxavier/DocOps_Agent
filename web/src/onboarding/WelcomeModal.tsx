@@ -207,7 +207,8 @@ export function WelcomeModal() {
         animate={{ scale: 1, opacity: 1 }}
         exit={{ scale: 0.95, opacity: 0 }}
         transition={{ duration: 0.2, ease: 'easeOut' }}
-        className="relative w-full max-w-md overflow-hidden rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface)] shadow-2xl"
+        className="relative flex w-full max-w-md flex-col overflow-hidden rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface)] shadow-2xl"
+        style={{ maxHeight: 'min(90svh, 640px)' }}
       >
         {/* Close button */}
         <button
@@ -221,7 +222,7 @@ export function WelcomeModal() {
         </button>
 
         {/* Frame content */}
-        <div className="min-h-[300px] overflow-hidden px-6 pt-8 pb-6">
+        <div className="min-h-[220px] flex-1 overflow-y-auto px-6 pt-8 pb-6">
           <AnimatePresence mode="wait" custom={direction}>
             <motion.div
               key={frame}
@@ -242,7 +243,7 @@ export function WelcomeModal() {
         </div>
 
         {/* Bottom nav */}
-        <div className="flex items-center justify-between border-t border-[color:var(--ui-border-soft)] px-6 py-4">
+        <div className="flex shrink-0 items-center justify-between border-t border-[color:var(--ui-border-soft)] px-6 py-4">
           <DotIndicator total={TOTAL_FRAMES} current={frame} />
           <div className="flex items-center gap-2">
             {frame > 0 && (

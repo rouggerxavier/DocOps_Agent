@@ -747,6 +747,18 @@ export interface OnboardingEventResponse {
   state: OnboardingStateResponse
 }
 
+export interface OnboardingFunnelStep {
+  event_type: string
+  count: number
+  unique_users: number
+}
+
+export interface OnboardingFunnelResponse {
+  window_days: number
+  steps: OnboardingFunnelStep[]
+  upgrade_intents: number
+}
+
 // ── API functions ─────────────────────────────────────────────────────────────
 
 export const apiClient = {
@@ -1346,4 +1358,7 @@ export const apiClient = {
 
   resetOnboarding: (): Promise<OnboardingStateResponse> =>
     api.post('/api/onboarding/reset').then(r => r.data),
+
+  getOnboardingFunnel: (windowDays = 30): Promise<OnboardingFunnelResponse> =>
+    api.get('/api/analytics/onboarding/funnel', { params: { window_days: windowDays } }).then(r => r.data),
 }

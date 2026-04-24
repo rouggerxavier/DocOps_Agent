@@ -7,12 +7,14 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from docops.api.schemas import (
     OnboardingEventRequest,
     OnboardingEventResponse,
+    OnboardingFunnelResponse,
+    OnboardingFunnelStep,
     OnboardingNextHint,
     OnboardingProgress,
     OnboardingSectionView,
@@ -163,6 +165,34 @@ def post_onboarding_event(
     )
 
     return OnboardingEventResponse(recorded=recorded, state=_build_state_response(record))
+
+
+@router.get("/analytics/onboarding/funnel", response_model=OnboardingFunnelResponse)
+def get_onboarding_funnel(
+    window_days: int = Query(default=30, ge=1, le=365),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> OnboardingFunnelResponse:
+    _require_feature()
+    if not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only.")
+    rows = crud.get_onboarding_funnel(db, window_days=window_days)
+    steps = [
+        OnboardingFunnelStep(
+            event_type=r.event_type,
+            count=r.count,
+            unique_users=r.unique_users,
+        )
+        for r in rows
+    ]
+    upgrade_intents = next(
+        (s.count for s in steps if s.event_type == "upgrade_intent_from_onboarding"), 0
+    )
+    return OnboardingFunnelResponse(
+        window_days=window_days,
+        steps=steps,
+        upgrade_intents=upgrade_intents,
+    )
 
 
 @router.post("/onboarding/reset", response_model=OnboardingStateResponse)

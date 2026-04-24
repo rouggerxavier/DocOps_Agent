@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { Check, ChevronRight, ChevronDown, Sparkles, X } from 'lucide-react'
+import { Check, ChevronRight, ChevronDown, ChevronUp, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useOnboarding } from './OnboardingContext'
@@ -11,6 +11,18 @@ import type { OnboardingSectionView } from '@/api/client'
 const PREMIUM_STEP_CAPABILITIES: Partial<Record<string, EntitlementCapabilityKey>> = {
   'chat.memory': 'premium_personalization',
   'artifacts.premium_templates': 'premium_artifact_templates',
+}
+
+const mobileQuery =
+  typeof window !== 'undefined' ? window.matchMedia('(max-width: 639px)') : null
+
+function subscribeMobile(cb: () => void) {
+  mobileQuery?.addEventListener('change', cb)
+  return () => mobileQuery?.removeEventListener('change', cb)
+}
+
+function getMobileSnapshot() {
+  return mobileQuery?.matches ?? false
 }
 
 function ProgressBar({ value, max }: { value: number; max: number }) {
@@ -153,7 +165,9 @@ function SectionBlock({
 export function OnboardingChecklist({ className }: { className?: string }) {
   const { state, postEvent, isPending } = useOnboarding()
   const navigate = useNavigate()
+  const isMobile = useSyncExternalStore(subscribeMobile, getMobileSnapshot, () => false)
   const [hidden, setHidden] = useState(false)
+  const [mobileExpanded, setMobileExpanded] = useState(false)
 
   if (!state || state.tour.completed || state.tour.skipped || hidden) return null
 
@@ -184,6 +198,40 @@ export function OnboardingChecklist({ className }: { className?: string }) {
 
   const nonSkippedSections = state.sections.filter((s) => !s.skipped)
 
+  const pct = progress.required_total > 0
+    ? Math.round((progress.completed / progress.required_total) * 100)
+    : 0
+
+  // ── Mobile collapsed pill ──────────────────────────────────────────────────
+  if (isMobile && !mobileExpanded) {
+    return (
+      <button
+        type="button"
+        onClick={() => setMobileExpanded(true)}
+        className={cn(
+          'flex w-full items-center gap-3 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] px-4 py-3',
+          className,
+        )}
+      >
+        <Sparkles className="h-4 w-4 shrink-0 text-[color:var(--ui-accent)]" />
+        <div className="min-w-0 flex-1 text-left">
+          <p className="text-xs font-semibold text-[color:var(--ui-text)]">Primeiros passos</p>
+          <div className="mt-1 flex items-center gap-2">
+            <div className="h-1 flex-1 overflow-hidden rounded-full bg-[color:var(--ui-surface-3)]">
+              <div
+                className="h-full rounded-full bg-[color:var(--ui-accent)] transition-all duration-500"
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <span className="shrink-0 text-[11px] font-semibold text-[color:var(--ui-accent)]">{pct}%</span>
+          </div>
+        </div>
+        <ChevronUp className="h-4 w-4 shrink-0 text-[color:var(--ui-text-dim)]" />
+      </button>
+    )
+  }
+
+  // ── Full checklist (desktop + mobile expanded) ─────────────────────────────
   return (
     <div className={cn('rounded-[1.15rem] border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-2)] p-4 sm:p-5', className)}>
       <div className="mb-4 flex items-start justify-between gap-2">
@@ -193,14 +241,26 @@ export function OnboardingChecklist({ className }: { className?: string }) {
             Primeiros passos
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setHidden(true)}
-          className="text-[color:var(--ui-text-dim)] transition-colors hover:text-[color:var(--ui-text)]"
-          aria-label="Ocultar checklist de onboarding"
-        >
-          <X className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-1">
+          {isMobile && (
+            <button
+              type="button"
+              onClick={() => setMobileExpanded(false)}
+              className="flex h-7 w-7 items-center justify-center text-[color:var(--ui-text-dim)] transition-colors hover:text-[color:var(--ui-text)]"
+              aria-label="Recolher checklist"
+            >
+              <ChevronDown className="h-4 w-4" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setHidden(true)}
+            className="flex h-7 w-7 items-center justify-center text-[color:var(--ui-text-dim)] transition-colors hover:text-[color:var(--ui-text)]"
+            aria-label="Ocultar checklist de onboarding"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       <div className="mb-3">
@@ -208,11 +268,7 @@ export function OnboardingChecklist({ className }: { className?: string }) {
           <p className="text-[11px] text-[color:var(--ui-text-dim)]">
             {progress.completed} de {progress.required_total} etapas concluídas
           </p>
-          <p className="text-[11px] font-semibold text-[color:var(--ui-accent)]">
-            {progress.required_total > 0
-              ? `${Math.round((progress.completed / progress.required_total) * 100)}%`
-              : '0%'}
-          </p>
+          <p className="text-[11px] font-semibold text-[color:var(--ui-accent)]">{pct}%</p>
         </div>
         <ProgressBar value={progress.completed} max={progress.required_total} />
       </div>
