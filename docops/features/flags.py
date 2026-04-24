@@ -108,6 +108,13 @@ _FLAG_DEFS: tuple[FeatureFlagDefinition, ...] = (
         description="Enable premium capability enforcement and lock states.",
         owner="billing",
     ),
+    FeatureFlagDefinition(
+        key="onboarding_enabled",
+        env_var="FEATURE_ONBOARDING_ENABLED",
+        default_enabled=True,
+        description="Enable the onboarding tour endpoints and persistence.",
+        owner="onboarding",
+    ),
 )
 
 _FLAG_INDEX = {item.key: item for item in _FLAG_DEFS}

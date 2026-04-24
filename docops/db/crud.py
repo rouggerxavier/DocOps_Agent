@@ -18,7 +18,17 @@ from docops.db.models import (
     ReminderRecord,
     ScheduleRecord,
     User,
+    UserOnboardingEventRecord,
+    UserOnboardingStateRecord,
     UserPreferenceRecord,
+)
+from docops.onboarding import (
+    IDEMPOTENT_EVENT_TYPES,
+    ONBOARDING_SCHEMA_VERSION,
+    is_known_event_type,
+    is_known_section,
+    is_known_step,
+    required_step_ids,
 )
 
 
@@ -1247,3 +1257,197 @@ def list_premium_analytics_events_for_user_since(
         .order_by(PremiumAnalyticsEventRecord.created_at.asc(), PremiumAnalyticsEventRecord.id.asc())
         .all()
     )
+
+
+# ── Onboarding ────────────────────────────────────────────────────────────────
+
+
+class OnboardingValidationError(ValueError):
+    """Raised when an onboarding event carries an unknown identifier."""
+
+
+def get_or_create_onboarding_state(db: Session, user_id: int) -> UserOnboardingStateRecord:
+    record = (
+        db.query(UserOnboardingStateRecord)
+        .filter(UserOnboardingStateRecord.user_id == int(user_id))
+        .first()
+    )
+    if record is not None:
+        if record.step_completions is None:
+            record.step_completions = {}
+        if record.section_skips is None:
+            record.section_skips = {}
+        return record
+
+    record = UserOnboardingStateRecord(
+        user_id=int(user_id),
+        schema_version=ONBOARDING_SCHEMA_VERSION,
+        step_completions={},
+        section_skips={},
+    )
+    db.add(record)
+    db.commit()
+    db.refresh(record)
+    return record
+
+
+def _recompute_tour_completed(record: UserOnboardingStateRecord, now: datetime) -> None:
+    """Set tour_completed_at if every required step is now complete.
+
+    Does not clear tour_completed_at once set (the tour stays "completed" even
+    if a future catalog adds new steps; schema_version bump reopens it).
+    """
+    if record.tour_completed_at is not None:
+        return
+    completions = record.step_completions or {}
+    required = required_step_ids(section_skips=(record.section_skips or {}).keys())
+    if not required:
+        return
+    if all(step_id in completions for step_id in required):
+        record.tour_completed_at = now
+
+
+def apply_onboarding_event(
+    db: Session,
+    *,
+    user_id: int,
+    event_type: str,
+    step_id: str | None = None,
+    section_id: str | None = None,
+    metadata: dict | None = None,
+) -> tuple[UserOnboardingStateRecord, bool]:
+    """Apply a single event, returning (state, recorded_telemetry).
+
+    When `recorded_telemetry` is False the event was a no-op (idempotent
+    replay): state was not mutated and no row was appended to
+    `user_onboarding_events`.
+    """
+    if not is_known_event_type(event_type):
+        raise OnboardingValidationError(f"Unknown event_type: {event_type!r}")
+    if step_id is not None and not is_known_step(step_id):
+        raise OnboardingValidationError(f"Unknown step_id: {step_id!r}")
+    if section_id is not None and not is_known_section(section_id):
+        raise OnboardingValidationError(f"Unknown section_id: {section_id!r}")
+
+    record = get_or_create_onboarding_state(db, user_id=user_id)
+    now = datetime.now(timezone.utc)
+    state_changed = False
+
+    if event_type == "welcome_shown":
+        if record.welcome_seen_at is None:
+            record.welcome_seen_at = now
+            state_changed = True
+
+    elif event_type == "tour_started":
+        if record.tour_started_at is None:
+            record.tour_started_at = now
+            state_changed = True
+
+    elif event_type == "step_seen":
+        if step_id is None:
+            raise OnboardingValidationError("step_seen requires step_id")
+        if record.last_step_seen != step_id:
+            record.last_step_seen = step_id
+            state_changed = True
+
+    elif event_type == "step_completed":
+        if step_id is None:
+            raise OnboardingValidationError("step_completed requires step_id")
+        completions = dict(record.step_completions or {})
+        if step_id not in completions:
+            completions[step_id] = now.isoformat()
+            record.step_completions = completions
+            _recompute_tour_completed(record, now)
+            state_changed = True
+
+    elif event_type == "section_skipped":
+        if section_id is None:
+            raise OnboardingValidationError("section_skipped requires section_id")
+        skips = dict(record.section_skips or {})
+        if section_id not in skips:
+            skips[section_id] = now.isoformat()
+            record.section_skips = skips
+            _recompute_tour_completed(record, now)
+            state_changed = True
+
+    elif event_type == "tour_skipped":
+        # Always record: user may skip multiple times after reset.
+        record.tour_skipped_at = now
+        state_changed = True
+
+    elif event_type == "tour_completed":
+        # Allow explicit client signal (e.g. manual "Finalizar tour"); idempotent.
+        if record.tour_completed_at is None:
+            record.tour_completed_at = now
+            state_changed = True
+
+    elif event_type == "tour_reset":
+        # Soft reset: preserve step_completions.
+        record.welcome_seen_at = None
+        record.tour_skipped_at = None
+        record.last_step_seen = None
+        record.section_skips = {}
+        state_changed = True
+
+    elif event_type == "upgrade_intent_from_onboarding":
+        # Pure telemetry; no state mutation.
+        state_changed = False
+
+    # Skip telemetry on idempotent no-ops to keep the events table clean.
+    should_record_event = (
+        state_changed
+        or event_type not in IDEMPOTENT_EVENT_TYPES
+    )
+
+    if should_record_event:
+        event = UserOnboardingEventRecord(
+            user_id=int(user_id),
+            event_type=event_type,
+            step_id=step_id,
+            section_id=section_id,
+            event_metadata=dict(metadata) if metadata else None,
+        )
+        db.add(event)
+
+    if state_changed:
+        record.schema_version = ONBOARDING_SCHEMA_VERSION
+        record.updated_at = now
+
+    if should_record_event or state_changed:
+        db.commit()
+        db.refresh(record)
+
+    return record, should_record_event
+
+
+def reset_onboarding_state(db: Session, *, user_id: int) -> UserOnboardingStateRecord:
+    """Hard reset: clear every field including step_completions.
+
+    Records a single `tour_reset` telemetry event with metadata indicating the
+    hard variant so funnel analysis can distinguish both paths.
+    """
+    record = get_or_create_onboarding_state(db, user_id=user_id)
+    now = datetime.now(timezone.utc)
+
+    record.welcome_seen_at = None
+    record.tour_started_at = None
+    record.tour_completed_at = None
+    record.tour_skipped_at = None
+    record.step_completions = {}
+    record.section_skips = {}
+    record.last_step_seen = None
+    record.schema_version = ONBOARDING_SCHEMA_VERSION
+    record.updated_at = now
+
+    event = UserOnboardingEventRecord(
+        user_id=int(user_id),
+        event_type="tour_reset",
+        step_id=None,
+        section_id=None,
+        event_metadata={"variant": "hard"},
+    )
+    db.add(event)
+
+    db.commit()
+    db.refresh(record)
+    return record

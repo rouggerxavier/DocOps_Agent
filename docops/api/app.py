@@ -23,6 +23,7 @@ from docops.api.routes import (
     ingest,
     jobs,
     notes,
+    onboarding,
     pipeline,
     preferences,
     studyplan,
@@ -139,6 +140,7 @@ def create_app() -> FastAPI:
     app.include_router(studyplan.router, prefix=prefix, tags=["studyplan"], dependencies=_auth)
     app.include_router(pipeline.router, prefix=prefix, tags=["pipeline"], dependencies=_auth)
     app.include_router(analytics.router, prefix=prefix, tags=["analytics"], dependencies=_auth)
+    app.include_router(onboarding.router, prefix=prefix, tags=["onboarding"], dependencies=_auth)
 
     # Serve React frontend (web/dist/)
     _frontend_dist = Path(__file__).resolve().parent.parent.parent / "web" / "dist"
