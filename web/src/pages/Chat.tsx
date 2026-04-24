@@ -3057,7 +3057,7 @@ export function Chat() {
         )}
         style={isMobile ? { bottom: `${Math.max(6, mobileViewportInset)}px` } : undefined}>
           <div className="w-full">
-            <div className={cn(
+            <div data-tour-id="chat-composer" className={cn(
               'border border-[color:var(--ui-border-soft)] backdrop-blur',
               isMobile
                 ? 'rounded-[1.6rem] bg-[linear-gradient(135deg,rgba(12,17,24,0.94)_0%,rgba(16,22,31,0.9)_65%,rgba(20,28,39,0.86)_100%)] p-1.5 shadow-[0_16px_34px_rgba(0,0,0,0.38)]'
@@ -3167,7 +3167,7 @@ export function Chat() {
                   )}
                 </div>
 
-                <div className="border-t border-white/10 px-4 py-3">
+                <div data-tour-id="chat-grounding" className="border-t border-white/10 px-4 py-3">
                   <label className="flex cursor-pointer items-center gap-2 text-xs text-[#c0c6d0]">
                     <input
                       type="checkbox"
@@ -3340,6 +3340,7 @@ export function Chat() {
             )}
           >
             <button
+              data-tour-id="chat-attachment"
               type="button"
               onClick={() => {
                 setDocPickerOpen(false)

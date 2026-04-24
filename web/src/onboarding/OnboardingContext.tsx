@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   apiClient,
@@ -8,6 +8,7 @@ import {
 } from '@/api/client'
 import { useCapabilities } from '@/features/CapabilitiesProvider'
 import { WelcomeModal } from './WelcomeModal'
+import { HotspotTour } from './HotspotTour'
 
 const QUERY_KEY = ['onboarding-state']
 
@@ -16,6 +17,9 @@ interface OnboardingContextValue {
   loading: boolean
   postEvent: (payload: OnboardingEventRequest) => Promise<OnboardingEventResponse>
   isPending: boolean
+  activeTour: string | null
+  startTour: (sectionId: string) => void
+  closeTour: () => void
 }
 
 const OnboardingContext = createContext<OnboardingContextValue | null>(null)
@@ -24,6 +28,8 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
   const capabilities = useCapabilities()
   const enabled = capabilities.isEnabled('onboarding_enabled')
   const queryClient = useQueryClient()
+
+  const [activeTour, setActiveTour] = useState<string | null>(null)
 
   const { data: state, isLoading: loading } = useQuery<OnboardingStateResponse>({
     queryKey: QUERY_KEY,
@@ -45,15 +51,19 @@ export function OnboardingProvider({ children }: { children: ReactNode }) {
     [mutation],
   )
 
+  const startTour = useCallback((sectionId: string) => setActiveTour(sectionId), [])
+  const closeTour = useCallback(() => setActiveTour(null), [])
+
   const value = useMemo<OnboardingContextValue>(
-    () => ({ state, loading, postEvent, isPending: mutation.isPending }),
-    [state, loading, postEvent, mutation.isPending],
+    () => ({ state, loading, postEvent, isPending: mutation.isPending, activeTour, startTour, closeTour }),
+    [state, loading, postEvent, mutation.isPending, activeTour, startTour, closeTour],
   )
 
   return (
     <OnboardingContext.Provider value={value}>
       {children}
       <WelcomeModal />
+      <HotspotTour />
     </OnboardingContext.Provider>
   )
 }

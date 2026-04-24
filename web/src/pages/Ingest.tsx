@@ -208,7 +208,7 @@ export function Ingest() {
         subtitle="Alimente o cérebro do DocOps Agent com novos conhecimentos. Os documentos são processados e indexados para consulta imediata."
       />
 
-      <div className="flex w-fit gap-1 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] p-1">
+      <div data-tour-id="ingest-tabs" className="flex w-fit gap-1 rounded-xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-surface-1)] p-1">
         {([
           { key: 'upload', label: 'Upload' },
           { key: 'path', label: 'Caminho' },
@@ -235,6 +235,7 @@ export function Ingest() {
           <div className="col-span-12 lg:col-span-8">
             <div className="app-surface p-1">
               <div
+                data-tour-id="ingest-dropzone"
                 onDragOver={event => { event.preventDefault(); setDragOver(true) }}
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
@@ -308,7 +309,7 @@ export function Ingest() {
             </div>
 
             {isLoading && (
-              <div className="rounded-xl border border-[color:var(--ui-border)] bg-[color:var(--ui-surface-1)] p-4 space-y-3">
+              <div data-tour-id="ingest-progress" className="rounded-xl border border-[color:var(--ui-border)] bg-[color:var(--ui-surface-1)] p-4 space-y-3">
                 <div className="flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin text-[color:var(--ui-accent)]" /><span className="text-sm text-[color:var(--ui-text-dim)]">{stageLabel}</span><span className="ml-auto text-xs font-mono text-[color:var(--ui-text-meta)]">{pct}%</span></div>
                 <div className="h-1.5 w-full overflow-hidden rounded-full bg-[color:var(--ui-bg-alt)]"><div className="h-full rounded-full bg-[color:var(--ui-accent)] transition-all duration-700" style={{ width: `${pct}%` }} /></div>
               </div>

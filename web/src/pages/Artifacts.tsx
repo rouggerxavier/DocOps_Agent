@@ -1436,11 +1436,12 @@ export function Artifacts() {
         )}
 
         {/* ── Action Hub ── */}
-        <section>
+        <section data-tour-id="artifacts-actions">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-2 lg:grid-cols-4 sm:gap-4">
 
             {/* Resumir Documento */}
             <button
+              data-tour-id="artifacts-summarize"
               onClick={() => setShowSummarize(true)}
               className="group relative flex flex-col items-start p-4 rounded-xl bg-[#111111] hover:bg-[#1e1e1e] transition-all duration-300 text-left overflow-hidden border border-[#1e1e1e] hover:border-[#282828] sm:p-6"
             >
@@ -1494,7 +1495,7 @@ export function Artifacts() {
         </section>
 
         {/* ── Library Section ── */}
-        <section>
+        <section data-tour-id="artifacts-list">
           {/* Section header */}
           <div className="mb-4 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">

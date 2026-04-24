@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { ChevronRight, Info, Sparkles, X } from 'lucide-react'
+import { ChevronRight, Info, Map, Sparkles, X } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -16,8 +16,10 @@ interface SectionIntroProps {
   className?: string
 }
 
+const TOUR_SECTIONS = new Set(['ingest', 'chat', 'artifacts'])
+
 export function SectionIntro({ sectionId, className }: SectionIntroProps) {
-  const { state, postEvent, isPending } = useOnboarding()
+  const { state, postEvent, isPending, startTour } = useOnboarding()
   const [dismissed, setDismissed] = useState(false)
 
   if (dismissed || !state || state.tour.completed || state.tour.skipped) return null
@@ -124,9 +126,16 @@ export function SectionIntro({ sectionId, className }: SectionIntroProps) {
                 Pular seção
               </button>
 
-              <span className="ml-auto text-[10px] text-[color:var(--ui-text-meta)] opacity-60">
-                Tour • Fase 6
-              </span>
+              {TOUR_SECTIONS.has(sectionId) && (
+                <button
+                  type="button"
+                  onClick={() => startTour(sectionId)}
+                  className="ml-auto flex items-center gap-1 text-[11px] text-[color:var(--ui-accent)] transition-colors hover:text-[color:var(--ui-accent-strong)]"
+                >
+                  <Map className="h-3 w-3" />
+                  Me mostra com tour
+                </button>
+              )}
             </div>
           </div>
         </div>
