@@ -19,6 +19,7 @@ from docops.auth.dependencies import get_current_user
 from docops.auth.security import (
     create_access_token,
     hash_password,
+    is_oauth_account,
     normalize_email,
     verify_password,
 )
@@ -64,9 +65,7 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
     user = get_user_by_email(db, email)
 
     # Erro genérico — não revela se o e-mail existe
-    # Contas criadas via Google OAuth não têm hash bcrypt
-    _no_password = not user or not user.password_hash or user.password_hash.startswith("__")
-    if _no_password or not verify_password(body.password, user.password_hash):
+    if not user or is_oauth_account(user.password_hash) or not verify_password(body.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciais inválidas.",

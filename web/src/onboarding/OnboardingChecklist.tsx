@@ -169,10 +169,10 @@ export function OnboardingChecklist({ className }: { className?: string }) {
   const [hidden, setHidden] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
 
-  // Reset local hidden flag when tour is reset on the server
+  // Unhide checklist when tour is reset server-side
   useEffect(() => {
     if (state && !state.tour.completed && !state.tour.skipped) {
-      setHidden(false)
+      setHidden(prev => (prev ? false : prev))
     }
   }, [state?.tour.completed, state?.tour.skipped])
 

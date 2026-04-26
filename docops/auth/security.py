@@ -11,6 +11,13 @@ import jwt
 from docops.config import config
 
 
+OAUTH_HASH_SENTINEL = "__google_oauth__"
+
+
+def is_oauth_account(password_hash: str | None) -> bool:
+    return not password_hash or password_hash.startswith("__")
+
+
 def hash_password(password: str) -> str:
     """Gera hash seguro da senha.
 

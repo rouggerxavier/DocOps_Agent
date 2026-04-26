@@ -139,11 +139,11 @@ export function WelcomeModal() {
   const overlayRef = useRef<HTMLDivElement>(null)
   const closeButtonRef = useRef<HTMLButtonElement>(null)
 
-  // Reset local dismissed flag when backend state is reset (tour_reset event)
+  // Reopen modal when tour is reset server-side (welcome_seen flips back to false)
   useEffect(() => {
     if (state && !state.tour.welcome_seen) {
-      setDismissed(false)
-      setFrame(0)
+      setDismissed(prev => (prev ? false : prev))
+      setFrame(prev => (prev !== 0 ? 0 : prev))
     }
   }, [state?.tour.welcome_seen])
 
