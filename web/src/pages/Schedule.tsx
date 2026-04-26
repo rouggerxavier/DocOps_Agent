@@ -17,6 +17,7 @@ import {
   type ScheduleItem,
 } from '@/api/client'
 import { cn } from '@/lib/utils'
+import { SectionIntro } from '@/onboarding/SectionIntro'
 
 const WEEKDAY_LABELS = ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom']
 const WEEKDAY_FULL = [
@@ -883,6 +884,7 @@ export function Schedule() {
 
   return (
     <div className="relative flex h-[calc(100vh-4rem)] flex-col gap-0 overflow-hidden rounded-2xl border border-[color:var(--ui-border-soft)] bg-[color:var(--ui-bg)] shadow-[0_24px_60px_rgba(0,0,0,0.42)] md:flex-row">
+      <SectionIntro sectionId="productivity" />
       {/* ── COLUNA ESQUERDA: Calendário ─────────────────────────────────────── */}
       <div className={`${mobilePanel === 'calendar' ? 'flex' : 'hidden'} md:flex flex-1 flex-col overflow-hidden`}>
         {/* Header do calendário */}

@@ -64,7 +64,9 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> LoginResponse:
     user = get_user_by_email(db, email)
 
     # Erro genérico — não revela se o e-mail existe
-    if not user or not verify_password(body.password, user.password_hash):
+    # Contas criadas via Google OAuth não têm hash bcrypt
+    _no_password = not user or not user.password_hash or user.password_hash.startswith("__")
+    if _no_password or not verify_password(body.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciais inválidas.",

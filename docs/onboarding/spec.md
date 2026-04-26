@@ -363,80 +363,79 @@ Em `/settings`, adicionar card "Tutorial" com botões:
 Cada fase = 1 commit (ou PR pequeno) e deve deixar o código em estado funcional.
 
 ### Fase 1 — Backend scaffold
-- [ ] Criar `docops/onboarding/catalog.py` com catálogo v1.
-- [ ] Adicionar models em `docops/db/models.py`: `UserOnboardingState`, `UserOnboardingEvent`.
-- [ ] Migration `0007_onboarding_state_and_events.py` (atenção aos defaults Postgres).
-- [ ] CRUD em `docops/db/crud.py`: `get_or_create_state`, `apply_event`, `reset_state`.
-- [ ] Router `docops/api/routes/onboarding.py` com os 3 endpoints (§5).
-- [ ] Registrar router em `docops/api/app.py`.
-- [ ] Feature flag: `is_feature_enabled("onboarding_enabled", default=True)` → se false, endpoints retornam 404.
-- [ ] Testes: `tests/test_onboarding_api.py` cobrindo GET/POST/reset, idempotência, validação de step_id desconhecido, cálculo de tour_completed.
+- [x] Criar `docops/onboarding/catalog.py` com catálogo v1.
+- [x] Adicionar models em `docops/db/models.py`: `UserOnboardingState`, `UserOnboardingEvent`.
+- [x] Migration `0007_onboarding_state_and_events.py` (atenção aos defaults Postgres).
+- [x] CRUD em `docops/db/crud.py`: `get_or_create_onboarding_state`, `apply_onboarding_event`, `reset_onboarding_state`.
+- [x] Router `docops/api/routes/onboarding.py` com os 3 endpoints (§5).
+- [x] Registrar router em `docops/api/app.py`.
+- [x] Feature flag: `is_feature_enabled("onboarding_enabled", default=True)` → se false, endpoints retornam 404.
+- [x] Testes: `tests/test_onboarding_api.py` cobrindo GET/POST/reset, idempotência, validação de step_id desconhecido, cálculo de tour_completed.
 
 **Critério de done:** pytest verde; swagger mostra os endpoints; `POST /events { tour_reset }` limpa campos corretos.
 
 ### Fase 2 — Frontend: provider + checklist
 
-- [ ] `web/src/onboarding/` com provider, hook, catalog (cópia do backend pra tipagem).
-- [ ] Montar `OnboardingProvider` em `App.tsx` dentro do `CapabilitiesProvider`.
-- [ ] Refatorar `OnboardingSteps` existente em `Dashboard.tsx:190` para `OnboardingChecklist` conectado ao state real.
-- [ ] Checklist mostra: barra de progresso, passos concluídos com check, passos pendentes com CTA, botões "Pular tudo" e "Ocultar".
-- [ ] Persistir `last_step_seen` ao clicar em CTA.
+- [x] `web/src/onboarding/` com provider, hook, catalog (cópia do backend pra tipagem).
+- [x] Montar `OnboardingProvider` em `App.tsx` dentro do `CapabilitiesProvider`.
+- [x] Refatorar `OnboardingSteps` existente em `Dashboard.tsx:190` para `OnboardingChecklist` conectado ao state real.
+- [x] Checklist mostra: barra de progresso, passos concluídos com check, passos pendentes com CTA, botões "Pular tudo" e "Ocultar".
+- [x] Persistir `last_step_seen` ao clicar em CTA (via evento `step_seen`).
 - [ ] Testes unitários (Vitest) do hook e do checklist.
 
 **Critério de done:** usuário novo vê o checklist no Dashboard; concluir um passo manual reflete no backend; reload preserva estado.
 
 ### Fase 3 — Welcome modal
-- [ ] `WelcomeModal.tsx` com 3 frames navegáveis, animação simples (framer-motion? ou CSS).
-- [ ] Abrir modal automaticamente se `welcome_seen_at == null` e `tour_skipped_at == null`, após primeiro login (detectar via Auth + state).
-- [ ] Botões "Começar tour" (dispara `tour_started` + `welcome_shown`) e "Explorar sozinho" (só `welcome_shown`).
-- [ ] A11y: foco, ESC fecha, tab ordem.
+- [x] `WelcomeModal.tsx` com 3 frames navegáveis, animação simples (framer-motion? ou CSS).
+- [x] Abrir modal automaticamente se `welcome_seen_at == null` e `tour_skipped_at == null`, após primeiro login (detectar via Auth + state).
+- [x] Botões "Começar tour" (dispara `tour_started` + `welcome_shown`) e "Explorar sozinho" (só `welcome_shown`).
+- [x] A11y: foco, ESC fecha, tab ordem.
 
 **Critério de done:** primeiro login abre modal; segundo login não abre; fechar dispara evento correto.
 
 ### Fase 4 — Section intros
 
-- [ ] `SectionIntro.tsx` renderizado no topo de cada page protegida.
-- [ ] Para cada page (`Dashboard`, `Ingest`, `Chat`, `Artifacts`, `Docs`, `Notes`/`Tasks`/`Schedule` → `productivity`, `Flashcards`/`StudyPlan`/`ReadingKanban` → `study`, `Preferences`), integrar o componente.
-- [ ] Botão "Entendi" / "Dispensar seção" / "Me mostra com tour" (placeholder até fase 5).
+- [x] `SectionIntro.tsx` renderizado no topo de cada page protegida.
+- [x] `Dashboard`, `Ingest`, `Chat`, `Artifacts`, `Docs`, `Tasks` (productivity), `Flashcards`/`StudyPlan`/`ReadingKanban` (study), `Preferences` — integrados. `Notes` e `Schedule` sem SectionIntro ainda.
+- [x] Botão "Entendi" / "Dispensar seção" / "Me mostra com tour" implementados.
 
 **Critério de done:** nenhum usuário novo entra em página sem ver o intro correspondente; skip de seção oculta o intro.
 
 ### Fase 5 — Auto-progression
 
-- [ ] `useStepAutoComplete` hook.
-- [ ] Plugar em: `Ingest.tsx` (upload), `Chat.tsx` (primeira resposta), `Artifacts.tsx`/`Chat.tsx` (save artifact), `Flashcards.tsx` (generate).
-- [ ] Evitar duplicação: se passo já `completed_at != null`, hook não dispara POST.
+- [x] `useStepAutoComplete` hook.
+- [x] Plugar em: `Ingest.tsx` (`ingest.first_upload`), `Chat.tsx` (`chat.first_question` + `artifacts.first_save`), `Flashcards.tsx` (`study.flashcards`).
+- [x] Evitar duplicação: guard local no hook impede POST se passo já concluído.
 
 **Critério de done:** fazer o fluxo inteiro real (upload → chat → artifact → flashcards) fecha 4 passos no checklist sem clique manual de "concluído".
 
 ### Fase 6 — Hotspot tour (seção por seção)
 
-- [ ] Avaliar `react-joyride` vs implementação custom (30–80 linhas). Decisão documentada como ADR em `docs/onboarding/adr-001-hotspot-library.md`.
-- [ ] Implementar para 3 seções críticas: **ingest**, **chat**, **artifacts**. Outras podem ficar só com SectionIntro.
-- [ ] Cada seção tem 3–5 hotspots apontando para elementos chave via `data-tour-id`.
+- [x] Avaliar `react-joyride` vs implementação custom. Decisão documentada em `docs/onboarding/adr-001-hotspot-library.md`.
+- [x] `HotspotTour.tsx` implementado para **ingest**, **chat**, **artifacts**.
+- [x] Cada seção tem hotspots via `data-tour-id` (ingest: 3 targets, chat: 3 targets, artifacts: 3 targets).
 
 **Critério de done:** clicar "Me mostra com tour" na seção dispara sequência de tooltips.
 
 ### Fase 7 — Premium teasers
 
-- [ ] Passos marcados `premium: true` no catálogo renderizam variante especial.
-- [ ] Free tier vê: título + descrição genérica + badge "Pro" + CTA "Conhecer Pro" → dispara `upgrade_intent_from_onboarding`.
-- [ ] Premium tier vê passo normal.
-- [ ] Integrar com fluxo de upgrade existente (checar `CapabilitiesProvider`, `Artifacts.tsx` já tem lógica similar).
+- [x] Passos marcados `premium: true` no catálogo renderizam variante especial (via `isStepLocked`).
+- [x] Free tier vê: badge "Pro" + CTA → dispara `upgrade_intent_from_onboarding` + `trackUpgradeInitiated`.
+- [x] Premium tier vê passo normal.
+- [x] Integrado com `CapabilitiesProvider` e infraestrutura de `premiumAnalytics`.
 
 **Critério de done:** user free clicando no passo premium abre modal de upgrade, evento registrado em `user_onboarding_events`.
 
 ### Fase 8 — Re-abrir tour + Settings
 
-- [ ] Card em `Preferences.tsx` com botões "Rever tutorial" e "Resetar progresso".
-- [ ] "Rever" dispara `tour_reset`; "Resetar" chama `POST /reset` após confirmação.
+- [x] Card em `Preferences.tsx` com botões "Rever tutorial" e "Resetar progresso".
+- [x] "Rever" dispara `tour_reset`; "Resetar" chama `POST /reset` após confirmação com toast de erro.
 
 ### Fase 9 — Analytics + polish
 
-- [ ] Dashboard interno (se existir) ou export CSV do funil: quantos chegam no welcome, quantos iniciam tour, quantos completam cada passo, onde abandonam.
-- [ ] Reaproveitar infraestrutura de `premium_analytics_events` se possível, ou endpoint separado (`GET /api/analytics/onboarding/funnel`).
-- [ ] Mobile pass: layout responsivo do welcome, checklist em drawer no mobile.
-- [ ] Testes E2E (Playwright) do fluxo completo em `web/e2e/onboarding.spec.ts`.
+- [x] Endpoint `GET /api/analytics/onboarding/funnel` via `crud.get_onboarding_funnel`.
+- [x] Mobile pass: checklist em drawer collapsível no mobile (`mobileExpanded`), WelcomeModal com breakpoints `sm:`.
+- [x] Testes E2E (Playwright) em `web/e2e/onboarding.spec.ts`.
 
 ## 9. Estratégia de testes
 

@@ -20,6 +20,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { apiClient, type NoteItem } from '@/api/client'
 import { cn } from '@/lib/utils'
+import { SectionIntro } from '@/onboarding/SectionIntro'
 
 function formatRelativeTimestamp(value: string) {
   const timestamp = new Date(value).getTime()
@@ -361,6 +362,7 @@ export function Notes() {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[color:var(--ui-bg)] text-[color:var(--ui-text)]">
+      <SectionIntro sectionId="productivity" />
       <header className="flex shrink-0 items-center justify-between gap-3 border-b app-divider bg-[color:var(--ui-bg)]/90 px-4 py-4 backdrop-blur md:px-8 md:py-5">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-[color:var(--ui-text-meta)]">Workspace Editorial</p>
