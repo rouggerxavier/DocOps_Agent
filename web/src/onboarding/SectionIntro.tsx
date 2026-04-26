@@ -169,19 +169,23 @@ export function SectionIntro({ sectionId, className }: SectionIntroProps) {
                     </Button>
                   )}
 
-                  {!isManual && step.next_hint && (
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      asChild
-                      className="h-7 px-3 text-[11px] text-[color:var(--ui-accent)]"
-                    >
-                      <Link to={`/${step.next_hint.section}`}>
-                        Ir para próxima etapa
-                        <ChevronRight className="h-3 w-3" />
-                      </Link>
-                    </Button>
-                  )}
+                  {!isManual && step.next_hint && (() => {
+                    const nextSection = state!.sections.find(s => s.id === step.next_hint!.section)
+                    const nextRoute = nextSection?.route ?? `/${step.next_hint.section}`
+                    return (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        asChild
+                        className="h-7 px-3 text-[11px] text-[color:var(--ui-accent)]"
+                      >
+                        <Link to={nextRoute}>
+                          Ir para próxima etapa
+                          <ChevronRight className="h-3 w-3" />
+                        </Link>
+                      </Button>
+                    )
+                  })()}
 
                   <button
                     type="button"
