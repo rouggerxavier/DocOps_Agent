@@ -73,7 +73,7 @@ def _build_state_response(record: UserOnboardingStateRecord) -> OnboardingStateR
             if completed_at is not None:
                 completed_count += 1
             next_hint = (
-                OnboardingNextHint(section=step.next_hint[0], step=step.next_hint[1])
+                OnboardingNextHint(section=step.next_hint[0], step=step.next_hint[1], route=step.next_hint[2])
                 if step.next_hint
                 else None
             )

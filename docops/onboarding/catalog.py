@@ -36,7 +36,7 @@ class OnboardingStep:
     description: str
     premium: bool = False
     completion_mode: str = "manual"  # "manual" | "auto"
-    next_hint: tuple[str, str] | None = None  # (section_id, step_id)
+    next_hint: tuple[str, str, str] | None = None  # (section_id, step_id, route)
 
 
 @dataclass(frozen=True)
@@ -94,7 +94,7 @@ SECTIONS: tuple[OnboardingSection, ...] = (
                     "artefatos criados e recomendações."
                 ),
                 completion_mode="manual",
-                next_hint=("ingest", "ingest.first_upload"),
+                next_hint=("ingest", "ingest.first_upload", "/ingest"),
             ),
         ),
     ),
@@ -123,7 +123,7 @@ SECTIONS: tuple[OnboardingSection, ...] = (
                     "PDF, Markdown e TXT."
                 ),
                 completion_mode="auto",
-                next_hint=("chat", "chat.first_question"),
+                next_hint=("chat", "chat.first_question", "/chat"),
             ),
         ),
     ),
@@ -142,7 +142,7 @@ SECTIONS: tuple[OnboardingSection, ...] = (
                     "numeradas em cada trecho usado."
                 ),
                 completion_mode="auto",
-                next_hint=("chat", "chat.grounding_modes"),
+                next_hint=("chat", "chat.grounding_modes", "/chat"),
             ),
             OnboardingStep(
                 id="chat.grounding_modes",
@@ -153,7 +153,7 @@ SECTIONS: tuple[OnboardingSection, ...] = (
                     "tem impacto diferente na confiança da resposta."
                 ),
                 completion_mode="manual",
-                next_hint=("artifacts", "artifacts.first_save"),
+                next_hint=("artifacts", "artifacts.first_save", "/artifacts"),
             ),
             OnboardingStep(
                 id="chat.memory",
@@ -183,7 +183,7 @@ SECTIONS: tuple[OnboardingSection, ...] = (
                     "para consultar depois."
                 ),
                 completion_mode="auto",
-                next_hint=("docs", "docs.library"),
+                next_hint=("docs", "docs.library", "/docs"),
             ),
             OnboardingStep(
                 id="artifacts.premium_templates",
@@ -213,7 +213,7 @@ SECTIONS: tuple[OnboardingSection, ...] = (
                     "status de leitura e remova quando quiser."
                 ),
                 completion_mode="manual",
-                next_hint=("productivity", "productivity.notes_tasks"),
+                next_hint=("productivity", "productivity.notes_tasks", "/tasks"),
             ),
         ),
     ),
@@ -232,7 +232,7 @@ SECTIONS: tuple[OnboardingSection, ...] = (
                     "lembretes e rotina de estudos."
                 ),
                 completion_mode="manual",
-                next_hint=("study", "study.flashcards"),
+                next_hint=("study", "study.flashcards", "/flashcards"),
             ),
         ),
     ),
@@ -251,7 +251,7 @@ SECTIONS: tuple[OnboardingSection, ...] = (
                     "espaçada (SRS)."
                 ),
                 completion_mode="auto",
-                next_hint=("study", "study.plan"),
+                next_hint=("study", "study.plan", "/studyplan"),
             ),
             OnboardingStep(
                 id="study.plan",
@@ -262,7 +262,7 @@ SECTIONS: tuple[OnboardingSection, ...] = (
                     "do conteúdo."
                 ),
                 completion_mode="manual",
-                next_hint=("study", "study.kanban"),
+                next_hint=("study", "study.kanban", "/kanban"),
             ),
             OnboardingStep(
                 id="study.kanban",

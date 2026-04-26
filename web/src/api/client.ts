@@ -691,6 +691,7 @@ export function isLockedFeatureError(error: unknown): boolean {
 export interface OnboardingNextHint {
   section: string
   step: string
+  route: string
 }
 
 export interface OnboardingStepView {

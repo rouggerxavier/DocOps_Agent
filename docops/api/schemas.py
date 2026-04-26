@@ -457,6 +457,7 @@ class CalendarOverviewResponse(BaseModel):
 class OnboardingNextHint(BaseModel):
     section: str
     step: str
+    route: str
 
 
 class OnboardingStepView(BaseModel):
