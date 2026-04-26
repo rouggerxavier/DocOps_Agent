@@ -1382,8 +1382,10 @@ def apply_onboarding_event(
             state_changed = True
 
     elif event_type == "tour_reset":
-        # Soft reset: preserve step_completions.
+        # Soft reset: preserve step_completions but re-open the full tour flow.
         record.welcome_seen_at = None
+        record.tour_started_at = None
+        record.tour_completed_at = None
         record.tour_skipped_at = None
         record.last_step_seen = None
         record.section_skips = {}

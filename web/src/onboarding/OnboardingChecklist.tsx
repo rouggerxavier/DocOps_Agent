@@ -1,4 +1,4 @@
-import { useState, useSyncExternalStore } from 'react'
+import { useState, useEffect, useSyncExternalStore } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Check, ChevronRight, ChevronDown, ChevronUp, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -168,6 +168,13 @@ export function OnboardingChecklist({ className }: { className?: string }) {
   const isMobile = useSyncExternalStore(subscribeMobile, getMobileSnapshot, () => false)
   const [hidden, setHidden] = useState(false)
   const [mobileExpanded, setMobileExpanded] = useState(false)
+
+  // Reset local hidden flag when tour is reset on the server
+  useEffect(() => {
+    if (state && !state.tour.completed && !state.tour.skipped) {
+      setHidden(false)
+    }
+  }, [state?.tour.completed, state?.tour.skipped])
 
   if (!state || state.tour.completed || state.tour.skipped || hidden) return null
 
