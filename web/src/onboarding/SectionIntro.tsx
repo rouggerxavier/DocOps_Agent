@@ -52,7 +52,11 @@ export function SectionIntro({ sectionId, className }: SectionIntroProps) {
       section_id: sectionId,
       metadata: { trigger: 'manual' },
     })
-    setDismissed(true)
+    if (step!.next_hint) {
+      void navigate(step!.next_hint.route)
+    } else {
+      setDismissed(true)
+    }
   }
 
   function handleSkipSection() {
@@ -165,7 +169,8 @@ export function SectionIntro({ sectionId, className }: SectionIntroProps) {
                       onClick={handleEntendi}
                       className="h-7 bg-[color:var(--ui-accent)] px-3 text-[11px] text-[color:var(--ui-bg)] hover:bg-[color:var(--ui-accent-strong)]"
                     >
-                      Entendi
+                      {step!.next_hint ? 'Entendi, próxima etapa' : 'Entendi'}
+                      {step!.next_hint && <ChevronRight className="h-3 w-3" />}
                     </Button>
                   )}
 
