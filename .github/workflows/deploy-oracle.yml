@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "docops/**"
+      - "alembic/**"
       - "requirements.txt"
       - "requirements.lock.txt"
       - "pyproject.toml"
@@ -99,7 +100,7 @@ jobs:
             cd /home/ubuntu/DocOps_Agent
             git fetch --prune origin main
             git checkout main
-            git pull --ff-only origin main
+            git reset --hard origin/main
             source .venv/bin/activate
             python --version
             # Oracle host is currently pinned to Python 3.10, so deploy uses the
