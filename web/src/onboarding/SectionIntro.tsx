@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { ChevronRight, Info, Map, Sparkles, X } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Button } from '@/components/ui/button'
@@ -176,15 +176,15 @@ export function SectionIntro({ sectionId, className }: SectionIntroProps) {
 
                   {!isManual && step.next_hint && (
                     <Button
+                      type="button"
                       variant="ghost"
                       size="sm"
-                      asChild
+                      disabled={isPending}
+                      onClick={handleEntendi}
                       className="h-7 px-3 text-[11px] text-[color:var(--ui-accent)]"
                     >
-                      <Link to={step.next_hint.route}>
-                        Ir para próxima etapa
-                        <ChevronRight className="h-3 w-3" />
-                      </Link>
+                      Ir para próxima etapa
+                      <ChevronRight className="h-3 w-3" />
                     </Button>
                   )}
 
