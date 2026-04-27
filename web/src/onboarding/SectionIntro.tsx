@@ -45,15 +45,16 @@ export function SectionIntro({ sectionId, className }: SectionIntroProps) {
     step.premium && capabilities.entitlementsEnabled && capKey && !capabilities.hasCapability(capKey),
   )
 
+  // step! safe inside these closures: component returns null above if step is falsy
   async function handleEntendi() {
     await postEvent({
       event_type: 'step_completed',
-      step_id: step.id,
+      step_id: step!.id,
       section_id: sectionId,
       metadata: { trigger: 'manual' },
     })
-    if (step.next_hint) {
-      navigate(step.next_hint.route)
+    if (step!.next_hint) {
+      navigate(step!.next_hint.route)
     } else {
       setDismissed(true)
     }
@@ -71,11 +72,11 @@ export function SectionIntro({ sectionId, className }: SectionIntroProps) {
   function handleUnlockIntent() {
     void postEvent({
       event_type: 'upgrade_intent_from_onboarding',
-      step_id: step.id,
+      step_id: step!.id,
       section_id: sectionId,
-      metadata: { premium_cta: step.id },
+      metadata: { premium_cta: step!.id },
     })
-    trackUpgradeInitiated({ touchpoint: 'onboarding.premium_step', metadata: { step_id: step.id } })
+    trackUpgradeInitiated({ touchpoint: 'onboarding.premium_step', metadata: { step_id: step!.id } })
     void navigate('/settings')
   }
 

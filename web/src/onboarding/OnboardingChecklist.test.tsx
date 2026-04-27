@@ -54,7 +54,7 @@ function makeState(overrides: { completed?: boolean; skipped?: boolean } = {}) {
             premium: false,
             completion_mode: 'manual' as const,
             completed_at: null,
-            next_hint: { label: 'Ir para Ingest', route: '/ingest' },
+            next_hint: { section: 'ingest', step: 'ingest.tag', route: '/ingest' },
           },
         ],
       },
@@ -73,9 +73,17 @@ function setup(state = makeState()) {
     closeTour: vi.fn(),
   })
   vi.mocked(useCapabilities).mockReturnValue({
+    flags: {},
+    entitlements: {},
     isEnabled: () => true,
-    capabilities: {},
-  } as ReturnType<typeof useCapabilities>)
+    hasCapability: () => true,
+    loading: false,
+    disableAll: false,
+    enableAll: false,
+    entitlementsEnabled: false,
+    entitlementTier: 'free',
+    refresh: () => Promise.resolve(undefined),
+  })
 }
 
 function renderChecklist() {
