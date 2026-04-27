@@ -11,7 +11,6 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from docops.auth.admin import is_admin_email
-from docops.auth.security import OAUTH_HASH_SENTINEL
 from docops.db.models import (
     ArtifactRecord,
     DocumentRecord,
@@ -67,7 +66,7 @@ def get_or_create_google_user(db: Session, email: str, name: str) -> User:
     """Retorna usuário existente pelo e-mail ou cria um novo via OAuth Google."""
     user = get_user_by_email(db, email)
     if not user:
-        user = create_user(db, name=name, email=email, password_hash=OAUTH_HASH_SENTINEL)
+        user = create_user(db, name=name, email=email, password_hash="__google_oauth__")
     elif not bool(user.is_admin) and is_admin_email(email):
         user.is_admin = True
         db.commit()

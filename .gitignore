@@ -78,4 +78,3 @@ stop.ps1
 # Local experiments (keep out of upstream)
 web/e2e/mobile-menu-interactivity.spec.ts
 web/e2e/navigation-resilience.spec.ts
-playwright-mcp/
