@@ -30,6 +30,8 @@ import {
 import { useCapabilities } from '@/features/CapabilitiesProvider'
 import { trackPremiumFeatureActivation, trackPremiumTouchpointViewed, trackUpgradeCompleted, trackUpgradeInitiated } from '@/features/premiumAnalytics'
 import { cn } from '@/lib/utils'
+import { SectionIntro } from '@/onboarding/SectionIntro'
+import { useStepAutoComplete } from '@/onboarding/useStepAutoComplete'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -1485,6 +1487,10 @@ export function Chat() {
   const [treatmentPickerOpen, setTreatmentPickerOpen] = useState(false)
   const [pendingFlashcardCommand, setPendingFlashcardCommand] = useState<FlashcardCommandPlan | null>(null)
   const [savingArtifactTurnRef, setSavingArtifactTurnRef] = useState<string | null>(null)
+  const [chatDone, setChatDone] = useState(false)
+  const [artifactSavedFromChat, setArtifactSavedFromChat] = useState(false)
+  useStepAutoComplete('chat.first_question', chatDone)
+  useStepAutoComplete('artifacts.first_save', artifactSavedFromChat)
   const bottomRef = useRef<HTMLDivElement>(null)
   const streamAbortRef = useRef<AbortController | null>(null)
   const composerTextareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -2150,6 +2156,7 @@ export function Chat() {
     onSuccess: (data, variables) => {
       finalizeStreamingAssistantMessage(variables.sessionId, data, variables.displayMessage)
       updateSessionActiveContext(variables.sessionId, normalizeActiveContext(data.active_context))
+      setChatDone(true)
 
       if (data.sources.length > 0) {
         setActiveSources(data.sources)
@@ -2251,6 +2258,7 @@ export function Chat() {
         capability: 'premium_chat_to_artifact',
         metadata: { surface: 'chat', artifact_filename: result.filename },
       }, false)
+      setArtifactSavedFromChat(true)
       toast.success(`Artefato salvo: ${result.filename}`)
       setSavingArtifactTurnRef(null)
     },
@@ -2628,6 +2636,8 @@ export function Chat() {
   }, [isPersonalizationUnlocked, preferencesQuery.isError, preferencesQuery.isLoading])
 
   return (
+    <>
+    <SectionIntro sectionId="chat" className="mx-2 mt-2" />
     <div className={cn(
       'chat-no-glass relative flex h-[calc(100svh-3.5rem)] overflow-hidden bg-transparent md:h-[100dvh]',
       isMobile
@@ -3047,7 +3057,7 @@ export function Chat() {
         )}
         style={isMobile ? { bottom: `${Math.max(6, mobileViewportInset)}px` } : undefined}>
           <div className="w-full">
-            <div className={cn(
+            <div data-tour-id="chat-composer" className={cn(
               'border border-[color:var(--ui-border-soft)] backdrop-blur',
               isMobile
                 ? 'rounded-[1.6rem] bg-[linear-gradient(135deg,rgba(12,17,24,0.94)_0%,rgba(16,22,31,0.9)_65%,rgba(20,28,39,0.86)_100%)] p-1.5 shadow-[0_16px_34px_rgba(0,0,0,0.38)]'
@@ -3157,7 +3167,7 @@ export function Chat() {
                   )}
                 </div>
 
-                <div className="border-t border-white/10 px-4 py-3">
+                <div data-tour-id="chat-grounding" className="border-t border-white/10 px-4 py-3">
                   <label className="flex cursor-pointer items-center gap-2 text-xs text-[#c0c6d0]">
                     <input
                       type="checkbox"
@@ -3330,6 +3340,7 @@ export function Chat() {
             )}
           >
             <button
+              data-tour-id="chat-attachment"
               type="button"
               onClick={() => {
                 setDocPickerOpen(false)
@@ -3450,6 +3461,7 @@ export function Chat() {
       )}
 
     </div>
+    </>
   )
 }
 

@@ -12,6 +12,7 @@ import { apiClient, type ArtifactFilterOptions, type ArtifactItem, type Artifact
 import { useCapabilities } from '@/features/CapabilitiesProvider'
 import { trackPremiumFeatureActivation, trackPremiumTouchpointViewed, trackUpgradeCompleted, trackUpgradeInitiated } from '@/features/premiumAnalytics'
 import { formatBytes, formatDate } from '@/lib/utils'
+import { SectionIntro } from '@/onboarding/SectionIntro'
 
 const MARKDOWN_FILE_RE = /\.(md|markdown|txt)$/i
 const ARTIFACT_SORT_OPTIONS = [
@@ -1387,6 +1388,7 @@ export function Artifacts() {
       <div className="fixed bottom-0 left-0 -z-10 w-[400px] h-[400px] bg-amber-400/5 blur-[100px] rounded-full -translate-x-1/2 translate-y-1/2 pointer-events-none" />
 
       <div className="px-4 py-6 space-y-8 sm:px-6 sm:py-8 sm:space-y-12">
+        <SectionIntro sectionId="artifacts" />
 
         {/* ── Hero ── */}
         <header>
@@ -1434,11 +1436,12 @@ export function Artifacts() {
         )}
 
         {/* ── Action Hub ── */}
-        <section>
+        <section data-tour-id="artifacts-actions">
           <div className="grid grid-cols-2 gap-3 md:grid-cols-2 lg:grid-cols-4 sm:gap-4">
 
             {/* Resumir Documento */}
             <button
+              data-tour-id="artifacts-summarize"
               onClick={() => setShowSummarize(true)}
               className="group relative flex flex-col items-start p-4 rounded-xl bg-[#111111] hover:bg-[#1e1e1e] transition-all duration-300 text-left overflow-hidden border border-[#1e1e1e] hover:border-[#282828] sm:p-6"
             >
@@ -1492,7 +1495,7 @@ export function Artifacts() {
         </section>
 
         {/* ── Library Section ── */}
-        <section>
+        <section data-tour-id="artifacts-list">
           {/* Section header */}
           <div className="mb-4 flex flex-col gap-3 sm:mb-6 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-3">

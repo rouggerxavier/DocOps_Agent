@@ -10,6 +10,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { api, apiClient, type DocItem } from '@/api/client'
 import { cn } from '@/lib/utils'
 import { PageShell } from '@/components/ui/page-shell'
+import { SectionIntro } from '@/onboarding/SectionIntro'
 
 function parseErrorMessage(error: unknown, fallback: string) {
   const detail = (error as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
@@ -193,6 +194,7 @@ export function Docs() {
   return (
     <>
       <PageShell>
+        <SectionIntro sectionId="docs" />
         <header className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
           <div>
             <h1 className="font-headline text-4xl font-extrabold tracking-tight text-[color:var(--ui-text)]">Documentos Indexados</h1>

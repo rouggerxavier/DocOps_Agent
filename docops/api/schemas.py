@@ -449,3 +449,78 @@ class CalendarOverviewResponse(BaseModel):
     today_schedule: List[ScheduleItem]
     current_schedule_item: Optional[ScheduleItem] = None
     next_schedule_item: Optional[ScheduleItem] = None
+
+
+# ── Onboarding ────────────────────────────────────────────────────────────────
+
+
+class OnboardingNextHint(BaseModel):
+    section: str
+    step: str
+    route: str
+
+
+class OnboardingStepView(BaseModel):
+    id: str
+    title: str
+    description: str
+    premium: bool = False
+    completion_mode: Literal["manual", "auto"] = "manual"
+    completed_at: Optional[datetime] = None
+    next_hint: Optional[OnboardingNextHint] = None
+
+
+class OnboardingSectionView(BaseModel):
+    id: str
+    title: str
+    icon: str
+    route: str
+    skipped: bool = False
+    skipped_at: Optional[datetime] = None
+    steps: List[OnboardingStepView]
+
+
+class OnboardingProgress(BaseModel):
+    completed: int
+    total: int
+    required_total: int
+
+
+class OnboardingTourState(BaseModel):
+    welcome_seen: bool = False
+    started: bool = False
+    completed: bool = False
+    skipped: bool = False
+    progress: OnboardingProgress
+
+
+class OnboardingStateResponse(BaseModel):
+    schema_version: int
+    schema_upgrade_available: bool = False
+    tour: OnboardingTourState
+    sections: List[OnboardingSectionView]
+    last_step_seen: Optional[str] = None
+
+
+class OnboardingEventRequest(BaseModel):
+    event_type: str = Field(min_length=1, max_length=48)
+    step_id: Optional[str] = Field(default=None, max_length=64)
+    section_id: Optional[str] = Field(default=None, max_length=32)
+    metadata: Optional[dict[str, Any]] = None
+
+
+class OnboardingEventResponse(BaseModel):
+    recorded: bool
+    state: OnboardingStateResponse
+
+
+class OnboardingFunnelStep(BaseModel):
+    event_type: str
+    count: int
+    unique_users: int
+
+
+class OnboardingFunnelResponse(BaseModel):
+    window_days: int
+    steps: List[OnboardingFunnelStep]
+    upgrade_intents: int

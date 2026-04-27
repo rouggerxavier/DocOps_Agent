@@ -13,6 +13,7 @@ export type FeatureFlagKey =
   | 'personalization_enabled'
   | 'proactive_copilot_enabled'
   | 'premium_entitlements_enabled'
+  | 'onboarding_enabled'
 
 export type EntitlementCapabilityKey =
   | 'premium_artifact_templates'
@@ -29,6 +30,7 @@ const DEFAULT_FLAG_MAP: Record<FeatureFlagKey, boolean> = {
   personalization_enabled: false,
   proactive_copilot_enabled: false,
   premium_entitlements_enabled: false,
+  onboarding_enabled: true,
 }
 
 const DEFAULT_ENTITLEMENT_MAP: Record<EntitlementCapabilityKey, boolean> = {

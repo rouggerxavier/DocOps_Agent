@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from docops.db.database import Base
@@ -47,6 +47,15 @@ class User(Base):
         back_populates="owner",
         cascade="all, delete-orphan",
         uselist=False,
+    )
+    onboarding_state: Mapped["UserOnboardingStateRecord | None"] = relationship(
+        back_populates="owner",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+    onboarding_events: Mapped[list["UserOnboardingEventRecord"]] = relationship(
+        back_populates="owner",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self) -> str:
@@ -371,6 +380,53 @@ class ReadingStatusRecord(Base):
 
     def __repr__(self) -> str:
         return f"<ReadingStatusRecord id={self.id} user={self.user_id} doc={self.doc_id!r} status={self.status!r}>"
+
+
+class UserOnboardingStateRecord(Base):
+    __tablename__ = "user_onboarding_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    welcome_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    tour_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    tour_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    tour_skipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    step_completions: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    section_skips: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    last_step_seen: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+    owner: Mapped[User] = relationship(back_populates="onboarding_state")
+
+    def __repr__(self) -> str:
+        return f"<UserOnboardingStateRecord id={self.id} user={self.user_id} schema={self.schema_version}>"
+
+
+class UserOnboardingEventRecord(Base):
+    __tablename__ = "user_onboarding_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(48), nullable=False, index=True)
+    step_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    section_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    event_metadata: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False, index=True)
+
+    owner: Mapped[User] = relationship(back_populates="onboarding_events")
+
+    __table_args__ = (
+        Index("ix_onboarding_events_user_occurred", "user_id", "occurred_at"),
+        Index("ix_onboarding_events_event_occurred", "event_type", "occurred_at"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            "<UserOnboardingEventRecord "
+            f"id={self.id} user={self.user_id} event={self.event_type!r} step={self.step_id!r}>"
+        )
 
 
 class PremiumAnalyticsEventRecord(Base):
