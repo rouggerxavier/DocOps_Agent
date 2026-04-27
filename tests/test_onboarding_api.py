@@ -119,7 +119,7 @@ def test_get_state_includes_catalog_shape(auth_client):
 
     first_upload = next(s for s in ingest["steps"] if s["id"] == "ingest.first_upload")
     assert first_upload["completion_mode"] == "auto"
-    assert first_upload["next_hint"] == {"section": "chat", "step": "chat.first_question"}
+    assert first_upload["next_hint"] == {"section": "chat", "step": "chat.first_question", "route": "/chat"}
 
 
 # ── POST /events ──────────────────────────────────────────────────────────────
